@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCircle2, Database, Folder, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type {
   AppInfo,
   DbStatus,
@@ -8,11 +8,11 @@ import type {
   WorkspaceSaveConfigInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
-import { SetupScreen } from './components/setup-screen'
-import { Badge } from './components/ui/badge'
-import { Button } from './components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
-import { Separator } from './components/ui/separator'
+import { AppShell } from './app/app-shell'
+import { defaultAppRoute, appRoutePaths } from './app/routes'
+import { SetupScreen } from './screens/setup-screen'
+import { SettingsScreen } from './screens/settings-screen'
+import { WorkspaceScreen } from './screens/workspace-screen'
 
 type ShellState = {
   appInfo: AppInfo | null
@@ -144,139 +144,52 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-6 py-8">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-2">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary">Desktop shell</Badge>
-              {state.dbStatus?.initialized ? (
-                <Badge variant="completed">Local state ready</Badge>
-              ) : null}
-            </div>
-            <div>
-              <h1 className="text-[26px] font-semibold leading-tight tracking-normal">Ordinus</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Local-first command center foundation for AI-assisted software work.
-              </p>
-            </div>
-          </div>
-          <Button variant="outline" onClick={() => void loadStatus()} disabled={state.loading}>
-            <RefreshCcw className={state.loading ? 'animate-spin' : ''} />
-            Refresh
-          </Button>
-        </header>
-
-        <Separator />
-
-        {state.error ? (
-          <Card className="border-status-failed/20 bg-status-failed/10">
-            <CardHeader>
-              <CardTitle>Shell needs attention</CardTitle>
-              <CardDescription>{state.error}</CardDescription>
-            </CardHeader>
-          </Card>
-        ) : null}
-
-        <section className="grid gap-4 md:grid-cols-3">
-          <StatusCard
-            icon={<ShieldCheck />}
-            title="App"
-            description="Desktop shell and renderer bridge are ready."
-            rows={[
-              ['Name', state.appInfo?.name ?? '-'],
-              ['Version', state.appInfo?.version ?? '-'],
-              ['Platform', state.appInfo ? `${state.appInfo.platform} ${state.appInfo.arch}` : '-'],
-              ['Packaged', state.appInfo ? String(state.appInfo.isPackaged) : '-']
-            ]}
+    <HashRouter>
+      <Routes>
+        <Route
+          element={
+            <AppShell
+              dbStatus={state.dbStatus}
+              setupStatus={state.setupStatus}
+              loading={state.loading}
+              onRefreshStatus={() => void loadStatus()}
+            />
+          }
+        >
+          <Route index element={<Navigate to={defaultAppRoute} replace />} />
+          <Route
+            path={appRoutePaths.workspace}
+            element={
+              <WorkspaceScreen
+                appInfo={state.appInfo}
+                paths={state.paths}
+                dbStatus={state.dbStatus}
+                error={state.error}
+              />
+            }
           />
-          <StatusCard
-            icon={<Database />}
-            title="Persistence"
-            description="Local state is owned by the Electron main process."
-            rows={[
-              ['Initialized', state.dbStatus ? String(state.dbStatus.initialized) : '-'],
-              ['Schema', state.dbStatus?.schemaVersion?.toString() ?? '-'],
-              ['Created', formatDate(state.dbStatus?.createdAt)],
-              ['Updated', formatDate(state.dbStatus?.updatedAt)]
-            ]}
+          <Route
+            path={appRoutePaths.settings}
+            element={
+              <SettingsScreen
+                appInfo={state.appInfo}
+                paths={state.paths}
+                dbStatus={state.dbStatus}
+                setupStatus={state.setupStatus}
+                busyAction={state.busyAction}
+                setupError={state.setupError}
+                onSelectFolder={selectWorkspaceFolder}
+                onSaveWorkspace={saveWorkspace}
+                onConnectCodex={connectCodex}
+                onRefreshCodex={refreshCodex}
+              />
+            }
           />
-          <StatusCard
-            icon={<Folder />}
-            title="System paths"
-            description="Runtime files stay inside app-owned local paths."
-            rows={[
-              ['User data', state.paths?.userData ?? '-'],
-              ['Database', state.paths?.database ?? '-'],
-              ['Runtime', state.paths?.runtime ?? '-'],
-              ['Logs', state.paths?.logs ?? '-']
-            ]}
-          />
-        </section>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle2 className="size-4 text-status-completed" />
-              Foundation checks
-            </CardTitle>
-            <CardDescription>
-              The app shell, secure bridge, and minimum local-state bootstrap are wired.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-2 text-sm text-muted-foreground">
-              <p>Renderer has no direct Node, filesystem, process, or database access.</p>
-              <p>Feature modules and provider runtimes are intentionally left for later phases.</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </main>
+          <Route path="*" element={<Navigate to={defaultAppRoute} replace />} />
+        </Route>
+      </Routes>
+    </HashRouter>
   )
-}
-
-function StatusCard({
-  icon,
-  title,
-  description,
-  rows
-}: {
-  icon: ReactNode
-  title: string
-  description: string
-  rows: Array<[string, string]>
-}): React.JSX.Element {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <span className="text-primary [&_svg]:size-4">{icon}</span>
-          {title}
-        </CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid gap-3 text-sm">
-          {rows.map(([label, value]) => (
-            <div key={label} className="grid gap-1">
-              <dt className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
-                {label}
-              </dt>
-              <dd className="break-all rounded-md bg-accent px-2 py-1.5 font-mono text-xs leading-5">
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </CardContent>
-    </Card>
-  )
-}
-
-function formatDate(value: string | null | undefined): string {
-  if (!value) return '-'
-  return new Date(value).toLocaleString()
 }
 
 export default App

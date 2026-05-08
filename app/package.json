@@ -55,6 +55,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.0",
     "lucide-react": "^0.555.0",
+    "react-router-dom": "^7.15.0",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.1.13"
   },
