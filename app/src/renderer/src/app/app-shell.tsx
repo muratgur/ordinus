@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { RefreshCcw } from 'lucide-react'
+import { Moon, RefreshCcw, Sun } from 'lucide-react'
 import type { DbStatus, SetupStatus } from '@shared/contracts'
 import { appNavigation, utilityNavigation } from './routes'
 import { Button } from '@renderer/components/ui/button'
@@ -12,7 +13,20 @@ type AppShellProps = {
   onRefreshStatus: () => void
 }
 
+type ThemeMode = 'light' | 'dark'
+
 export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX.Element {
+  const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme())
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    window.localStorage.setItem('ordinus-theme', theme)
+  }, [theme])
+
+  function toggleTheme(): void {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
+  }
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
@@ -44,6 +58,18 @@ export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX
                   <span className="sr-only">{item.label}</span>
                 </NavLink>
               ))}
+
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={toggleTheme}
+                aria-pressed={theme === 'dark'}
+              >
+                {theme === 'dark' ? <Sun /> : <Moon />}
+                <span className="sr-only">
+                  Switch to {theme === 'dark' ? 'light' : 'dark'} mode
+                </span>
+              </Button>
 
               <Button variant="outline" size="icon" onClick={onRefreshStatus} disabled={loading}>
                 <RefreshCcw className={loading ? 'animate-spin' : ''} />
@@ -82,4 +108,11 @@ export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX
       </div>
     </main>
   )
+}
+
+function getInitialTheme(): ThemeMode {
+  const savedTheme = window.localStorage.getItem('ordinus-theme')
+  if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
