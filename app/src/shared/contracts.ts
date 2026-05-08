@@ -24,6 +24,60 @@ export const DbStatusSchema = z.object({
   updatedAt: z.string().nullable()
 })
 
+export const WorkspaceConfigSchema = z.object({
+  workspaceRoot: z.string(),
+  workspaceName: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const WorkspaceSaveConfigInputSchema = z.object({
+  workspaceRoot: z.string().trim().min(1, 'Workspace folder is required.'),
+  workspaceName: z.string().trim().min(1, 'Project name is required.').max(80)
+})
+
+export const WorkspaceSelectFolderResultSchema = z.object({
+  cancelled: z.boolean(),
+  workspaceRoot: z.string(),
+  workspaceName: z.string()
+})
+
+export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
+
+export const ProviderStatusSchema = z.object({
+  id: ProviderIdSchema,
+  label: z.string(),
+  installed: z.boolean(),
+  connected: z.boolean(),
+  version: z.string().nullable(),
+  accountLabel: z.string(),
+  authUrl: z.string(),
+  loginInProgress: z.boolean(),
+  lastError: z.string(),
+  note: z.string()
+})
+
+export const CodexConnectResultSchema = z.object({
+  status: ProviderStatusSchema,
+  authUrl: z.string(),
+  alreadyConnected: z.boolean().optional(),
+  alreadyStarted: z.boolean().optional()
+})
+
+export const SetupStatusSchema = z.object({
+  ready: z.boolean(),
+  workspaceConfigured: z.boolean(),
+  workspace: WorkspaceConfigSchema.nullable(),
+  providers: z.array(ProviderStatusSchema)
+})
+
 export type AppInfo = z.infer<typeof AppInfoSchema>
 export type SystemPaths = z.infer<typeof SystemPathsSchema>
 export type DbStatus = z.infer<typeof DbStatusSchema>
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
+export type WorkspaceSaveConfigInput = z.infer<typeof WorkspaceSaveConfigInputSchema>
+export type WorkspaceSelectFolderResult = z.infer<typeof WorkspaceSelectFolderResultSchema>
+export type ProviderId = z.infer<typeof ProviderIdSchema>
+export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
+export type CodexConnectResult = z.infer<typeof CodexConnectResultSchema>
+export type SetupStatus = z.infer<typeof SetupStatusSchema>

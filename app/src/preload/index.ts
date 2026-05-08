@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppInfo, DbStatus, SystemPaths } from '@shared/contracts'
+import type {
+  AppInfo,
+  CodexConnectResult,
+  DbStatus,
+  ProviderStatus,
+  SetupStatus,
+  SystemPaths,
+  WorkspaceConfig,
+  WorkspaceSaveConfigInput,
+  WorkspaceSelectFolderResult
+} from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
 
 const ordinus = {
@@ -11,6 +21,23 @@ const ordinus = {
   },
   db: {
     getStatus: async (): Promise<DbStatus> => ipcRenderer.invoke(ipcChannels.dbGetStatus)
+  },
+  setup: {
+    getStatus: async (): Promise<SetupStatus> => ipcRenderer.invoke(ipcChannels.setupGetStatus)
+  },
+  workspace: {
+    selectFolder: async (): Promise<WorkspaceSelectFolderResult> =>
+      ipcRenderer.invoke(ipcChannels.workspaceSelectFolder),
+    saveConfig: async (input: WorkspaceSaveConfigInput): Promise<WorkspaceConfig> =>
+      ipcRenderer.invoke(ipcChannels.workspaceSaveConfig, input)
+  },
+  runtime: {
+    getProviders: async (): Promise<ProviderStatus[]> =>
+      ipcRenderer.invoke(ipcChannels.runtimeGetProviders),
+    connectCodex: async (): Promise<CodexConnectResult> =>
+      ipcRenderer.invoke(ipcChannels.runtimeConnectCodex),
+    refreshCodex: async (): Promise<ProviderStatus> =>
+      ipcRenderer.invoke(ipcChannels.runtimeRefreshCodex)
   }
 }
 

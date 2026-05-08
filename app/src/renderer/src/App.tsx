@@ -1,6 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { CheckCircle2, Database, Folder, RefreshCcw, ShieldCheck } from 'lucide-react'
-import type { AppInfo, DbStatus, SystemPaths } from '@shared/contracts'
+import type {
+  AppInfo,
+  DbStatus,
+  SetupStatus,
+  SystemPaths,
+  WorkspaceSaveConfigInput,
+  WorkspaceSelectFolderResult
+} from '@shared/contracts'
+import { SetupScreen } from './components/setup-screen'
 import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card'
@@ -10,8 +18,12 @@ type ShellState = {
   appInfo: AppInfo | null
   paths: SystemPaths | null
   dbStatus: DbStatus | null
+  setupStatus: SetupStatus | null
   error: string
+  setupError: string
+  busyAction: string
   loading: boolean
+  entered: boolean
 }
 
 function App(): React.JSX.Element {
@@ -19,11 +31,15 @@ function App(): React.JSX.Element {
     appInfo: null,
     paths: null,
     dbStatus: null,
+    setupStatus: null,
     error: '',
+    setupError: '',
+    busyAction: '',
+    entered: false,
     loading: true
   })
 
-  async function loadStatus(): Promise<void> {
+  async function loadStatus(options: { stayOnSetup?: boolean } = {}): Promise<void> {
     setState((current) => ({ ...current, loading: true, error: '' }))
 
     try {
@@ -36,8 +52,18 @@ function App(): React.JSX.Element {
         window.ordinus.system.getPaths(),
         window.ordinus.db.getStatus()
       ])
+      const setupStatus = await window.ordinus.setup.getStatus()
 
-      setState({ appInfo, paths, dbStatus, error: '', loading: false })
+      setState((current) => ({
+        ...current,
+        appInfo,
+        paths,
+        dbStatus,
+        setupStatus,
+        error: '',
+        loading: false,
+        entered: options.stayOnSetup ? current.entered : setupStatus.ready
+      }))
     } catch (error) {
       setState((current) => ({
         ...current,
@@ -50,6 +76,72 @@ function App(): React.JSX.Element {
   useEffect(() => {
     void loadStatus()
   }, [])
+
+  async function runSetupAction(action: string, task: () => Promise<void>): Promise<void> {
+    setState((current) => ({ ...current, busyAction: action, setupError: '' }))
+
+    try {
+      await task()
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        setupError: error instanceof Error ? error.message : 'Setup action could not be completed.'
+      }))
+    } finally {
+      setState((current) => ({ ...current, busyAction: '' }))
+    }
+  }
+
+  async function selectWorkspaceFolder(): Promise<WorkspaceSelectFolderResult> {
+    let selected: WorkspaceSelectFolderResult = {
+      cancelled: true,
+      workspaceRoot: '',
+      workspaceName: ''
+    }
+
+    await runSetupAction('select-folder', async () => {
+      selected = await window.ordinus.workspace.selectFolder()
+    })
+
+    return selected
+  }
+
+  async function saveWorkspace(input: WorkspaceSaveConfigInput): Promise<void> {
+    await runSetupAction('save-workspace', async () => {
+      await window.ordinus.workspace.saveConfig(input)
+      await loadStatus({ stayOnSetup: true })
+    })
+  }
+
+  async function connectCodex(): Promise<void> {
+    await runSetupAction('connect-codex', async () => {
+      await window.ordinus.runtime.connectCodex()
+      await loadStatus({ stayOnSetup: true })
+    })
+  }
+
+  async function refreshCodex(): Promise<void> {
+    await runSetupAction('refresh-codex', async () => {
+      await window.ordinus.runtime.refreshCodex()
+      await loadStatus({ stayOnSetup: true })
+    })
+  }
+
+  if (state.setupStatus && (!state.setupStatus.ready || !state.entered)) {
+    return (
+      <SetupScreen
+        key={state.setupStatus.workspace?.updatedAt ?? 'setup-required'}
+        status={state.setupStatus}
+        busyAction={state.busyAction}
+        error={state.setupError}
+        onSelectFolder={selectWorkspaceFolder}
+        onSaveWorkspace={saveWorkspace}
+        onConnectCodex={connectCodex}
+        onRefreshCodex={refreshCodex}
+        onEnter={() => setState((current) => ({ ...current, entered: true }))}
+      />
+    )
+  }
 
   return (
     <main className="min-h-screen bg-background text-foreground">

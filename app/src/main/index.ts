@@ -11,8 +11,6 @@ app.setName('Ordinus')
 const database = new OrdinusDatabase()
 const runtime = createRuntimeService()
 
-void runtime
-
 function isSafeExternalUrl(value: string): boolean {
   try {
     const url = new URL(value)
@@ -101,7 +99,7 @@ app.whenReady().then(() => {
   })
 
   database.initialize()
-  registerIpcHandlers(database)
+  registerIpcHandlers(database, runtime)
 
   createWindow()
 
