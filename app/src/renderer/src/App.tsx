@@ -10,7 +10,11 @@ import type {
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
 import { defaultAppRoute, appRoutePaths } from './app/routes'
+import { AgentsScreen } from './screens/agents-screen'
+import { GroupChatScreen } from './screens/group-chat-screen'
 import { HomeScreen } from './screens/home-screen'
+import { PlannerScreen } from './screens/planner-screen'
+import { SchedulesScreen } from './screens/schedules-screen'
 import { SetupScreen } from './screens/setup-screen'
 import { SettingsScreen } from './screens/settings-screen'
 
@@ -162,6 +166,10 @@ function App(): React.JSX.Element {
         >
           <Route index element={<Navigate to={defaultAppRoute} replace />} />
           <Route path={appRoutePaths.home} element={<HomeScreen />} />
+          <Route path={appRoutePaths.agents} element={<AgentsScreen />} />
+          <Route path={appRoutePaths.planner} element={<PlannerScreen />} />
+          <Route path={appRoutePaths.groupChat} element={<GroupChatScreen />} />
+          <Route path={appRoutePaths.schedules} element={<SchedulesScreen />} />
           <Route
             path={appRoutePaths.settings}
             element={

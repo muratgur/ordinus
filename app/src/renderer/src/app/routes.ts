@@ -1,7 +1,11 @@
-import { House, Settings } from 'lucide-react'
+import { Bot, CalendarClock, House, MessageSquareText, Route, Settings } from 'lucide-react'
 
 export const appRoutePaths = {
   home: '/home',
+  agents: '/agents',
+  planner: '/planner',
+  groupChat: '/group-chat',
+  schedules: '/schedules',
   settings: '/settings'
 } as const
 
@@ -17,14 +21,46 @@ export const appNavigation = [
     icon: House
   },
   {
+    id: 'agents',
+    label: 'Agents',
+    path: appRoutePaths.agents,
+    icon: Bot
+  },
+  {
+    id: 'planner',
+    label: 'Planner',
+    path: appRoutePaths.planner,
+    icon: Route
+  },
+  {
+    id: 'groupChat',
+    label: 'Group Chat',
+    path: appRoutePaths.groupChat,
+    icon: MessageSquareText
+  },
+  {
+    id: 'schedules',
+    label: 'Schedules',
+    path: appRoutePaths.schedules,
+    icon: CalendarClock
+  }
+] satisfies Array<{
+  id: Exclude<AppRouteId, 'settings'>
+  label: string
+  path: (typeof appRoutePaths)[Exclude<AppRouteId, 'settings'>]
+  icon: typeof House
+}>
+
+export const utilityNavigation = [
+  {
     id: 'settings',
     label: 'Settings',
     path: appRoutePaths.settings,
     icon: Settings
   }
 ] satisfies Array<{
-  id: AppRouteId
+  id: Extract<AppRouteId, 'settings'>
   label: string
-  path: (typeof appRoutePaths)[AppRouteId]
+  path: (typeof appRoutePaths)[Extract<AppRouteId, 'settings'>]
   icon: typeof House
 }>

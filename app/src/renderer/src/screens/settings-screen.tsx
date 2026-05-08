@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Database,
   FolderOpen,
+  FolderLock,
   Loader2,
   MonitorCog,
   PlugZap,
@@ -92,16 +93,7 @@ export function SettingsScreen({
   )
 
   return (
-    <div className="grid gap-6 py-6">
-      <section className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold leading-tight tracking-normal">Settings</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            Manage workspace, providers, and local app state from one place.
-          </p>
-        </div>
-      </section>
-
+    <div className="grid gap-4 py-6">
       {setupError ? (
         <Card className="border-status-attention/20 bg-primary-soft">
           <CardHeader>
@@ -200,13 +192,6 @@ function WorkspaceSettingsSection({
 
   return (
     <div className="grid gap-4">
-      <div>
-        <h3 className="text-base font-semibold leading-tight tracking-normal">Workspace</h3>
-        <p className="mt-1 text-sm leading-6 text-muted-foreground">
-          Set the project folder Ordinus can coordinate work inside.
-        </p>
-      </div>
-
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
@@ -223,6 +208,21 @@ function WorkspaceSettingsSection({
           </div>
         </CardHeader>
         <CardContent className="grid gap-4">
+          <div className="flex gap-3 rounded-md border bg-accent px-3 py-3">
+            <FolderLock className="mt-0.5 size-4 shrink-0 text-primary" />
+            <div className="grid gap-1 text-sm">
+              <p className="font-medium leading-tight">Workspace boundary</p>
+              <p className="leading-6 text-muted-foreground">
+                Agents work inside this folder. Choose the project folder where agent changes,
+                generated files, and shared context should live.
+              </p>
+              <p className="leading-6 text-muted-foreground">
+                Ordinus keeps work scoped to this workspace so unrelated folders stay out of the
+                flow.
+              </p>
+            </div>
+          </div>
+
           <label className="grid gap-2 text-sm font-medium">
             Project name
             <Input
@@ -285,47 +285,21 @@ function ProvidersSettingsSection({
   onConnectCodex: () => Promise<void>
   onRefreshCodex: () => Promise<void>
 }): React.JSX.Element {
+  const otherProviders = setupStatus?.providers.filter((provider) => provider.id !== 'codex') ?? []
+  const providers = codex ? [codex, ...otherProviders] : otherProviders
+
   return (
     <div className="grid gap-4">
-      <div>
-        <h3 className="text-base font-semibold leading-tight tracking-normal">Providers</h3>
-        <p className="mt-1 text-sm leading-6 text-muted-foreground">
-          Check Codex readiness and keep future provider setup in the same place.
-        </p>
-      </div>
-
-      <section className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-        <ProviderCard
-          provider={codex}
-          busyAction={busyAction}
-          onConnect={onConnectCodex}
-          onRefresh={onRefreshCodex}
-        />
-        <Card>
-          <CardHeader>
-            <CardTitle>Provider status</CardTitle>
-            <CardDescription>
-              Ordinus will keep provider readiness visible before starting work.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ReadinessBadge ready={Boolean(codex?.connected)} readyText="Codex ready" />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2">
-        {setupStatus?.providers
-          .filter((provider) => provider.id !== 'codex')
-          .map((provider) => (
-            <ProviderCard
-              key={provider.id}
-              provider={provider}
-              busyAction={busyAction}
-              onConnect={onConnectCodex}
-              onRefresh={onRefreshCodex}
-            />
-          ))}
+      <section className="grid gap-4">
+        {providers.map((provider) => (
+          <ProviderCard
+            key={provider.id}
+            provider={provider}
+            busyAction={busyAction}
+            onConnect={onConnectCodex}
+            onRefresh={onRefreshCodex}
+          />
+        ))}
       </section>
     </div>
   )
@@ -342,13 +316,6 @@ function LocalStateSettingsSection({
 }): React.JSX.Element {
   return (
     <div className="grid gap-4">
-      <div>
-        <h3 className="text-base font-semibold leading-tight tracking-normal">Local state</h3>
-        <p className="mt-1 text-sm leading-6 text-muted-foreground">
-          Read-only diagnostics for the local desktop shell.
-        </p>
-      </div>
-
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatusCard
           icon={<MonitorCog />}
