@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, session } from 'electron'
+import { app, shell, BrowserWindow, screen, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -10,6 +10,31 @@ app.setName('Ordinus')
 
 const database = new OrdinusDatabase()
 const runtime = createRuntimeService()
+
+const preferredWindowSize = {
+  width: 1360,
+  height: 860
+}
+
+const minimumWindowSize = {
+  width: 1024,
+  height: 680
+}
+
+const windowScreenMargin = 48
+
+function fitToDisplay(preferred: number, minimum: number, available: number): number {
+  return Math.min(preferred, Math.max(minimum, available - windowScreenMargin))
+}
+
+function getInitialWindowSize(): { width: number; height: number } {
+  const { workAreaSize } = screen.getPrimaryDisplay()
+
+  return {
+    width: fitToDisplay(preferredWindowSize.width, minimumWindowSize.width, workAreaSize.width),
+    height: fitToDisplay(preferredWindowSize.height, minimumWindowSize.height, workAreaSize.height)
+  }
+}
 
 function isSafeExternalUrl(value: string): boolean {
   try {
@@ -57,10 +82,9 @@ function attachWindowSecurity(mainWindow: BrowserWindow): void {
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
-    width: 1120,
-    height: 760,
-    minWidth: 920,
-    minHeight: 620,
+    ...getInitialWindowSize(),
+    minWidth: minimumWindowSize.width,
+    minHeight: minimumWindowSize.height,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
