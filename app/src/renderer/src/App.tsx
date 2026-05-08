@@ -10,9 +10,9 @@ import type {
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
 import { defaultAppRoute, appRoutePaths } from './app/routes'
+import { HomeScreen } from './screens/home-screen'
 import { SetupScreen } from './screens/setup-screen'
 import { SettingsScreen } from './screens/settings-screen'
-import { WorkspaceScreen } from './screens/workspace-screen'
 
 type ShellState = {
   appInfo: AppInfo | null
@@ -128,9 +128,13 @@ function App(): React.JSX.Element {
   }
 
   if (state.setupStatus && (!state.setupStatus.ready || !state.entered)) {
+    const providerSetupKey = state.setupStatus.providers
+      .map((provider) => `${provider.id}:${provider.connected}`)
+      .join('|')
+
     return (
       <SetupScreen
-        key={state.setupStatus.workspace?.updatedAt ?? 'setup-required'}
+        key={`${state.setupStatus.workspace?.updatedAt ?? 'setup-required'}:${state.setupStatus.ready}:${providerSetupKey}`}
         status={state.setupStatus}
         busyAction={state.busyAction}
         error={state.setupError}
@@ -157,17 +161,7 @@ function App(): React.JSX.Element {
           }
         >
           <Route index element={<Navigate to={defaultAppRoute} replace />} />
-          <Route
-            path={appRoutePaths.workspace}
-            element={
-              <WorkspaceScreen
-                appInfo={state.appInfo}
-                paths={state.paths}
-                dbStatus={state.dbStatus}
-                error={state.error}
-              />
-            }
-          />
+          <Route path={appRoutePaths.home} element={<HomeScreen />} />
           <Route
             path={appRoutePaths.settings}
             element={

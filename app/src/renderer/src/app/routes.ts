@@ -1,20 +1,20 @@
-import { LayoutDashboard, Settings } from 'lucide-react'
+import { House, Settings } from 'lucide-react'
 
 export const appRoutePaths = {
-  workspace: '/workspace',
+  home: '/home',
   settings: '/settings'
 } as const
 
 export type AppRouteId = keyof typeof appRoutePaths
 
-export const defaultAppRoute = appRoutePaths.workspace
+export const defaultAppRoute = appRoutePaths.home
 
 export const appNavigation = [
   {
-    id: 'workspace',
-    label: 'Workspace',
-    path: appRoutePaths.workspace,
-    icon: LayoutDashboard
+    id: 'home',
+    label: 'Home',
+    path: appRoutePaths.home,
+    icon: House
   },
   {
     id: 'settings',
@@ -26,5 +26,5 @@ export const appNavigation = [
   id: AppRouteId
   label: string
   path: (typeof appRoutePaths)[AppRouteId]
-  icon: typeof LayoutDashboard
+  icon: typeof House
 }>
