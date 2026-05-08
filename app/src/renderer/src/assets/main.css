@@ -77,6 +77,37 @@ body,
   min-height: 100%;
 }
 
+html {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  scrollbar-width: thin;
+}
+
+html::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: hsl(var(--muted-foreground) / 0.35);
+  background-clip: content-box;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.55);
+  background-clip: content-box;
+}
+
+html::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 body {
   margin: 0;
   background: hsl(var(--background));
@@ -95,4 +126,37 @@ body {
 button,
 a {
   -webkit-app-region: no-drag;
+}
+
+@layer utilities {
+  .ordinus-scrollbar {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+    scrollbar-width: thin;
+  }
+
+  .ordinus-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .ordinus-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .ordinus-scrollbar::-webkit-scrollbar-thumb {
+    min-height: 40px;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background: hsl(var(--muted-foreground) / 0.35);
+    background-clip: content-box;
+  }
+
+  .ordinus-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.55);
+    background-clip: content-box;
+  }
+
+  .ordinus-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
