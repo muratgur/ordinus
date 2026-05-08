@@ -3,24 +3,36 @@
 @tailwind utilities;
 
 :root {
-  --background: 210 24% 98%;
-  --foreground: 222 33% 10%;
+  --background: 60 18% 96%;
+  --foreground: 48 7% 13%;
   --card: 0 0% 100%;
-  --card-foreground: 222 33% 10%;
-  --primary: 188 78% 28%;
+  --card-foreground: 48 7% 13%;
+  --primary: 18 80% 51%;
+  --primary-active: 18 83% 43%;
+  --primary-soft: 21 100% 91%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 44 95% 90%;
-  --secondary-foreground: 31 45% 18%;
-  --muted: 210 20% 94%;
-  --muted-foreground: 218 13% 42%;
-  --accent: 188 36% 91%;
-  --accent-foreground: 188 78% 22%;
-  --destructive: 0 72% 51%;
+  --secondary: 45 18% 87%;
+  --secondary-foreground: 48 7% 13%;
+  --muted: 51 18% 92%;
+  --muted-foreground: 36 6% 46%;
+  --accent: 48 38% 97%;
+  --accent-foreground: 48 7% 13%;
+  --destructive: 345 64% 49%;
   --destructive-foreground: 0 0% 100%;
-  --border: 214 20% 86%;
-  --input: 214 20% 86%;
-  --ring: 188 78% 28%;
-  --radius: 0.5rem;
+  --border: 45 17% 86%;
+  --input: 45 17% 86%;
+  --ring: 18 80% 51%;
+  --surface-subtle: 51 18% 92%;
+  --surface-strong: 45 18% 87%;
+  --status-planned: 262 5% 55%;
+  --status-running: 220 84% 56%;
+  --status-reading: 214 47% 52%;
+  --status-editing: 268 37% 55%;
+  --status-blocked: 26 90% 37%;
+  --status-attention: 17 88% 40%;
+  --status-completed: 159 63% 33%;
+  --status-failed: 345 64% 49%;
+  --radius: 0.75rem;
 }
 
 * {

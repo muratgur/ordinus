@@ -26,6 +26,7 @@ Use these rules when composing shadcn-style UI components.
 
 ## Ordinus Fit
 
+- Use the component vocabulary in `DESIGN.md` when composing product panels: workspace header, command bar, provider card, agent run card, task row, activity timeline, code surface, attention banner, and setup panel.
 - Prefer panels that reveal work status, activity, outputs, and next actions.
 - Avoid nested card-heavy dashboards.
 - Do not build marketing sections unless the user explicitly asks for product marketing UI.

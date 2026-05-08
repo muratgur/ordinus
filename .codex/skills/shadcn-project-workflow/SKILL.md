@@ -10,21 +10,23 @@ description: Work with shadcn/ui in Ordinus. Use when adding, updating, composin
 Use shadcn/ui as the standard path for reusable UI primitives while preserving Ordinus product direction.
 
 Use this with `ordinus-ui-system`: this skill governs shadcn mechanics; `ordinus-ui-system` governs product feel.
+Use `DESIGN.md` as the canonical source for theme tokens, component vocabulary, status language, and UI density when changing shadcn-style components or renderer styling.
 
 ## Required Workflow
 
 1. Run or inspect project context before making component decisions:
    `npm run ui:info`
-2. Check existing installed components before adding new ones.
-3. Prefer shadcn CLI for registry components:
+2. Read `DESIGN.md` before changing theme tokens, variants, component styling, status surfaces, or user-facing UI copy.
+3. Check existing installed components before adding new ones.
+4. Prefer shadcn CLI for registry components:
    `npm run ui:add -- <component>`
-4. For unfamiliar components, get docs first:
+5. For unfamiliar components, get docs first:
    `npx shadcn@latest docs <component>`
-5. For updates, preview before changing:
+6. For updates, preview before changing:
    `npm run ui:add -- <component> --dry-run`
    `npm run ui:add -- <component> --diff <file>`
-6. Read files added by the CLI and fix imports, aliases, composition, and lint issues.
-7. Run `npm run ui:check`, `npm run typecheck`, `npm run lint`, and `npm run build`.
+7. Read files added by the CLI and fix imports, aliases, composition, and lint issues.
+8. Run `npm run ui:check`, `npm run typecheck`, `npm run lint`, and `npm run build`.
 
 ## Ordinus Defaults
 
@@ -40,6 +42,7 @@ Use this with `ordinus-ui-system`: this skill governs shadcn mechanics; `ordinus
 
 ## Critical Rules
 
+- Align reusable variants and semantic CSS variables with `DESIGN.md` before adding one-off styling.
 - Compose existing components before writing custom styled markup.
 - Use built-in variants before custom class overrides.
 - Use semantic tokens such as `bg-background`, `text-muted-foreground`, `border`, and `bg-primary`.

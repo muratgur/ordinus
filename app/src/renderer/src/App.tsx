@@ -145,17 +145,19 @@ function App(): React.JSX.Element {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-6 py-8">
+      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-6 py-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-2">
             <div className="flex items-center gap-2">
               <Badge variant="secondary">Desktop shell</Badge>
-              {state.dbStatus?.initialized ? <Badge variant="success">SQLite ready</Badge> : null}
+              {state.dbStatus?.initialized ? (
+                <Badge variant="completed">Local state ready</Badge>
+              ) : null}
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-normal">Ordinus</h1>
+              <h1 className="text-[26px] font-semibold leading-tight tracking-normal">Ordinus</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Minimum Electron foundation for a local-first agent orchestration app.
+                Local-first command center foundation for AI-assisted software work.
               </p>
             </div>
           </div>
@@ -168,9 +170,9 @@ function App(): React.JSX.Element {
         <Separator />
 
         {state.error ? (
-          <Card className="border-destructive/40 bg-destructive/10">
+          <Card className="border-status-failed/20 bg-status-failed/10">
             <CardHeader>
-              <CardTitle>Shell error</CardTitle>
+              <CardTitle>Shell needs attention</CardTitle>
               <CardDescription>{state.error}</CardDescription>
             </CardHeader>
           </Card>
@@ -180,7 +182,7 @@ function App(): React.JSX.Element {
           <StatusCard
             icon={<ShieldCheck />}
             title="App"
-            description="Renderer is using the typed preload bridge."
+            description="Desktop shell and renderer bridge are ready."
             rows={[
               ['Name', state.appInfo?.name ?? '-'],
               ['Version', state.appInfo?.version ?? '-'],
@@ -191,7 +193,7 @@ function App(): React.JSX.Element {
           <StatusCard
             icon={<Database />}
             title="Persistence"
-            description="Only the bootstrap app_meta table exists."
+            description="Local state is owned by the Electron main process."
             rows={[
               ['Initialized', state.dbStatus ? String(state.dbStatus.initialized) : '-'],
               ['Schema', state.dbStatus?.schemaVersion?.toString() ?? '-'],
@@ -202,7 +204,7 @@ function App(): React.JSX.Element {
           <StatusCard
             icon={<Folder />}
             title="System paths"
-            description="Electron userData owns local state."
+            description="Runtime files stay inside app-owned local paths."
             rows={[
               ['User data', state.paths?.userData ?? '-'],
               ['Database', state.paths?.database ?? '-'],
@@ -215,11 +217,11 @@ function App(): React.JSX.Element {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CheckCircle2 className="size-4 text-emerald-600" />
+              <CheckCircle2 className="size-4 text-status-completed" />
               Foundation checks
             </CardTitle>
             <CardDescription>
-              The app shell, secure IPC bridge, and minimum SQLite bootstrap are wired.
+              The app shell, secure bridge, and minimum local-state bootstrap are wired.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -261,7 +263,7 @@ function StatusCard({
               <dt className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
                 {label}
               </dt>
-              <dd className="break-all rounded-md bg-muted px-2 py-1.5 font-mono text-xs">
+              <dd className="break-all rounded-md bg-accent px-2 py-1.5 font-mono text-xs leading-5">
                 {value}
               </dd>
             </div>

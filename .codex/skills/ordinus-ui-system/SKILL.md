@@ -9,6 +9,12 @@ description: Build Ordinus renderer UI in the intended product style. Use when c
 
 Make Ordinus feel like a calm, practical command center for AI-assisted work.
 
+## Design System Source
+
+Read `DESIGN.md` before changing renderer UI, layout, Tailwind styling, shadcn-style components, status surfaces, empty states, forms, task views, provider views, or user-facing product copy.
+
+Treat `DESIGN.md` as the canonical source for visual tokens, component vocabulary, status language, density, and copy guidance. If it conflicts with `AGENTS.md`, the secure Electron boundary and product principles in `AGENTS.md` win.
+
 ## Product Feel
 
 - Work-focused, not marketing-focused.
@@ -29,6 +35,7 @@ Make Ordinus feel like a calm, practical command center for AI-assisted work.
 
 ## UI Rules
 
+- Align colors, typography, spacing, radius, status labels, and component naming with `DESIGN.md`.
 - Use shadcn-style components and local reusable primitives.
 - Prefer restrained cards for individual panels, not nested card-heavy layouts.
 - Use lucide icons for recognizable actions.
@@ -40,8 +47,8 @@ Make Ordinus feel like a calm, practical command center for AI-assisted work.
 
 ## Workflow
 
-1. Identify the workflow the UI supports.
-2. Choose a calm design direction that fits that workflow.
+1. Read `DESIGN.md` and identify the workflow the UI supports.
+2. Choose the smallest design-system component vocabulary that fits that workflow.
 3. Put the primary state and next action above secondary details.
 4. Use existing components before creating new primitives.
 5. Keep labels concise and user-centered.

@@ -67,6 +67,7 @@ Build a command center for AI-assisted work, not a generic chatbot.
 
 ## UI Direction
 
+- `DESIGN.md` is the canonical design system for renderer UI. When a task touches UI layout, styling, shadcn components, status surfaces, empty states, forms, task views, provider views, or user-facing product copy, read `DESIGN.md` and align with it.
 - Ordinus should feel calm, practical, and work-focused.
 - Avoid marketing-page layouts.
 - Avoid decorative clutter.

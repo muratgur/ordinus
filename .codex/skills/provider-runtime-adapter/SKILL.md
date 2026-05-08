@@ -30,6 +30,7 @@ Do not implement all concepts until the product flow needs them.
 - Store run state and events durably only after the run model is intentionally designed.
 - Normalize provider behavior without erasing useful provider-specific diagnostics.
 - Treat Codex, Claude, and Gemini as peers. Do not let the first provider shape the whole architecture.
+- When provider state or events are shown in renderer UI, align user-visible statuses and event labels with the status vocabulary in `DESIGN.md`.
 
 ## Workflow
 
@@ -37,7 +38,7 @@ Do not implement all concepts until the product flow needs them.
 2. Add the smallest provider-neutral interface needed for that action.
 3. Implement detection or process behavior in main process.
 4. Validate executable paths, workspace boundaries, and allowed arguments in main.
-5. Stream or record events in a way the UI can explain clearly.
+5. Stream or record events in a way the UI can explain clearly, using `DESIGN.md` status language for user-visible states.
 6. Support cancellation before adding more automation.
 7. Run typecheck, lint, build, and a runtime smoke test.
 

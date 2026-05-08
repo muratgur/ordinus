@@ -66,11 +66,13 @@ export function SetupScreen({
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-6 py-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="grid gap-2">
-            <Badge variant={status.ready ? 'success' : 'secondary'}>
-              {status.ready ? 'Ready to start' : 'Setup required'}
+            <Badge variant={status.ready ? 'completed' : 'attention'}>
+              {status.ready ? 'Workspace ready' : 'Setup needs attention'}
             </Badge>
             <div>
-              <h1 className="text-3xl font-semibold tracking-normal">Set Up Workspace</h1>
+              <h1 className="text-[26px] font-semibold leading-tight tracking-normal">
+                Set up workspace
+              </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
                 Choose a workspace and connect Codex before starting.
               </p>
@@ -85,7 +87,7 @@ export function SetupScreen({
         <Separator />
 
         {error ? (
-          <Card className="border-destructive/40 bg-destructive/10">
+          <Card className="border-status-attention/20 bg-primary-soft">
             <CardHeader>
               <CardTitle>Setup needs attention</CardTitle>
               <CardDescription>{error}</CardDescription>
@@ -222,7 +224,7 @@ function ProviderCard({
         </dl>
 
         {provider?.lastError ? (
-          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+          <p className="rounded-md border border-status-failed/20 bg-status-failed/10 px-3 py-2 text-xs leading-5 text-status-failed">
             {provider.lastError}
           </p>
         ) : null}
@@ -271,7 +273,7 @@ function ReadinessBadge({
   readyText: string
 }): React.JSX.Element {
   return ready ? (
-    <Badge variant="success">
+    <Badge variant="completed">
       <CheckCircle2 className="mr-1 size-3" />
       {readyText}
     </Badge>
@@ -289,7 +291,9 @@ function DetailRow({ label, value }: { label: string; value: string }): React.JS
       <dt className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
         {label}
       </dt>
-      <dd className="break-all rounded-md bg-muted px-2 py-1.5 font-mono text-xs">{value}</dd>
+      <dd className="break-all rounded-md bg-accent px-2 py-1.5 font-mono text-xs leading-5">
+        {value}
+      </dd>
     </div>
   )
 }

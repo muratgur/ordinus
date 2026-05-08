@@ -32,6 +32,7 @@ Keep Ordinus IPC small, typed, explicit, and stable enough for the renderer to a
 - Keep method names domain-oriented: `app.getInfo`, `db.getStatus`, `workspace.selectFolder`.
 - Prefer one explicit method over a generic catch-all channel.
 - Keep renderer errors user-readable and main errors diagnostic enough to debug.
+- When IPC responses drive renderer status, empty states, or error copy, align user-visible naming with `DESIGN.md`.
 - Do not add IPC for future features until there is an immediate caller.
 - Do not return secrets, raw environment details, or unrestricted local paths unless the UI truly needs them.
 
