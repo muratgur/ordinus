@@ -5,6 +5,13 @@ export const ipcChannels = {
   setupGetStatus: 'setup:get-status',
   workspaceSelectFolder: 'workspace:select-folder',
   workspaceSaveConfig: 'workspace:save-config',
+  agentsList: 'agents:list',
+  agentsDraftFromIntent: 'agents:draft-from-intent',
+  agentsCreate: 'agents:create',
+  agentsUpdateInstructions: 'agents:update-instructions',
+  agentsUpdateSettings: 'agents:update-settings',
+  agentsListSkills: 'agents:list-skills',
+  agentsCreateSkill: 'agents:create-skill',
   runtimeGetProviders: 'runtime:get-providers',
   runtimeConnectCodex: 'runtime:connect-codex',
   runtimeRefreshCodex: 'runtime:refresh-codex'

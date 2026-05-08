@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
   Bot,
   FileText,
   FolderOpen,
+  Loader2,
   Plus,
   Search,
   Settings2,
@@ -29,153 +30,18 @@ import {
 import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
+import type { Agent, AgentDraft, AgentSandbox, AgentSkill, ProviderId } from '@shared/contracts'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
-type AgentProvider = 'codex' | 'claude' | 'gemini'
 type CreateAgentStep = 'describe' | 'review'
 type SettingsDraft = {
-  provider: AgentProvider
+  providerId: ProviderId
   model: string
-  sandbox: string
-  workspace: string
+  sandbox: AgentSandbox
+  workspaceRoot: string
   enabled: boolean
 }
-type CreateAgentDraft = {
-  name: string
-  role: string
-  description: string
-  instructions: string
-  provider: AgentProvider
-  model: string
-  sandbox: string
-  workspace: string
-}
-
-type AgentProfile = {
-  id: string
-  name: string
-  role: string
-  description: string
-  status: AgentStatus
-  enabled: boolean
-  provider: AgentProvider
-  model: string
-  sandbox: string
-  workspace: string
-  teams: string[]
-  skills: Array<{ name: string; status: 'active' | 'draft' | 'invalid'; detail: string }>
-  plugins: Array<{ name: string; connected: boolean; detail: string }>
-  outputs: Array<{ title: string; path: string; updatedAt: string }>
-  readiness: Array<{ label: string; ok: boolean; detail: string }>
-}
-
-const agents: AgentProfile[] = [
-  {
-    id: 'workspace-agent',
-    name: 'Workspace Agent',
-    role: 'Full-stack coding assistant',
-    description: 'Uses Codex in the selected workspace and keeps implementation work small.',
-    status: 'ready',
-    enabled: true,
-    provider: 'codex',
-    model: 'default',
-    sandbox: 'workspace-write',
-    workspace: '.',
-    teams: ['Product Delivery'],
-    skills: [
-      {
-        name: 'repo-orientation',
-        status: 'active',
-        detail: 'Reads project guide and local conventions.'
-      },
-      { name: 'verification-plan', status: 'active', detail: 'Summarizes checks before handoff.' },
-      { name: 'release-notes', status: 'draft', detail: 'Draft skill awaiting review.' }
-    ],
-    plugins: [
-      { name: 'GitHub', connected: true, detail: 'PRs and review threads' },
-      { name: 'Linear', connected: false, detail: 'Issues and product planning' },
-      { name: 'Gmail', connected: false, detail: 'Read-only context' }
-    ],
-    outputs: [
-      {
-        title: 'Implementation notes',
-        path: 'agents/workspace-agent/output/notes.md',
-        updatedAt: '12 min ago'
-      },
-      {
-        title: 'Verification summary',
-        path: 'agents/workspace-agent/output/checks.md',
-        updatedAt: '1 h ago'
-      }
-    ],
-    readiness: [
-      { label: 'Provider', ok: true, detail: 'Codex connected' },
-      { label: 'Instructions', ok: true, detail: 'AGENTS.md present' },
-      { label: 'Skills', ok: true, detail: '2 active skills' },
-      { label: 'Plugins', ok: false, detail: 'Linear not connected' }
-    ]
-  },
-  {
-    id: 'planner',
-    name: 'Planner',
-    role: 'Task planner and dispatcher',
-    description: 'Breaks requests into scoped work items and routes them to suitable agents.',
-    status: 'ready',
-    enabled: true,
-    provider: 'codex',
-    model: 'default',
-    sandbox: 'workspace-write',
-    workspace: '.',
-    teams: ['Product Delivery', 'Leadership'],
-    skills: [
-      { name: 'task-routing', status: 'active', detail: 'Chooses agents by capability and scope.' },
-      { name: 'dependency-map', status: 'active', detail: 'Keeps blocked work visible.' }
-    ],
-    plugins: [
-      { name: 'Linear', connected: true, detail: 'Issue triage and project context' },
-      { name: 'GitHub', connected: true, detail: 'PR and CI context' }
-    ],
-    outputs: [
-      {
-        title: 'Work package plan',
-        path: 'agents/planner/output/work-package.json',
-        updatedAt: '28 min ago'
-      }
-    ],
-    readiness: [
-      { label: 'Provider', ok: true, detail: 'Codex connected' },
-      { label: 'Instructions', ok: true, detail: 'Routing policy set' },
-      { label: 'Teams', ok: true, detail: '2 teams available' },
-      { label: 'Queue', ok: true, detail: 'No blocked dispatch' }
-    ]
-  },
-  {
-    id: 'qa-reviewer',
-    name: 'QA Reviewer',
-    role: 'Regression and acceptance reviewer',
-    description: 'Finds edge cases, missing checks, and acceptance gaps before work is completed.',
-    status: 'needs-attention',
-    enabled: true,
-    provider: 'codex',
-    model: 'gpt-5.4',
-    sandbox: 'read-only',
-    workspace: '.',
-    teams: ['Product Delivery'],
-    skills: [
-      { name: 'acceptance-review', status: 'active', detail: 'Checks user-facing behavior.' },
-      { name: 'test-risk-map', status: 'invalid', detail: 'Missing SKILL.md frontmatter.' }
-    ],
-    plugins: [{ name: 'GitHub', connected: false, detail: 'Needs connection for review context' }],
-    outputs: [],
-    readiness: [
-      { label: 'Provider', ok: true, detail: 'Codex connected' },
-      { label: 'Instructions', ok: true, detail: 'Review posture set' },
-      { label: 'Skills', ok: false, detail: '1 invalid skill' },
-      { label: 'Plugins', ok: false, detail: 'GitHub not connected' }
-    ]
-  }
-]
 
 const sections: Array<{ id: AgentSection; label: string; icon: typeof Bot }> = [
   { id: 'instructions', label: 'Instructions', icon: FileText },
@@ -184,19 +50,63 @@ const sections: Array<{ id: AgentSection; label: string; icon: typeof Bot }> = [
 ]
 
 export function AgentsScreen(): React.JSX.Element {
-  const [agentList, setAgentList] = useState<AgentProfile[]>(agents)
-  const [selectedAgentId, setSelectedAgentId] = useState(agents[0].id)
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('')
   const [activeSection, setActiveSection] = useState<AgentSection>('instructions')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const selectedAgent = useMemo(
-    () => agentList.find((agent) => agent.id === selectedAgentId) ?? agentList[0],
-    [agentList, selectedAgentId]
+    () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
+    [agents, selectedAgentId]
   )
 
-  function handleCreateAgent(draft: CreateAgentDraft): void {
-    const nextAgent = createAgentFromDraft(draft, agentList)
-    setAgentList((currentAgents) => [nextAgent, ...currentAgents])
+  useEffect(() => {
+    let mounted = true
+
+    async function loadAgents(): Promise<void> {
+      try {
+        setLoading(true)
+        const nextAgents = await window.ordinus.agents.list()
+        if (!mounted) return
+
+        setAgents(nextAgents)
+        setSelectedAgentId((current) => {
+          if (nextAgents.some((agent) => agent.id === current)) {
+            return current
+          }
+          return nextAgents[0]?.id ?? ''
+        })
+        setError('')
+      } catch (loadError) {
+        if (!mounted) return
+        setError(getErrorMessage(loadError, 'Agents could not be loaded.'))
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadAgents()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  function handleAgentSaved(nextAgent: Agent): void {
+    setAgents((currentAgents) => {
+      if (currentAgents.some((agent) => agent.id === nextAgent.id)) {
+        return currentAgents.map((agent) => (agent.id === nextAgent.id ? nextAgent : agent))
+      }
+      return [nextAgent, ...currentAgents]
+    })
     setSelectedAgentId(nextAgent.id)
+  }
+
+  function handleAgentCreated(nextAgent: Agent): void {
+    handleAgentSaved(nextAgent)
     setActiveSection('instructions')
     setCreateAgentOpen(false)
   }
@@ -204,8 +114,9 @@ export function AgentsScreen(): React.JSX.Element {
   return (
     <div className="grid min-h-[calc(100vh-7rem)] gap-4 py-6 xl:grid-cols-[280px_minmax(0,1fr)]">
       <AgentLibrary
-        agents={agentList}
-        selectedAgentId={selectedAgent.id}
+        agents={agents}
+        loading={loading}
+        selectedAgentId={selectedAgent?.id ?? ''}
         onCreateAgent={() => setCreateAgentOpen(true)}
         onSelectAgent={setSelectedAgentId}
       />
@@ -223,6 +134,7 @@ export function AgentsScreen(): React.JSX.Element {
                     size="sm"
                     variant={activeSection === section.id ? 'secondary' : 'ghost'}
                     className="shrink-0"
+                    disabled={!selectedAgent}
                     onClick={() => setActiveSection(section.id)}
                   >
                     <Icon />
@@ -234,14 +146,32 @@ export function AgentsScreen(): React.JSX.Element {
           </div>
 
           <CardContent className="flex-1 p-0">
-            <AgentDetail agent={selectedAgent} activeSection={activeSection} />
+            {error ? (
+              <EmptyState icon={<Bot />} title="Agents unavailable" detail={error} />
+            ) : selectedAgent ? (
+              <AgentDetail
+                agent={selectedAgent}
+                activeSection={activeSection}
+                onAgentSaved={handleAgentSaved}
+              />
+            ) : (
+              <EmptyState
+                icon={<Bot />}
+                title={loading ? 'Loading agents' : 'No agents yet'}
+                detail={
+                  loading
+                    ? 'Agent records are being loaded from local storage.'
+                    : 'Create an agent to define its role, instructions, and runtime settings.'
+                }
+              />
+            )}
           </CardContent>
         </Card>
       </main>
 
       <CreateAgentDialog
         open={createAgentOpen}
-        onCreateAgent={handleCreateAgent}
+        onAgentCreated={handleAgentCreated}
         onOpenChange={setCreateAgentOpen}
       />
     </div>
@@ -250,15 +180,23 @@ export function AgentsScreen(): React.JSX.Element {
 
 function AgentLibrary({
   agents,
+  loading,
   selectedAgentId,
   onCreateAgent,
   onSelectAgent
 }: {
-  agents: AgentProfile[]
+  agents: Agent[]
+  loading: boolean
   selectedAgentId: string
   onCreateAgent: () => void
   onSelectAgent: (agentId: string) => void
 }): React.JSX.Element {
+  const [query, setQuery] = useState('')
+  const filteredAgents = agents.filter((agent) => {
+    const value = `${agent.name} ${agent.role}`.toLowerCase()
+    return value.includes(query.trim().toLowerCase())
+  })
+
   return (
     <aside className="min-w-0">
       <Card className="sticky top-32 overflow-hidden">
@@ -269,7 +207,9 @@ function AgentLibrary({
                 <Bot className="size-4 text-primary" />
                 Agents
               </CardTitle>
-              <CardDescription>{agents.length} agents</CardDescription>
+              <CardDescription>
+                {loading ? 'Loading' : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}
+              </CardDescription>
             </div>
             <Button size="icon" aria-label="Create agent" onClick={onCreateAgent}>
               <Plus />
@@ -277,12 +217,17 @@ function AgentLibrary({
           </div>
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-9" placeholder="Search agents" />
+            <Input
+              className="pl-9"
+              placeholder="Search agents"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </div>
         </CardHeader>
 
         <CardContent className="grid gap-2 p-3">
-          {agents.map((agent) => (
+          {filteredAgents.map((agent) => (
             <button
               key={agent.id}
               type="button"
@@ -297,20 +242,16 @@ function AgentLibrary({
                   <p className="truncate text-sm font-semibold">{agent.name}</p>
                   <p className="truncate text-xs text-muted-foreground">{agent.role}</p>
                 </div>
-                <StatusDot status={agent.status} />
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {agent.teams.slice(0, 2).map((team) => (
-                  <span
-                    key={team}
-                    className="max-w-full truncate rounded-sm bg-surface-strong px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                  >
-                    {team}
-                  </span>
-                ))}
+                <StatusDot status={getAgentStatus(agent)} />
               </div>
             </button>
           ))}
+
+          {!loading && filteredAgents.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-accent p-4 text-sm text-muted-foreground">
+              {agents.length === 0 ? 'No agents yet.' : 'No agents match this search.'}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </aside>
@@ -319,52 +260,23 @@ function AgentLibrary({
 
 function AgentDetail({
   agent,
-  activeSection
+  activeSection,
+  onAgentSaved
 }: {
-  agent: AgentProfile
+  agent: Agent
   activeSection: AgentSection
+  onAgentSaved: (agent: Agent) => void
 }): React.JSX.Element {
   if (activeSection === 'instructions') {
-    return <InstructionsPanel key={agent.id} agent={agent} />
+    return <InstructionsPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
   }
 
   if (activeSection === 'skills') {
-    return (
-      <div className="grid gap-3 p-5">
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs">
-            <Plus />
-            Create skill
-          </Button>
-          <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs">
-            <FolderOpen />
-            Import skill
-          </Button>
-        </div>
-        <div className="grid gap-2">
-          {agent.skills.map((skill) => (
-            <div key={skill.name} className="grid gap-1 rounded-lg border bg-card p-4">
-              <div className="flex min-w-0 items-center gap-2">
-                <Sparkles className="size-4 shrink-0 text-primary" />
-                <p className="truncate text-sm font-semibold">{skill.name}</p>
-              </div>
-              <p className="text-sm text-muted-foreground">{skill.detail}</p>
-            </div>
-          ))}
-          {agent.skills.length === 0 ? (
-            <EmptyState
-              icon={<Sparkles />}
-              title="No skills yet"
-              detail="Create or import a skill for this agent."
-            />
-          ) : null}
-        </div>
-      </div>
-    )
+    return <SkillsPanel key={agent.id} agent={agent} />
   }
 
   if (activeSection === 'settings') {
-    return <SettingsPanel key={agent.id} agent={agent} />
+    return <SettingsPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
   }
 
   return (
@@ -374,41 +286,30 @@ function AgentDetail({
   )
 }
 
-function StatusDot({ status }: { status: AgentStatus }): React.JSX.Element {
-  return (
-    <span
-      className={cn(
-        'mt-1 size-2.5 shrink-0 rounded-full',
-        status === 'ready' && 'bg-status-completed',
-        status === 'needs-attention' && 'bg-status-attention',
-        status === 'offline' && 'bg-muted-foreground'
-      )}
-    />
-  )
-}
-
 function CreateAgentDialog({
   open,
-  onCreateAgent,
+  onAgentCreated,
   onOpenChange
 }: {
   open: boolean
-  onCreateAgent: (draft: CreateAgentDraft) => void
+  onAgentCreated: (agent: Agent) => void
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const [step, setStep] = useState<CreateAgentStep>('describe')
   const [intent, setIntent] = useState('')
-  const [draft, setDraft] = useState<CreateAgentDraft>(() => createDraftFromIntent(''))
-  const canDraft = intent.trim().length >= 12
+  const [draft, setDraft] = useState<AgentDraft | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const canDraft = intent.trim().length >= 12 && !busy
   const canCreate =
-    draft.name.trim().length > 0 &&
-    draft.role.trim().length > 0 &&
-    draft.instructions.trim().length > 0
+    Boolean(draft?.name.trim() && draft.role.trim() && draft.instructions.trim()) && !busy
 
   function resetDialog(): void {
     setStep('describe')
     setIntent('')
-    setDraft(createDraftFromIntent(''))
+    setDraft(null)
+    setBusy(false)
+    setError('')
   }
 
   function handleOpenChange(nextOpen: boolean): void {
@@ -418,28 +319,53 @@ function CreateAgentDialog({
     }
   }
 
-  function updateDraft(next: Partial<CreateAgentDraft>): void {
-    setDraft((current) => ({ ...current, ...next }))
+  function updateDraft(next: Partial<AgentDraft>): void {
+    setDraft((current) => (current ? { ...current, ...next } : current))
   }
 
-  function handleDraftAgent(): void {
+  async function handleDraftAgent(): Promise<void> {
     if (!canDraft) {
       return
     }
-    setDraft(createDraftFromIntent(intent))
-    setStep('review')
+
+    try {
+      setBusy(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftFromIntent({
+        requestedWork: intent,
+        providerId: 'codex',
+        model: 'default',
+        sandbox: 'workspace-write'
+      })
+      setDraft(nextDraft)
+      setStep('review')
+    } catch (draftError) {
+      setError(getErrorMessage(draftError, 'Agent draft could not be generated.'))
+    } finally {
+      setBusy(false)
+    }
   }
 
-  function handleProviderChange(provider: AgentProvider): void {
-    updateDraft({ provider, model: getModelOptions(provider)[0] })
+  function handleProviderChange(providerId: ProviderId): void {
+    updateDraft({ providerId, model: getModelOptions(providerId)[0] })
   }
 
-  function handleCreateAgent(): void {
-    if (!canCreate) {
+  async function handleCreateAgent(): Promise<void> {
+    if (!draft || !canCreate) {
       return
     }
-    onCreateAgent(draft)
-    resetDialog()
+
+    try {
+      setBusy(true)
+      setError('')
+      const agent = await window.ordinus.agents.create(draft)
+      onAgentCreated(agent)
+      resetDialog()
+    } catch (createError) {
+      setError(getErrorMessage(createError, 'Agent could not be created.'))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -456,7 +382,7 @@ function CreateAgentDialog({
         </div>
 
         {step === 'describe' ? (
-          <div className="p-5">
+          <div className="grid gap-3 p-5">
             <label className="grid gap-2">
               <span className="text-sm font-semibold">What should this agent help with?</span>
               <textarea
@@ -466,14 +392,15 @@ function CreateAgentDialog({
                 onChange={(event) => setIntent(event.target.value)}
               />
             </label>
+            {error ? <InlineError message={error} /> : null}
           </div>
-        ) : (
+        ) : draft ? (
           <ScrollArea key={step} className="h-[min(680px,calc(100vh-15rem))]">
             <div className="p-5">
               <div className="grid gap-4">
                 <div className="grid gap-2 rounded-lg border bg-accent p-4">
                   <p className="text-xs font-medium text-muted-foreground">Requested work</p>
-                  <p className="text-base font-semibold leading-6">{draft.description}</p>
+                  <p className="text-base font-semibold leading-6">{draft.requestedWork}</p>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
@@ -506,8 +433,8 @@ function CreateAgentDialog({
                   <div className="grid gap-3 md:grid-cols-2">
                     <FormField label="Provider CLI">
                       <SelectControl
-                        value={draft.provider}
-                        onChange={(value) => handleProviderChange(value as AgentProvider)}
+                        value={draft.providerId}
+                        onChange={(value) => handleProviderChange(value as ProviderId)}
                       >
                         <option value="codex">Codex</option>
                         <option value="claude">Claude</option>
@@ -519,7 +446,7 @@ function CreateAgentDialog({
                         value={draft.model}
                         onChange={(value) => updateDraft({ model: value })}
                       >
-                        {getModelOptions(draft.provider).map((model) => (
+                        {getModelOptions(draft.providerId).map((model) => (
                           <option key={model} value={model}>
                             {model}
                           </option>
@@ -529,7 +456,7 @@ function CreateAgentDialog({
                     <FormField label="Sandbox">
                       <SelectControl
                         value={draft.sandbox}
-                        onChange={(value) => updateDraft({ sandbox: value })}
+                        onChange={(value) => updateDraft({ sandbox: value as AgentSandbox })}
                       >
                         <option value="read-only">Read only</option>
                         <option value="workspace-write">Workspace write</option>
@@ -538,35 +465,47 @@ function CreateAgentDialog({
                     </FormField>
                     <FormField label="Workspace">
                       <Input
-                        value={draft.workspace}
-                        onChange={(event) => updateDraft({ workspace: event.target.value })}
+                        value={draft.workspaceRoot}
+                        onChange={(event) => updateDraft({ workspaceRoot: event.target.value })}
                       />
                     </FormField>
                   </div>
                 </section>
+                {error ? <InlineError message={error} /> : null}
               </div>
             </div>
           </ScrollArea>
-        )}
+        ) : null}
 
         <DialogFooter className="border-t bg-accent/50 p-4">
           {step === 'describe' ? (
             <>
-              <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => handleOpenChange(false)}
+              >
                 Cancel
               </Button>
-              <Button type="button" disabled={!canDraft} onClick={handleDraftAgent}>
-                <WandSparkles />
+              <Button type="button" disabled={!canDraft} onClick={() => void handleDraftAgent()}>
+                {busy ? <Loader2 className="animate-spin" /> : <WandSparkles />}
                 Draft agent
               </Button>
             </>
           ) : (
             <>
-              <Button type="button" variant="ghost" onClick={() => setStep('describe')}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setStep('describe')}
+              >
                 <ArrowLeft />
                 Back
               </Button>
-              <Button type="button" disabled={!canCreate} onClick={handleCreateAgent}>
+              <Button type="button" disabled={!canCreate} onClick={() => void handleCreateAgent()}>
+                {busy ? <Loader2 className="animate-spin" /> : null}
                 Create agent
               </Button>
             </>
@@ -574,6 +513,442 @@ function CreateAgentDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
+  const [skills, setSkills] = useState<AgentSkill[]>([])
+  const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [skillName, setSkillName] = useState('')
+  const [skillDescription, setSkillDescription] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let mounted = true
+
+    async function loadSkills(): Promise<void> {
+      try {
+        setLoading(true)
+        setError('')
+        const nextSkills = await window.ordinus.agents.listSkills({ agentId: agent.id })
+        if (mounted) {
+          setSkills(nextSkills)
+        }
+      } catch (loadError) {
+        if (mounted) {
+          setError(getErrorMessage(loadError, 'Skills could not be loaded.'))
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadSkills()
+
+    return () => {
+      mounted = false
+    }
+  }, [agent.id])
+
+  async function handleCreateSkill(): Promise<void> {
+    if (!skillName.trim() || saving) {
+      return
+    }
+
+    try {
+      setSaving(true)
+      setError('')
+      const skill = await window.ordinus.agents.createSkill({
+        agentId: agent.id,
+        name: skillName,
+        description: skillDescription
+      })
+      setSkills((current) =>
+        [...current, skill].sort((left, right) => left.name.localeCompare(right.name))
+      )
+      setSkillName('')
+      setSkillDescription('')
+      setCreateOpen(false)
+    } catch (createError) {
+      setError(getErrorMessage(createError, 'Skill could not be created.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="grid gap-3 p-5">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 px-2.5 text-xs"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus />
+          Create skill
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="h-8 px-2.5 text-xs" disabled>
+          <FolderOpen />
+          Import skill
+        </Button>
+      </div>
+
+      {error ? <InlineError message={error} /> : null}
+
+      {skills.length > 0 ? (
+        <div className="grid gap-2">
+          {skills.map((skill) => (
+            <div key={skill.id} className="grid gap-2 rounded-lg border bg-card p-4">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{skill.name}</p>
+                  <p className="truncate font-mono text-xs text-muted-foreground">
+                    {skill.relativePath}
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {new Date(skill.updatedAt).toLocaleDateString()}
+                </span>
+              </div>
+              {skill.description ? (
+                <p className="text-sm text-muted-foreground">{skill.description}</p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          icon={<Sparkles />}
+          title={loading ? 'Loading skills' : 'No skills yet'}
+          detail={
+            loading
+              ? 'Checking this agent skill folder.'
+              : 'Create a skill to add reusable instructions for this agent.'
+          }
+        />
+      )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create skill</DialogTitle>
+            <DialogDescription>Add a SKILL.md file to this agent skill folder.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <FormField label="Skill name">
+              <Input
+                value={skillName}
+                onChange={(event) => setSkillName(event.target.value)}
+                placeholder="Strategy review"
+              />
+            </FormField>
+            <label className="grid gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Description</span>
+              <textarea
+                className="ordinus-scrollbar min-h-28 resize-y rounded-lg border bg-card p-3 text-sm leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                value={skillDescription}
+                onChange={(event) => setSkillDescription(event.target.value)}
+                placeholder="When should this skill be used?"
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={saving}
+              onClick={() => setCreateOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!skillName.trim() || saving}
+              onClick={() => void handleCreateSkill()}
+            >
+              {saving ? <Loader2 className="animate-spin" /> : null}
+              Create skill
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function InstructionsPanel({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  const [savedInstructions, setSavedInstructions] = useState(agent.instructions)
+  const [instructions, setInstructions] = useState(agent.instructions)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const dirty = instructions !== savedInstructions
+
+  async function handleSave(): Promise<void> {
+    if (!dirty) {
+      return
+    }
+
+    try {
+      setSaving(true)
+      setError('')
+      const nextAgent = await window.ordinus.agents.updateInstructions({
+        id: agent.id,
+        instructions
+      })
+      setSavedInstructions(nextAgent.instructions)
+      setInstructions(nextAgent.instructions)
+      onAgentSaved(nextAgent)
+    } catch (saveError) {
+      setError(getErrorMessage(saveError, 'Instructions could not be saved.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="grid gap-4 p-5">
+      <div className="flex flex-col gap-3 rounded-lg border bg-accent px-3 py-2.5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-xs text-muted-foreground">
+            agents/{agent.id}/AGENTS.md
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {dirty ? 'Unsaved changes' : 'Saved'}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2.5 text-xs"
+            disabled={!dirty || saving}
+            onClick={() => setInstructions(savedInstructions)}
+          >
+            Discard
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 px-2.5 text-xs"
+            disabled={!dirty || saving}
+            onClick={() => void handleSave()}
+          >
+            {saving ? <Loader2 className="animate-spin" /> : null}
+            Save
+          </Button>
+        </div>
+      </div>
+
+      {error ? <InlineError message={error} /> : null}
+
+      <textarea
+        aria-label={`${agent.name} instructions`}
+        className="ordinus-scrollbar min-h-[480px] resize-y rounded-lg border bg-card p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        placeholder={`Describe what this agent is responsible for.
+
+Include:
+- Role
+- Scope
+- What it should avoid
+- How it should verify work`}
+        spellCheck={false}
+        value={instructions}
+        onChange={(event) => setInstructions(event.target.value)}
+      />
+    </div>
+  )
+}
+
+function SettingsPanel({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  const initialSettings: SettingsDraft = {
+    providerId: agent.providerId,
+    model: agent.model,
+    sandbox: agent.sandbox,
+    workspaceRoot: agent.workspaceRoot,
+    enabled: agent.enabled
+  }
+  const [savedSettings, setSavedSettings] = useState<SettingsDraft>(initialSettings)
+  const [draft, setDraft] = useState<SettingsDraft>(initialSettings)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const dirty =
+    draft.providerId !== savedSettings.providerId ||
+    draft.model !== savedSettings.model ||
+    draft.sandbox !== savedSettings.sandbox ||
+    draft.workspaceRoot !== savedSettings.workspaceRoot ||
+    draft.enabled !== savedSettings.enabled
+  const modelOptions = getModelOptions(draft.providerId)
+
+  function updateDraft(next: Partial<SettingsDraft>): void {
+    setDraft((current) => {
+      const merged = { ...current, ...next }
+      if (next.providerId && !getModelOptions(next.providerId).includes(merged.model)) {
+        merged.model = getModelOptions(next.providerId)[0]
+      }
+      return merged
+    })
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!dirty) {
+      return
+    }
+
+    try {
+      setSaving(true)
+      setError('')
+      const nextAgent = await window.ordinus.agents.updateSettings({
+        id: agent.id,
+        ...draft
+      })
+      const nextSettings = {
+        providerId: nextAgent.providerId,
+        model: nextAgent.model,
+        sandbox: nextAgent.sandbox,
+        workspaceRoot: nextAgent.workspaceRoot,
+        enabled: nextAgent.enabled
+      }
+      setSavedSettings(nextSettings)
+      setDraft(nextSettings)
+      onAgentSaved(nextAgent)
+    } catch (saveError) {
+      setError(getErrorMessage(saveError, 'Settings could not be saved.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="grid gap-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-accent px-3 py-2.5">
+        <span className="text-xs text-muted-foreground">
+          {dirty ? 'Unsaved changes' : 'Settings saved'}
+        </span>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2.5 text-xs"
+            disabled={!dirty || saving}
+            onClick={() => setDraft(savedSettings)}
+          >
+            Discard
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 px-2.5 text-xs"
+            disabled={!dirty || saving}
+            onClick={() => void handleSave()}
+          >
+            {saving ? <Loader2 className="animate-spin" /> : null}
+            Save settings
+          </Button>
+        </div>
+      </div>
+
+      {error ? <InlineError message={error} /> : null}
+
+      <section className="grid gap-4 rounded-lg border bg-card p-4">
+        <p className="text-sm font-semibold">Runtime</p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <FormField label="Provider CLI">
+            <SelectControl
+              value={draft.providerId}
+              onChange={(value) => updateDraft({ providerId: value as ProviderId })}
+            >
+              <option value="codex">Codex</option>
+              <option value="claude">Claude</option>
+              <option value="gemini">Gemini</option>
+            </SelectControl>
+          </FormField>
+
+          <FormField label="Model">
+            <SelectControl value={draft.model} onChange={(value) => updateDraft({ model: value })}>
+              {modelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </SelectControl>
+          </FormField>
+
+          <FormField label="Sandbox">
+            <SelectControl
+              value={draft.sandbox}
+              onChange={(value) => updateDraft({ sandbox: value as AgentSandbox })}
+            >
+              <option value="read-only">Read only</option>
+              <option value="workspace-write">Workspace write</option>
+              <option value="full-access">Full access</option>
+            </SelectControl>
+          </FormField>
+
+          <FormField label="Workspace">
+            <Input
+              value={draft.workspaceRoot}
+              onChange={(event) => updateDraft({ workspaceRoot: event.target.value })}
+            />
+          </FormField>
+        </div>
+        {draft.sandbox === 'full-access' ? (
+          <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
+            Full access should be reserved for agents that need broad local operations.
+          </p>
+        ) : null}
+      </section>
+
+      <section className="grid gap-3 rounded-lg border bg-card p-4">
+        <p className="text-sm font-semibold">Lifecycle</p>
+        <div className="grid gap-2">
+          <label className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Enabled</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                Agent can be assigned work
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="size-4 shrink-0 accent-primary"
+              checked={draft.enabled}
+              onChange={(event) => updateDraft({ enabled: event.target.checked })}
+            />
+          </label>
+          <div className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Local state</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                Sessions and generated local data
+              </span>
+            </span>
+            <Button variant="outline" size="sm" className="h-8 shrink-0 px-2.5 text-xs">
+              Reset
+            </Button>
+          </div>
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -627,193 +1002,16 @@ function StepProgressItem({
   )
 }
 
-function InstructionsPanel({ agent }: { agent: AgentProfile }): React.JSX.Element {
-  const [savedInstructions, setSavedInstructions] = useState(() => getDefaultInstructions(agent))
-  const [instructions, setInstructions] = useState(savedInstructions)
-  const dirty = instructions !== savedInstructions
-
+function StatusDot({ status }: { status: AgentStatus }): React.JSX.Element {
   return (
-    <div className="grid gap-4 p-5">
-      <div className="flex flex-col gap-3 rounded-lg border bg-accent px-3 py-2.5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <p className="truncate font-mono text-xs text-muted-foreground">
-            agents/{agent.id}/AGENTS.md
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            {dirty ? 'Unsaved changes' : 'Saved'}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!dirty}
-            onClick={() => setInstructions(savedInstructions)}
-          >
-            Discard
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!dirty}
-            onClick={() => setSavedInstructions(instructions)}
-          >
-            Save
-          </Button>
-        </div>
-      </div>
-
-      <textarea
-        aria-label={`${agent.name} instructions`}
-        className="ordinus-scrollbar min-h-[480px] resize-y rounded-lg border bg-card p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        placeholder={`Describe what this agent is responsible for.
-
-Include:
-- Role
-- Scope
-- What it should avoid
-- How it should verify work`}
-        spellCheck={false}
-        value={instructions}
-        onChange={(event) => setInstructions(event.target.value)}
-      />
-    </div>
-  )
-}
-
-function SettingsPanel({ agent }: { agent: AgentProfile }): React.JSX.Element {
-  const initialDraft: SettingsDraft = {
-    provider: agent.provider,
-    model: agent.model,
-    sandbox: agent.sandbox,
-    workspace: agent.workspace,
-    enabled: agent.enabled
-  }
-  const [draft, setDraft] = useState<SettingsDraft>(initialDraft)
-  const dirty =
-    draft.provider !== initialDraft.provider ||
-    draft.model !== initialDraft.model ||
-    draft.sandbox !== initialDraft.sandbox ||
-    draft.workspace !== initialDraft.workspace ||
-    draft.enabled !== initialDraft.enabled
-  const modelOptions = getModelOptions(draft.provider)
-
-  function updateDraft(next: Partial<SettingsDraft>): void {
-    setDraft((current) => {
-      const merged = { ...current, ...next }
-      if (next.provider && !getModelOptions(next.provider).includes(merged.model)) {
-        merged.model = getModelOptions(next.provider)[0]
-      }
-      return merged
-    })
-  }
-
-  return (
-    <div className="grid gap-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-accent px-3 py-2.5">
-        <span className="text-xs text-muted-foreground">
-          {dirty ? 'Unsaved changes' : 'Settings saved'}
-        </span>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!dirty}
-            onClick={() => setDraft(initialDraft)}
-          >
-            Discard
-          </Button>
-          <Button type="button" size="sm" className="h-8 px-2.5 text-xs" disabled={!dirty}>
-            Save settings
-          </Button>
-        </div>
-      </div>
-
-      <section className="grid gap-4 rounded-lg border bg-card p-4">
-        <p className="text-sm font-semibold">Runtime</p>
-        <div className="grid gap-3 md:grid-cols-2">
-          <FormField label="Provider CLI">
-            <SelectControl
-              value={draft.provider}
-              onChange={(value) => updateDraft({ provider: value as SettingsDraft['provider'] })}
-            >
-              <option value="codex">Codex</option>
-              <option value="claude">Claude</option>
-              <option value="gemini">Gemini</option>
-            </SelectControl>
-          </FormField>
-
-          <FormField label="Model">
-            <SelectControl value={draft.model} onChange={(value) => updateDraft({ model: value })}>
-              {modelOptions.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </SelectControl>
-          </FormField>
-
-          <FormField label="Sandbox">
-            <SelectControl
-              value={draft.sandbox}
-              onChange={(value) => updateDraft({ sandbox: value })}
-            >
-              <option value="read-only">Read only</option>
-              <option value="workspace-write">Workspace write</option>
-              <option value="full-access">Full access</option>
-            </SelectControl>
-          </FormField>
-
-          <FormField label="Workspace">
-            <Input
-              value={draft.workspace}
-              onChange={(event) => updateDraft({ workspace: event.target.value })}
-            />
-          </FormField>
-        </div>
-        {draft.sandbox === 'full-access' ? (
-          <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
-            Full access should be reserved for agents that need broad local operations.
-          </p>
-        ) : null}
-      </section>
-
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <p className="text-sm font-semibold">Lifecycle</p>
-        <div className="grid gap-2">
-          <label className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">Enabled</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                Agent can be assigned work
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              className="size-4 shrink-0 accent-primary"
-              checked={draft.enabled}
-              onChange={(event) => updateDraft({ enabled: event.target.checked })}
-            />
-          </label>
-          <div className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">Local state</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                Sessions and generated local data
-              </span>
-            </span>
-            <Button variant="outline" size="sm" className="h-8 shrink-0 px-2.5 text-xs">
-              Reset
-            </Button>
-          </div>
-        </div>
-      </section>
-    </div>
+    <span
+      className={cn(
+        'mt-1 size-2.5 shrink-0 rounded-full',
+        status === 'ready' && 'bg-status-completed',
+        status === 'needs-attention' && 'bg-status-attention',
+        status === 'offline' && 'bg-muted-foreground'
+      )}
+    />
   )
 }
 
@@ -852,181 +1050,6 @@ function SelectControl({
   )
 }
 
-function getModelOptions(provider: AgentProvider): string[] {
-  if (provider === 'claude') {
-    return ['default', 'claude-sonnet', 'claude-opus']
-  }
-  if (provider === 'gemini') {
-    return ['default', 'gemini-pro', 'gemini-flash']
-  }
-  return ['default', 'gpt-5.4', 'gpt-5.4-mini']
-}
-
-function createDraftFromIntent(intent: string): CreateAgentDraft {
-  const normalizedIntent = intent.trim()
-  const role = inferAgentRole(normalizedIntent)
-  const name = inferAgentName(role)
-  const description =
-    normalizedIntent || 'Own a focused part of the workspace and keep progress observable.'
-
-  return {
-    name,
-    role,
-    description,
-    instructions: buildInstructions({ name, role, description }),
-    provider: 'codex',
-    model: 'default',
-    sandbox: 'workspace-write',
-    workspace: '.'
-  }
-}
-
-function createAgentFromDraft(
-  draft: CreateAgentDraft,
-  existingAgents: AgentProfile[]
-): AgentProfile {
-  return {
-    id: getUniqueAgentId(draft.name, existingAgents),
-    name: draft.name.trim(),
-    role: draft.role.trim(),
-    description: draft.description.trim(),
-    status: 'ready',
-    enabled: true,
-    provider: draft.provider,
-    model: draft.model,
-    sandbox: draft.sandbox,
-    workspace: draft.workspace,
-    teams: [],
-    skills: [],
-    plugins: [],
-    outputs: [],
-    readiness: [
-      { label: 'Provider', ok: true, detail: `${toTitleCase(draft.provider)} selected` },
-      { label: 'Instructions', ok: true, detail: 'Draft reviewed' },
-      { label: 'Skills', ok: false, detail: 'No skills selected' }
-    ]
-  }
-}
-
-function getDefaultInstructions(agent: AgentProfile): string {
-  return `# ${agent.name}
-
-Role: ${agent.role}
-
-Responsibility:
-${agent.description}
-
-Work style:
-- Inspect workspace context before changing files.
-- Keep changes focused and verifiable.
-- Surface blockers and missing setup clearly.
-
-Verification:
-- Explain what changed.
-- Run the smallest useful checks before handing work back.`
-}
-
-function buildInstructions({
-  description,
-  name,
-  role
-}: {
-  description: string
-  name: string
-  role: string
-}): string {
-  return `# ${name}
-
-Role: ${role}
-
-Responsibility:
-${description}
-
-Scope:
-- Work only inside the selected workspace.
-- Keep ownership focused and easy to review.
-- Ask for direction when the request changes the agent's responsibility.
-
-Work style:
-- Inspect the workspace before making changes.
-- Keep changes small and explain tradeoffs.
-- Surface blockers, missing setup, and risky assumptions.
-
-Verification:
-- Run the smallest useful checks for the work.
-- Summarize what changed and what still needs attention.`
-}
-
-function inferAgentRole(intent: string): string {
-  const lowerIntent = intent.toLowerCase()
-  if (
-    lowerIntent.includes('review') ||
-    lowerIntent.includes('test') ||
-    lowerIntent.includes('qa')
-  ) {
-    return 'Review and quality agent'
-  }
-  if (
-    lowerIntent.includes('plan') ||
-    lowerIntent.includes('task') ||
-    lowerIntent.includes('dispatch')
-  ) {
-    return 'Planning and coordination agent'
-  }
-  if (
-    lowerIntent.includes('doc') ||
-    lowerIntent.includes('write') ||
-    lowerIntent.includes('release note')
-  ) {
-    return 'Documentation agent'
-  }
-  if (
-    lowerIntent.includes('build') ||
-    lowerIntent.includes('code') ||
-    lowerIntent.includes('implement')
-  ) {
-    return 'Implementation agent'
-  }
-  return 'Focused workspace agent'
-}
-
-function inferAgentName(role: string): string {
-  return role
-    .replace(' and ', ' ')
-    .replace(/\bagent\b/i, '')
-    .trim()
-    .split(' ')
-    .map(toTitleCase)
-    .join(' ')
-    .concat(' Agent')
-}
-
-function getUniqueAgentId(name: string, existingAgents: AgentProfile[]): string {
-  const baseId = slugify(name) || 'agent'
-  const existingIds = new Set(existingAgents.map((agent) => agent.id))
-  if (!existingIds.has(baseId)) {
-    return baseId
-  }
-
-  let suffix = 2
-  while (existingIds.has(`${baseId}-${suffix}`)) {
-    suffix += 1
-  }
-  return `${baseId}-${suffix}`
-}
-
-function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-function toTitleCase(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1)
-}
-
 function EmptyState({
   icon,
   title,
@@ -1045,4 +1068,36 @@ function EmptyState({
       </div>
     </div>
   )
+}
+
+function InlineError({ message }: { message: string }): React.JSX.Element {
+  return (
+    <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
+      {message}
+    </p>
+  )
+}
+
+function getAgentStatus(agent: Agent): AgentStatus {
+  if (!agent.enabled) {
+    return 'offline'
+  }
+  if (!agent.instructions.trim()) {
+    return 'needs-attention'
+  }
+  return 'ready'
+}
+
+function getModelOptions(providerId: ProviderId): string[] {
+  if (providerId === 'claude') {
+    return ['default', 'claude-sonnet', 'claude-opus']
+  }
+  if (providerId === 'gemini') {
+    return ['default', 'gemini-pro', 'gemini-flash']
+  }
+  return ['default', 'gpt-5.4', 'gpt-5.4-mini']
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
 }

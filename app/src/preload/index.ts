@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  Agent,
+  AgentCreateInput,
+  AgentDraft,
+  AgentDraftFromIntentInput,
+  AgentSkill,
+  AgentSkillCreateInput,
+  AgentSkillsListInput,
+  AgentUpdateInstructionsInput,
+  AgentUpdateSettingsInput,
   AppInfo,
   CodexConnectResult,
   DbStatus,
@@ -30,6 +39,21 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workspaceSelectFolder),
     saveConfig: async (input: WorkspaceSaveConfigInput): Promise<WorkspaceConfig> =>
       ipcRenderer.invoke(ipcChannels.workspaceSaveConfig, input)
+  },
+  agents: {
+    list: async (): Promise<Agent[]> => ipcRenderer.invoke(ipcChannels.agentsList),
+    draftFromIntent: async (input: AgentDraftFromIntentInput): Promise<AgentDraft> =>
+      ipcRenderer.invoke(ipcChannels.agentsDraftFromIntent, input),
+    create: async (input: AgentCreateInput): Promise<Agent> =>
+      ipcRenderer.invoke(ipcChannels.agentsCreate, input),
+    updateInstructions: async (input: AgentUpdateInstructionsInput): Promise<Agent> =>
+      ipcRenderer.invoke(ipcChannels.agentsUpdateInstructions, input),
+    updateSettings: async (input: AgentUpdateSettingsInput): Promise<Agent> =>
+      ipcRenderer.invoke(ipcChannels.agentsUpdateSettings, input),
+    listSkills: async (input: AgentSkillsListInput): Promise<AgentSkill[]> =>
+      ipcRenderer.invoke(ipcChannels.agentsListSkills, input),
+    createSkill: async (input: AgentSkillCreateInput): Promise<AgentSkill> =>
+      ipcRenderer.invoke(ipcChannels.agentsCreateSkill, input)
   },
   runtime: {
     getProviders: async (): Promise<ProviderStatus[]> =>

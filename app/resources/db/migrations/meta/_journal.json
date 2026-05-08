@@ -15,6 +15,13 @@
       "when": 1778222095458,
       "tag": "0001_workspace_config",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778250619051,
+      "tag": "0002_known_viper",
+      "breakpoints": true
     }
   ]
 }

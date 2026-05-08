@@ -1,19 +1,28 @@
 import Database from 'better-sqlite3'
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
+  AgentCreateInputSchema,
+  AgentSchema,
+  AgentUpdateInstructionsInputSchema,
+  AgentUpdateSettingsInputSchema,
   DbStatusSchema,
   WorkspaceConfigSchema,
+  type Agent,
+  type AgentCreateInput,
+  type AgentUpdateInstructionsInput,
+  type AgentUpdateSettingsInput,
   type DbStatus,
   type WorkspaceConfig,
   type WorkspaceSaveConfigInput
 } from '@shared/contracts'
 import { getSystemPaths } from '../paths'
 import { databaseSchemaVersion, getMigrationsFolder } from './migrations'
-import { appMeta, workspaceConfig } from './schema'
+import { agents, appMeta, workspaceConfig } from './schema'
 
 export class OrdinusDatabase {
   private readonly databasePath: string
@@ -26,7 +35,7 @@ export class OrdinusDatabase {
     mkdirSync(dirname(this.databasePath), { recursive: true })
     this.existedBeforeOpen = existsSync(this.databasePath)
     this.sqlite = new Database(this.databasePath)
-    this.db = drizzle(this.sqlite, { schema: { appMeta, workspaceConfig } })
+    this.db = drizzle(this.sqlite, { schema: { agents, appMeta, workspaceConfig } })
   }
 
   initialize(): DbStatus {
@@ -129,9 +138,106 @@ export class OrdinusDatabase {
     return saved
   }
 
+  listAgents(): Agent[] {
+    return this.db
+      .select()
+      .from(agents)
+      .orderBy(desc(agents.createdAt))
+      .all()
+      .map((agent) => AgentSchema.parse(agent))
+  }
+
+  hasAgent(id: string): boolean {
+    return Boolean(this.db.select({ id: agents.id }).from(agents).where(eq(agents.id, id)).get())
+  }
+
+  createAgent(input: AgentCreateInput): Agent {
+    const parsed = AgentCreateInputSchema.parse(input)
+    const now = new Date().toISOString()
+    const agent = AgentSchema.parse({
+      ...parsed,
+      id: getUniqueAgentId((id) => this.hasAgent(id)),
+      enabled: true,
+      createdAt: now,
+      updatedAt: now
+    })
+
+    this.db.insert(agents).values(agent).run()
+
+    return agent
+  }
+
+  updateAgentInstructions(input: AgentUpdateInstructionsInput): Agent {
+    const parsed = AgentUpdateInstructionsInputSchema.parse(input)
+    const now = new Date().toISOString()
+
+    if (!this.hasAgent(parsed.id)) {
+      throw new Error('Agent was not found.')
+    }
+
+    this.db
+      .update(agents)
+      .set({
+        instructions: parsed.instructions,
+        updatedAt: now
+      })
+      .where(eq(agents.id, parsed.id))
+      .run()
+
+    return this.getAgent(parsed.id)
+  }
+
+  updateAgentSettings(input: AgentUpdateSettingsInput): Agent {
+    const parsed = AgentUpdateSettingsInputSchema.parse(input)
+    const now = new Date().toISOString()
+
+    if (!this.hasAgent(parsed.id)) {
+      throw new Error('Agent was not found.')
+    }
+
+    this.db
+      .update(agents)
+      .set({
+        providerId: parsed.providerId,
+        model: parsed.model,
+        sandbox: parsed.sandbox,
+        workspaceRoot: parsed.workspaceRoot,
+        enabled: parsed.enabled,
+        updatedAt: now
+      })
+      .where(eq(agents.id, parsed.id))
+      .run()
+
+    return this.getAgent(parsed.id)
+  }
+
+  private getAgent(id: string): Agent {
+    const agent = this.db.select().from(agents).where(eq(agents.id, id)).get()
+
+    if (!agent) {
+      throw new Error('Agent was not found.')
+    }
+
+    return AgentSchema.parse(agent)
+  }
+
   close(): void {
     this.sqlite.close()
   }
+}
+
+function getUniqueAgentId(idExists: (id: string) => boolean): string {
+  let candidate = createAgentId()
+
+  while (idExists(candidate)) {
+    candidate = createAgentId()
+  }
+
+  return candidate
+}
+
+function createAgentId(): string {
+  return `agt-${randomUUID()}`
 }
 
 export function resolveWorkspaceRoot(value: string): string {

@@ -1,4 +1,13 @@
 import type {
+  Agent,
+  AgentCreateInput,
+  AgentDraft,
+  AgentDraftFromIntentInput,
+  AgentSkill,
+  AgentSkillCreateInput,
+  AgentSkillsListInput,
+  AgentUpdateInstructionsInput,
+  AgentUpdateSettingsInput,
   AppInfo,
   CodexConnectResult,
   DbStatus,
@@ -26,6 +35,15 @@ export type OrdinusApi = {
   workspace: {
     selectFolder: () => Promise<WorkspaceSelectFolderResult>
     saveConfig: (input: WorkspaceSaveConfigInput) => Promise<WorkspaceConfig>
+  }
+  agents: {
+    list: () => Promise<Agent[]>
+    draftFromIntent: (input: AgentDraftFromIntentInput) => Promise<AgentDraft>
+    create: (input: AgentCreateInput) => Promise<Agent>
+    updateInstructions: (input: AgentUpdateInstructionsInput) => Promise<Agent>
+    updateSettings: (input: AgentUpdateSettingsInput) => Promise<Agent>
+    listSkills: (input: AgentSkillsListInput) => Promise<AgentSkill[]>
+    createSkill: (input: AgentSkillCreateInput) => Promise<AgentSkill>
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>
