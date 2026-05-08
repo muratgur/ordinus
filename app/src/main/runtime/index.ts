@@ -122,7 +122,17 @@ export function createRuntimeService(): RuntimeService {
       })
     },
     async generateAgentDraft(input) {
-      return generateCodexAgentDraft(input)
+      const parsed = AgentDraftFromIntentInputSchema.parse(input)
+
+      if (parsed.providerId === 'codex') {
+        return generateCodexAgentDraft(parsed)
+      }
+
+      if (parsed.providerId === 'claude') {
+        return generateClaudeAgentDraft(parsed)
+      }
+
+      throw new Error('Agent draft generation is not available for Gemini yet.')
     },
     subscribe(listener) {
       listeners.add(listener)
@@ -210,10 +220,6 @@ async function connectCliProvider({
 async function generateCodexAgentDraft(input: AgentDraftFromIntentInput): Promise<AgentDraft> {
   const parsed = AgentDraftFromIntentInputSchema.parse(input)
 
-  if (parsed.providerId !== 'codex') {
-    throw new Error('Agent draft generation is currently available for Codex only.')
-  }
-
   const executable = await findCodexExecutable()
   if (!executable) {
     throw new Error('Codex CLI was not found.')
@@ -260,19 +266,71 @@ async function generateCodexAgentDraft(input: AgentDraftFromIntentInput): Promis
 
     const draftJson = AgentDraftOutputSchema.parse(readAgentDraftOutput(outputPath))
 
-    return AgentDraftSchema.parse({
-      requestedWork: parsed.requestedWork,
-      name: draftJson.name,
-      role: draftJson.role,
-      instructions: draftJson.instructions,
-      providerId: parsed.providerId,
-      model: parsed.model,
-      sandbox: parsed.sandbox,
-      workspaceRoot: parsed.workspaceRoot ?? getSystemPaths().userData
-    })
+    return buildAgentDraft(parsed, draftJson)
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }
+}
+
+async function generateClaudeAgentDraft(input: AgentDraftFromIntentInput): Promise<AgentDraft> {
+  const parsed = AgentDraftFromIntentInputSchema.parse(input)
+  const executable = await findClaudeExecutable()
+  if (!executable) {
+    throw new Error('Claude Code CLI was not found.')
+  }
+
+  const status = await getClaudeStatus(null)
+  if (!status.connected) {
+    throw new Error('Claude needs login before Ordinus can draft agents with it.')
+  }
+
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--json-schema',
+    JSON.stringify(agentDraftOutputJsonSchema),
+    '--no-session-persistence',
+    '--permission-mode',
+    'dontAsk'
+  ]
+
+  if (parsed.model !== 'default') {
+    args.splice(1, 0, '--model', parsed.model)
+  }
+
+  const result = await runCapture(executable.command, args, {
+    env: getClaudeEnvironment(),
+    shell: executable.shell,
+    stdin: buildAgentDraftPrompt(parsed.requestedWork),
+    timeoutMs: 90_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(
+      firstLine(result.stderr || result.stdout) || 'Claude could not draft the agent.'
+    )
+  }
+
+  const draftJson = AgentDraftOutputSchema.parse(readClaudeAgentDraftOutput(result.stdout))
+
+  return buildAgentDraft(parsed, draftJson)
+}
+
+function buildAgentDraft(
+  input: AgentDraftFromIntentInput,
+  draftJson: Pick<AgentDraft, 'name' | 'role' | 'instructions'>
+): AgentDraft {
+  return AgentDraftSchema.parse({
+    requestedWork: input.requestedWork,
+    name: draftJson.name,
+    role: draftJson.role,
+    instructions: draftJson.instructions,
+    providerId: input.providerId,
+    model: input.model,
+    sandbox: input.sandbox,
+    workspaceRoot: input.workspaceRoot ?? getSystemPaths().userData
+  })
 }
 
 const agentDraftOutputJsonSchema = {
@@ -889,6 +947,55 @@ function readAgentDraftOutput(outputPath: string): unknown {
   } catch {
     throw new Error('Codex returned an invalid agent draft.')
   }
+}
+
+function readClaudeAgentDraftOutput(value: string): unknown {
+  try {
+    return unwrapClaudeStructuredOutput(parseJsonFromCliOutput(value))
+  } catch {
+    throw new Error(`Claude returned an invalid agent draft: ${firstLine(value) || 'empty output'}`)
+  }
+}
+
+function unwrapClaudeStructuredOutput(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value
+  }
+
+  const result = value.structured_output ?? value.result ?? value
+  return typeof result === 'string' ? parseJsonFromCliOutput(result) : result
+}
+
+function parseJsonFromCliOutput(value: string): unknown {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    throw new Error('CLI output was empty.')
+  }
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    // Some CLIs print diagnostics before the final JSON object. Prefer the last parseable JSON line.
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (const line of [...lines].reverse()) {
+    try {
+      return JSON.parse(line)
+    } catch {
+      continue
+    }
+  }
+
+  return JSON.parse(extractJsonObject(trimmed))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 function runCapture(

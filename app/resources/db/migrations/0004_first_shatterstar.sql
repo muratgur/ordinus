@@ -1,0 +1,1 @@
+ALTER TABLE `workspace_config` ADD `default_model` text DEFAULT 'default' NOT NULL;

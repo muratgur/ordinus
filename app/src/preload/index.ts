@@ -19,6 +19,7 @@ import type {
   SystemPaths,
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
+  WorkspaceUpdateSystemDefaultInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
@@ -40,7 +41,11 @@ const ordinus = {
     selectFolder: async (): Promise<WorkspaceSelectFolderResult> =>
       ipcRenderer.invoke(ipcChannels.workspaceSelectFolder),
     saveConfig: async (input: WorkspaceSaveConfigInput): Promise<WorkspaceConfig> =>
-      ipcRenderer.invoke(ipcChannels.workspaceSaveConfig, input)
+      ipcRenderer.invoke(ipcChannels.workspaceSaveConfig, input),
+    updateSystemDefault: async (
+      input: WorkspaceUpdateSystemDefaultInput
+    ): Promise<WorkspaceConfig> =>
+      ipcRenderer.invoke(ipcChannels.workspaceUpdateSystemDefault, input)
   },
   agents: {
     list: async (): Promise<Agent[]> => ipcRenderer.invoke(ipcChannels.agentsList),

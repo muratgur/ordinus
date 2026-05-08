@@ -12,13 +12,15 @@ import {
   AgentUpdateSettingsInputSchema,
   DbStatusSchema,
   WorkspaceConfigSchema,
+  WorkspaceUpdateSystemDefaultInputSchema,
   type Agent,
   type AgentCreateInput,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
   type DbStatus,
   type WorkspaceConfig,
-  type WorkspaceSaveConfigInput
+  type WorkspaceSaveConfigInput,
+  type WorkspaceUpdateSystemDefaultInput
 } from '@shared/contracts'
 import { getSystemPaths } from '../paths'
 import { databaseSchemaVersion, getMigrationsFolder } from './migrations'
@@ -96,6 +98,8 @@ export class OrdinusDatabase {
     return WorkspaceConfigSchema.parse({
       workspaceRoot: config.workspaceRoot,
       workspaceName: config.workspaceName,
+      defaultProviderId: config.defaultProviderId,
+      defaultModel: config.defaultModel,
       createdAt: config.createdAt,
       updatedAt: config.updatedAt
     })
@@ -124,6 +128,8 @@ export class OrdinusDatabase {
           id: 1,
           workspaceRoot,
           workspaceName,
+          defaultProviderId: 'codex',
+          defaultModel: 'default',
           createdAt: now,
           updatedAt: now
         })
@@ -133,6 +139,32 @@ export class OrdinusDatabase {
     const saved = this.getWorkspaceConfig()
     if (!saved) {
       throw new Error('Workspace configuration could not be saved.')
+    }
+
+    return saved
+  }
+
+  updateSystemDefault(input: WorkspaceUpdateSystemDefaultInput): WorkspaceConfig {
+    const parsed = WorkspaceUpdateSystemDefaultInputSchema.parse(input)
+    const now = new Date().toISOString()
+
+    if (!this.getWorkspaceConfig()) {
+      throw new Error('Choose a workspace before setting the system default provider.')
+    }
+
+    this.db
+      .update(workspaceConfig)
+      .set({
+        defaultProviderId: parsed.providerId,
+        defaultModel: parsed.model,
+        updatedAt: now
+      })
+      .where(eq(workspaceConfig.id, 1))
+      .run()
+
+    const saved = this.getWorkspaceConfig()
+    if (!saved) {
+      throw new Error('System default provider could not be saved.')
     }
 
     return saved

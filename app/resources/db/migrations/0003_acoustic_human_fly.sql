@@ -1,0 +1,1 @@
+ALTER TABLE `workspace_config` ADD `default_provider_id` text DEFAULT 'codex' NOT NULL;

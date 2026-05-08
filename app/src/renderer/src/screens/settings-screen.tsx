@@ -13,15 +13,24 @@ import type {
   AppInfo,
   DbStatus,
   ProviderId,
+  ProviderStatus,
   SetupStatus,
   SystemPaths,
   WorkspaceSaveConfigInput,
+  WorkspaceUpdateSystemDefaultInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
+import {
+  getDefaultModelForProvider,
+  getProviderModelOptions,
+  isKnownProviderModel
+} from '@shared/provider-models'
 import { DetailRow } from '@renderer/components/detail-row'
 import { ProviderCard } from '@renderer/components/provider-card'
 import { ReadinessBadge } from '@renderer/components/readiness-badge'
+import { SelectControl } from '@renderer/components/select-control'
 import { StatusCard } from '@renderer/components/status-card'
+import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
 import {
   Card,
@@ -45,6 +54,7 @@ type SettingsScreenProps = {
   onSaveWorkspace: (input: WorkspaceSaveConfigInput) => Promise<void>
   onConnectProvider: (providerId: ProviderId) => Promise<void>
   onRefreshProvider: (providerId: ProviderId) => Promise<void>
+  onUpdateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
 }
 
 type SettingsSectionId = 'workspace' | 'providers' | 'local-state'
@@ -85,7 +95,8 @@ export function SettingsScreen({
   onSelectFolder,
   onSaveWorkspace,
   onConnectProvider,
-  onRefreshProvider
+  onRefreshProvider,
+  onUpdateSystemDefault
 }: SettingsScreenProps): React.JSX.Element {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('workspace')
   const codex = useMemo(
@@ -149,6 +160,7 @@ export function SettingsScreen({
               busyAction={busyAction}
               onConnectProvider={onConnectProvider}
               onRefreshProvider={onRefreshProvider}
+              onUpdateSystemDefault={onUpdateSystemDefault}
             />
           ) : null}
 
@@ -278,24 +290,39 @@ function ProvidersSettingsSection({
   codex,
   busyAction,
   onConnectProvider,
-  onRefreshProvider
+  onRefreshProvider,
+  onUpdateSystemDefault
 }: {
   setupStatus: SetupStatus | null
-  codex: SetupStatus['providers'][number] | undefined
+  codex: ProviderStatus | undefined
   busyAction: string
   onConnectProvider: (providerId: ProviderId) => Promise<void>
   onRefreshProvider: (providerId: ProviderId) => Promise<void>
+  onUpdateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
 }): React.JSX.Element {
   const otherProviders = setupStatus?.providers.filter((provider) => provider.id !== 'codex') ?? []
   const providers = codex ? [codex, ...otherProviders] : otherProviders
+  const defaultProviderId = setupStatus?.workspace?.defaultProviderId ?? 'codex'
+  const defaultModel = setupStatus?.workspace?.defaultModel ?? 'default'
 
   return (
     <div className="grid gap-4">
+      <SystemDefaultSettingsPanel
+        key={`${defaultProviderId}:${defaultModel}:${setupStatus?.workspace?.updatedAt ?? 'empty'}`}
+        providers={providers}
+        workspaceConfigured={Boolean(setupStatus?.workspaceConfigured)}
+        initialProviderId={defaultProviderId}
+        initialModel={defaultModel}
+        busyAction={busyAction}
+        onSave={onUpdateSystemDefault}
+      />
+
       <section className="grid gap-4">
         {providers.map((provider) => (
           <ProviderCard
             key={provider.id}
             provider={provider}
+            defaultProviderId={defaultProviderId}
             busyAction={busyAction}
             onConnect={() => onConnectProvider(provider.id)}
             onRefresh={() => onRefreshProvider(provider.id)}
@@ -303,6 +330,117 @@ function ProvidersSettingsSection({
         ))}
       </section>
     </div>
+  )
+}
+
+function SystemDefaultSettingsPanel({
+  providers,
+  workspaceConfigured,
+  initialProviderId,
+  initialModel,
+  busyAction,
+  onSave
+}: {
+  providers: ProviderStatus[]
+  workspaceConfigured: boolean
+  initialProviderId: ProviderId
+  initialModel: string
+  busyAction: string
+  onSave: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
+}): React.JSX.Element {
+  const [providerId, setProviderId] = useState<ProviderId>(initialProviderId)
+  const [model, setModel] = useState(initialModel)
+  const modelOptions = getProviderModelOptions(providerId)
+  const selectedProvider = providers.find((provider) => provider.id === providerId)
+  const knownModelSelected = isKnownProviderModel(providerId, model)
+  const modelSelectValue = knownModelSelected ? model : 'custom'
+  const selectedModelDescription =
+    modelOptions.find((option) => option.id === model)?.description ??
+    'Use a model id supported by the selected local CLI.'
+  const isPending = busyAction === 'system-default'
+  const isDirty = providerId !== initialProviderId || model !== initialModel
+  const canSave = Boolean(
+    workspaceConfigured && selectedProvider?.connected && model.trim() && isDirty && !busyAction
+  )
+
+  function changeProvider(nextProviderId: string): void {
+    const parsedProviderId = nextProviderId as ProviderId
+    setProviderId(parsedProviderId)
+    setModel(getDefaultModelForProvider(parsedProviderId))
+  }
+
+  function changeModel(nextModel: string): void {
+    setModel(nextModel === 'custom' ? '' : nextModel)
+  }
+
+  async function saveSystemDefault(): Promise<void> {
+    await onSave({ providerId, model: model.trim() })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-primary" />
+              System default
+            </CardTitle>
+            <CardDescription>
+              Ordinus uses this provider and model for app-owned AI work.
+            </CardDescription>
+          </div>
+          <Badge variant="secondary">{selectedProvider?.connected ? 'Ready' : 'Needs login'}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="grid gap-2 text-sm">
+            <span className="text-xs font-medium text-muted-foreground">Provider</span>
+            <SelectControl value={providerId} onChange={changeProvider}>
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.label}
+                </option>
+              ))}
+            </SelectControl>
+          </label>
+
+          <label className="grid gap-2 text-sm">
+            <span className="text-xs font-medium text-muted-foreground">Model</span>
+            <SelectControl value={modelSelectValue} onChange={changeModel}>
+              {modelOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+              <option value="custom">Custom model</option>
+            </SelectControl>
+          </label>
+        </div>
+
+        {modelSelectValue === 'custom' ? (
+          <label className="grid gap-2 text-sm">
+            <span className="text-xs font-medium text-muted-foreground">Custom model id</span>
+            <Input
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="Provider-supported model id"
+            />
+          </label>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            {selectedModelDescription}
+          </p>
+          <Button type="button" onClick={() => void saveSystemDefault()} disabled={!canSave}>
+            {isPending ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+            Save Default
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

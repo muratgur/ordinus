@@ -7,6 +7,7 @@ import type {
   SetupStatus,
   SystemPaths,
   WorkspaceSaveConfigInput,
+  WorkspaceUpdateSystemDefaultInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
@@ -132,6 +133,13 @@ function App(): React.JSX.Element {
     })
   }
 
+  async function updateSystemDefault(input: WorkspaceUpdateSystemDefaultInput): Promise<void> {
+    await runSetupAction('system-default', async () => {
+      await window.ordinus.workspace.updateSystemDefault(input)
+      await loadStatus({ stayOnSetup: true })
+    })
+  }
+
   if (state.setupStatus && (!state.setupStatus.ready || !state.entered)) {
     const providerSetupKey = state.setupStatus.providers
       .map((provider) => `${provider.id}:${provider.connected}`)
@@ -185,6 +193,7 @@ function App(): React.JSX.Element {
                 onSaveWorkspace={saveWorkspace}
                 onConnectProvider={connectProvider}
                 onRefreshProvider={refreshProvider}
+                onUpdateSystemDefault={updateSystemDefault}
               />
             }
           />

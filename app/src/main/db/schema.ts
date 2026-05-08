@@ -11,6 +11,8 @@ export const workspaceConfig = sqliteTable('workspace_config', {
   id: integer('id').primaryKey(),
   workspaceRoot: text('workspace_root').notNull(),
   workspaceName: text('workspace_name').notNull(),
+  defaultProviderId: text('default_provider_id').notNull().default('codex'),
+  defaultModel: text('default_model').notNull().default('default'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })

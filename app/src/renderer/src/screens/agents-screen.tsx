@@ -12,6 +12,7 @@ import {
   WandSparkles
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
+import { SelectControl } from '@renderer/components/select-control'
 import {
   Card,
   CardContent,
@@ -31,6 +32,7 @@ import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import type { Agent, AgentDraft, AgentSandbox, AgentSkill, ProviderId } from '@shared/contracts'
+import { getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
@@ -1030,26 +1032,6 @@ function FormField({
   )
 }
 
-function SelectControl({
-  value,
-  onChange,
-  children
-}: {
-  value: string
-  onChange: (value: string) => void
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <select
-      className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground shadow-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {children}
-    </select>
-  )
-}
-
 function EmptyState({
   icon,
   title,
@@ -1089,13 +1071,7 @@ function getAgentStatus(agent: Agent): AgentStatus {
 }
 
 function getModelOptions(providerId: ProviderId): string[] {
-  if (providerId === 'claude') {
-    return ['default', 'claude-sonnet', 'claude-opus']
-  }
-  if (providerId === 'gemini') {
-    return ['default', 'gemini-pro', 'gemini-flash']
-  }
-  return ['default', 'gpt-5.4', 'gpt-5.4-mini']
+  return getProviderModelOptions(providerId).map((option) => option.id)
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {

@@ -18,6 +18,7 @@ import type {
   SystemPaths,
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
+  WorkspaceUpdateSystemDefaultInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
 
@@ -37,6 +38,7 @@ export type OrdinusApi = {
   workspace: {
     selectFolder: () => Promise<WorkspaceSelectFolderResult>
     saveConfig: (input: WorkspaceSaveConfigInput) => Promise<WorkspaceConfig>
+    updateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<WorkspaceConfig>
   }
   agents: {
     list: () => Promise<Agent[]>

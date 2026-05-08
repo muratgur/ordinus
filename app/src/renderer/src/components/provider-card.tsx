@@ -1,12 +1,14 @@
-import { ExternalLink, Loader2, PlugZap, RefreshCcw } from 'lucide-react'
-import type { ProviderStatus } from '@shared/contracts'
+import { CheckCircle2, ExternalLink, Loader2, PlugZap, RefreshCcw } from 'lucide-react'
+import type { ProviderId, ProviderStatus } from '@shared/contracts'
 import { Button } from './ui/button'
+import { Badge } from './ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { DetailRow } from './detail-row'
 import { ReadinessBadge } from './readiness-badge'
 
 type ProviderCardProps = {
   provider: ProviderStatus | undefined
+  defaultProviderId: ProviderId
   busyAction: string
   onConnect: () => Promise<void>
   onRefresh: () => Promise<void>
@@ -14,6 +16,7 @@ type ProviderCardProps = {
 
 export function ProviderCard({
   provider,
+  defaultProviderId,
   busyAction,
   onConnect,
   onRefresh
@@ -21,6 +24,7 @@ export function ProviderCard({
   const disabled = !provider || provider.id === 'gemini'
   const authUrl = provider?.authUrl ?? ''
   const providerName = getProviderName(provider)
+  const isDefault = provider?.id === defaultProviderId
 
   return (
     <Card>
@@ -30,6 +34,12 @@ export function ProviderCard({
             <CardTitle className="flex items-center gap-2">
               <PlugZap className="size-4 text-primary" />
               {provider?.label ?? 'Provider'}
+              {isDefault ? (
+                <Badge variant="secondary" className="gap-1">
+                  <CheckCircle2 className="size-3" />
+                  Default
+                </Badge>
+              ) : null}
             </CardTitle>
             <CardDescription>{provider?.note || 'Check provider readiness.'}</CardDescription>
           </div>

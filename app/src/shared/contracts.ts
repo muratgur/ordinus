@@ -24,9 +24,13 @@ export const DbStatusSchema = z.object({
   updatedAt: z.string().nullable()
 })
 
+export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
+
 export const WorkspaceConfigSchema = z.object({
   workspaceRoot: z.string(),
   workspaceName: z.string(),
+  defaultProviderId: ProviderIdSchema.default('codex'),
+  defaultModel: z.string().trim().min(1).default('default'),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -42,9 +46,13 @@ export const WorkspaceSelectFolderResultSchema = z.object({
   workspaceName: z.string()
 })
 
-export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
 export const AgentSandboxSchema = z.enum(['read-only', 'workspace-write', 'full-access'])
 export const ProviderLoginMethodSchema = z.enum(['default', 'claudeai', 'console', 'sso'])
+
+export const WorkspaceUpdateSystemDefaultInputSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string().trim().min(1, 'Model is required.').max(120)
+})
 
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
@@ -157,6 +165,9 @@ export type WorkspaceSaveConfigInput = z.infer<typeof WorkspaceSaveConfigInputSc
 export type WorkspaceSelectFolderResult = z.infer<typeof WorkspaceSelectFolderResultSchema>
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 export type AgentSandbox = z.infer<typeof AgentSandboxSchema>
+export type WorkspaceUpdateSystemDefaultInput = z.infer<
+  typeof WorkspaceUpdateSystemDefaultInputSchema
+>
 export type ProviderLoginMethod = z.infer<typeof ProviderLoginMethodSchema>
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
 export type ProviderActionInput = z.infer<typeof ProviderActionInputSchema>

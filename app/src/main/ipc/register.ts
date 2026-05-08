@@ -12,7 +12,8 @@ import {
   ProviderConnectInputSchema,
   SetupStatusSchema,
   WorkspaceSaveConfigInputSchema,
-  WorkspaceSelectFolderResultSchema
+  WorkspaceSelectFolderResultSchema,
+  WorkspaceUpdateSystemDefaultInputSchema
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
 import type { OrdinusDatabase } from '../db/database'
@@ -36,10 +37,12 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.setupGetStatus, async () => {
     const workspace = database.getWorkspaceConfig()
     const providers = await runtime.getProviderStatuses()
-    const codex = providers.find((provider) => provider.id === 'codex')
+    const defaultProvider = providers.find(
+      (provider) => provider.id === (workspace?.defaultProviderId ?? 'codex')
+    )
 
     return SetupStatusSchema.parse({
-      ready: Boolean(workspace && codex?.connected),
+      ready: Boolean(workspace && defaultProvider?.connected),
       workspaceConfigured: Boolean(workspace),
       workspace,
       providers
@@ -75,6 +78,17 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = WorkspaceSaveConfigInputSchema.parse(payload)
     return database.saveWorkspaceConfig(input)
   })
+  ipcMain.handle(ipcChannels.workspaceUpdateSystemDefault, async (_event, payload) => {
+    const input = WorkspaceUpdateSystemDefaultInputSchema.parse(payload)
+    const providers = await runtime.getProviderStatuses()
+    const provider = providers.find((status) => status.id === input.providerId)
+
+    if (!provider?.connected) {
+      throw new Error('Connect this provider before making it the default.')
+    }
+
+    return database.updateSystemDefault(input)
+  })
   ipcMain.handle(ipcChannels.agentsList, () => {
     const agents = database.listAgents()
     agents.forEach((agent) => ensureAgentHome(agent))
@@ -82,13 +96,19 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   })
   ipcMain.handle(ipcChannels.agentsDraftFromIntent, async (_event, payload) => {
     const input = AgentDraftFromIntentInputSchema.parse(payload)
-    const workspaceRoot = input.workspaceRoot ?? database.getWorkspaceConfig()?.workspaceRoot
+    const workspace = database.getWorkspaceConfig()
+    const workspaceRoot = input.workspaceRoot ?? workspace?.workspaceRoot
 
     if (!workspaceRoot) {
       throw new Error('Choose a workspace before creating an agent.')
     }
 
-    return runtime.generateAgentDraft({ ...input, workspaceRoot })
+    return runtime.generateAgentDraft({
+      ...input,
+      providerId: workspace?.defaultProviderId ?? 'codex',
+      model: workspace?.defaultModel ?? 'default',
+      workspaceRoot
+    })
   })
   ipcMain.handle(ipcChannels.agentsCreate, (_event, payload) => {
     const input = AgentCreateInputSchema.parse(payload)
