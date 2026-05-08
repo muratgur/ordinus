@@ -8,6 +8,8 @@ import {
   AgentUpdateSettingsInputSchema,
   AgentCreateInputSchema,
   AppInfoSchema,
+  ProviderActionInputSchema,
+  ProviderConnectInputSchema,
   SetupStatusSchema,
   WorkspaceSaveConfigInputSchema,
   WorkspaceSelectFolderResultSchema
@@ -113,8 +115,14 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     return createAgentSkill(input)
   })
   ipcMain.handle(ipcChannels.runtimeGetProviders, () => runtime.getProviderStatuses())
-  ipcMain.handle(ipcChannels.runtimeConnectCodex, () => runtime.connectCodex())
-  ipcMain.handle(ipcChannels.runtimeRefreshCodex, () => runtime.refreshCodex())
+  ipcMain.handle(ipcChannels.runtimeConnectProvider, (_event, payload) => {
+    const input = ProviderConnectInputSchema.parse(payload)
+    return runtime.connectProvider(input)
+  })
+  ipcMain.handle(ipcChannels.runtimeRefreshProvider, (_event, payload) => {
+    const input = ProviderActionInputSchema.parse(payload)
+    return runtime.refreshProvider(input)
+  })
 }
 
 function requireAgent(database: OrdinusDatabase, agentId: string): void {

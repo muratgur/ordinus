@@ -44,6 +44,7 @@ export const WorkspaceSelectFolderResultSchema = z.object({
 
 export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
 export const AgentSandboxSchema = z.enum(['read-only', 'workspace-write', 'full-access'])
+export const ProviderLoginMethodSchema = z.enum(['default', 'claudeai', 'console', 'sso'])
 
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
@@ -58,7 +59,15 @@ export const ProviderStatusSchema = z.object({
   note: z.string()
 })
 
-export const CodexConnectResultSchema = z.object({
+export const ProviderActionInputSchema = z.object({
+  providerId: ProviderIdSchema
+})
+
+export const ProviderConnectInputSchema = ProviderActionInputSchema.extend({
+  loginMethod: ProviderLoginMethodSchema.default('default')
+})
+
+export const ProviderConnectResultSchema = z.object({
   status: ProviderStatusSchema,
   authUrl: z.string(),
   alreadyConnected: z.boolean().optional(),
@@ -148,8 +157,11 @@ export type WorkspaceSaveConfigInput = z.infer<typeof WorkspaceSaveConfigInputSc
 export type WorkspaceSelectFolderResult = z.infer<typeof WorkspaceSelectFolderResultSchema>
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 export type AgentSandbox = z.infer<typeof AgentSandboxSchema>
+export type ProviderLoginMethod = z.infer<typeof ProviderLoginMethodSchema>
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
-export type CodexConnectResult = z.infer<typeof CodexConnectResultSchema>
+export type ProviderActionInput = z.infer<typeof ProviderActionInputSchema>
+export type ProviderConnectInput = z.input<typeof ProviderConnectInputSchema>
+export type ProviderConnectResult = z.infer<typeof ProviderConnectResultSchema>
 export type SetupStatus = z.infer<typeof SetupStatusSchema>
 export type Agent = z.infer<typeof AgentSchema>
 export type AgentDraftFromIntentInput = z.infer<typeof AgentDraftFromIntentInputSchema>

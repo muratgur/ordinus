@@ -9,8 +9,10 @@ import type {
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
-  CodexConnectResult,
   DbStatus,
+  ProviderActionInput,
+  ProviderConnectInput,
+  ProviderConnectResult,
   ProviderStatus,
   SetupStatus,
   SystemPaths,
@@ -47,8 +49,8 @@ export type OrdinusApi = {
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>
-    connectCodex: () => Promise<CodexConnectResult>
-    refreshCodex: () => Promise<ProviderStatus>
+    connectProvider: (input: ProviderConnectInput) => Promise<ProviderConnectResult>
+    refreshProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
   }
 }
 

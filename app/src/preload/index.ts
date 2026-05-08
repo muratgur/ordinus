@@ -10,8 +10,10 @@ import type {
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
-  CodexConnectResult,
   DbStatus,
+  ProviderActionInput,
+  ProviderConnectInput,
+  ProviderConnectResult,
   ProviderStatus,
   SetupStatus,
   SystemPaths,
@@ -58,10 +60,10 @@ const ordinus = {
   runtime: {
     getProviders: async (): Promise<ProviderStatus[]> =>
       ipcRenderer.invoke(ipcChannels.runtimeGetProviders),
-    connectCodex: async (): Promise<CodexConnectResult> =>
-      ipcRenderer.invoke(ipcChannels.runtimeConnectCodex),
-    refreshCodex: async (): Promise<ProviderStatus> =>
-      ipcRenderer.invoke(ipcChannels.runtimeRefreshCodex)
+    connectProvider: async (input: ProviderConnectInput): Promise<ProviderConnectResult> =>
+      ipcRenderer.invoke(ipcChannels.runtimeConnectProvider, input),
+    refreshProvider: async (input: ProviderActionInput): Promise<ProviderStatus> =>
+      ipcRenderer.invoke(ipcChannels.runtimeRefreshProvider, input)
   }
 }
 

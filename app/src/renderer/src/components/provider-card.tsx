@@ -18,8 +18,9 @@ export function ProviderCard({
   onConnect,
   onRefresh
 }: ProviderCardProps): React.JSX.Element {
-  const disabled = provider?.id !== 'codex'
+  const disabled = !provider || provider.id === 'gemini'
   const authUrl = provider?.authUrl ?? ''
+  const providerName = getProviderName(provider)
 
   return (
     <Card>
@@ -59,7 +60,7 @@ export function ProviderCard({
             target="_blank"
             rel="noreferrer"
           >
-            Open Codex login
+            Open {providerName} login
             <ExternalLink className="size-4" />
           </a>
         ) : null}
@@ -71,19 +72,34 @@ export function ProviderCard({
             variant="outline"
             disabled={disabled || Boolean(busyAction)}
           >
-            {busyAction === 'refresh-codex' ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
-            Check Codex
+            {busyAction === `refresh-${provider?.id}` ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <RefreshCcw />
+            )}
+            Check {providerName}
           </Button>
           <Button
             type="button"
             onClick={() => void onConnect()}
             disabled={disabled || Boolean(busyAction) || Boolean(provider?.connected)}
           >
-            {busyAction === 'connect-codex' ? <Loader2 className="animate-spin" /> : <PlugZap />}
-            Connect to Codex
+            {busyAction === `connect-${provider?.id}` ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <PlugZap />
+            )}
+            Connect to {providerName}
           </Button>
         </div>
       </CardContent>
     </Card>
   )
+}
+
+function getProviderName(provider: ProviderStatus | undefined): string {
+  if (!provider) return 'Provider'
+  if (provider.id === 'codex') return 'Codex'
+  if (provider.id === 'claude') return 'Claude'
+  return 'Gemini'
 }

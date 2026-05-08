@@ -12,6 +12,7 @@ import {
 import type {
   AppInfo,
   DbStatus,
+  ProviderId,
   SetupStatus,
   SystemPaths,
   WorkspaceSaveConfigInput,
@@ -42,8 +43,8 @@ type SettingsScreenProps = {
   setupError: string
   onSelectFolder: () => Promise<WorkspaceSelectFolderResult>
   onSaveWorkspace: (input: WorkspaceSaveConfigInput) => Promise<void>
-  onConnectCodex: () => Promise<void>
-  onRefreshCodex: () => Promise<void>
+  onConnectProvider: (providerId: ProviderId) => Promise<void>
+  onRefreshProvider: (providerId: ProviderId) => Promise<void>
 }
 
 type SettingsSectionId = 'workspace' | 'providers' | 'local-state'
@@ -58,7 +59,7 @@ const settingsSections = [
   {
     id: 'providers',
     label: 'Providers',
-    description: 'Codex and future CLIs',
+    description: 'Codex, Claude, and future CLIs',
     icon: PlugZap
   },
   {
@@ -83,8 +84,8 @@ export function SettingsScreen({
   setupError,
   onSelectFolder,
   onSaveWorkspace,
-  onConnectCodex,
-  onRefreshCodex
+  onConnectProvider,
+  onRefreshProvider
 }: SettingsScreenProps): React.JSX.Element {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('workspace')
   const codex = useMemo(
@@ -146,8 +147,8 @@ export function SettingsScreen({
               setupStatus={setupStatus}
               codex={codex}
               busyAction={busyAction}
-              onConnectCodex={onConnectCodex}
-              onRefreshCodex={onRefreshCodex}
+              onConnectProvider={onConnectProvider}
+              onRefreshProvider={onRefreshProvider}
             />
           ) : null}
 
@@ -276,14 +277,14 @@ function ProvidersSettingsSection({
   setupStatus,
   codex,
   busyAction,
-  onConnectCodex,
-  onRefreshCodex
+  onConnectProvider,
+  onRefreshProvider
 }: {
   setupStatus: SetupStatus | null
   codex: SetupStatus['providers'][number] | undefined
   busyAction: string
-  onConnectCodex: () => Promise<void>
-  onRefreshCodex: () => Promise<void>
+  onConnectProvider: (providerId: ProviderId) => Promise<void>
+  onRefreshProvider: (providerId: ProviderId) => Promise<void>
 }): React.JSX.Element {
   const otherProviders = setupStatus?.providers.filter((provider) => provider.id !== 'codex') ?? []
   const providers = codex ? [codex, ...otherProviders] : otherProviders
@@ -296,8 +297,8 @@ function ProvidersSettingsSection({
             key={provider.id}
             provider={provider}
             busyAction={busyAction}
-            onConnect={onConnectCodex}
-            onRefresh={onRefreshCodex}
+            onConnect={() => onConnectProvider(provider.id)}
+            onRefresh={() => onRefreshProvider(provider.id)}
           />
         ))}
       </section>

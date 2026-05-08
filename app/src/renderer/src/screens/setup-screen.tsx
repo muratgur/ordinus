@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import type {
   ProviderStatus,
+  ProviderId,
   SetupStatus,
   WorkspaceSaveConfigInput,
   WorkspaceSelectFolderResult
@@ -36,8 +37,8 @@ type SetupScreenProps = {
   error: string
   onSelectFolder: () => Promise<WorkspaceSelectFolderResult>
   onSaveWorkspace: (input: WorkspaceSaveConfigInput) => Promise<void>
-  onConnectCodex: () => Promise<void>
-  onRefreshCodex: () => Promise<void>
+  onConnectProvider: (providerId: ProviderId) => Promise<void>
+  onRefreshProvider: (providerId: ProviderId) => Promise<void>
   onEnter: () => void
 }
 
@@ -49,8 +50,8 @@ export function SetupScreen({
   error,
   onSelectFolder,
   onSaveWorkspace,
-  onConnectCodex,
-  onRefreshCodex,
+  onConnectProvider,
+  onRefreshProvider,
   onEnter
 }: SetupScreenProps): React.JSX.Element {
   const [workspaceRoot, setWorkspaceRoot] = useState(status.workspace?.workspaceRoot ?? '')
@@ -180,8 +181,8 @@ export function SetupScreen({
             <ProviderSetupPanel
               provider={codex}
               busyAction={busyAction}
-              onConnect={onConnectCodex}
-              onRefresh={onRefreshCodex}
+              onConnect={() => onConnectProvider('codex')}
+              onRefresh={() => onRefreshProvider('codex')}
             />
           </SetupStep>
 

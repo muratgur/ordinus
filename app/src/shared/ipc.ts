@@ -13,6 +13,6 @@ export const ipcChannels = {
   agentsListSkills: 'agents:list-skills',
   agentsCreateSkill: 'agents:create-skill',
   runtimeGetProviders: 'runtime:get-providers',
-  runtimeConnectCodex: 'runtime:connect-codex',
-  runtimeRefreshCodex: 'runtime:refresh-codex'
+  runtimeConnectProvider: 'runtime:connect-provider',
+  runtimeRefreshProvider: 'runtime:refresh-provider'
 } as const

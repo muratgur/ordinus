@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type {
   AppInfo,
   DbStatus,
+  ProviderId,
   SetupStatus,
   SystemPaths,
   WorkspaceSaveConfigInput,
@@ -117,16 +118,16 @@ function App(): React.JSX.Element {
     })
   }
 
-  async function connectCodex(): Promise<void> {
-    await runSetupAction('connect-codex', async () => {
-      await window.ordinus.runtime.connectCodex()
+  async function connectProvider(providerId: ProviderId): Promise<void> {
+    await runSetupAction(`connect-${providerId}`, async () => {
+      await window.ordinus.runtime.connectProvider({ providerId })
       await loadStatus({ stayOnSetup: true })
     })
   }
 
-  async function refreshCodex(): Promise<void> {
-    await runSetupAction('refresh-codex', async () => {
-      await window.ordinus.runtime.refreshCodex()
+  async function refreshProvider(providerId: ProviderId): Promise<void> {
+    await runSetupAction(`refresh-${providerId}`, async () => {
+      await window.ordinus.runtime.refreshProvider({ providerId })
       await loadStatus({ stayOnSetup: true })
     })
   }
@@ -144,8 +145,8 @@ function App(): React.JSX.Element {
         error={state.setupError}
         onSelectFolder={selectWorkspaceFolder}
         onSaveWorkspace={saveWorkspace}
-        onConnectCodex={connectCodex}
-        onRefreshCodex={refreshCodex}
+        onConnectProvider={connectProvider}
+        onRefreshProvider={refreshProvider}
         onEnter={() => setState((current) => ({ ...current, entered: true }))}
       />
     )
@@ -182,8 +183,8 @@ function App(): React.JSX.Element {
                 setupError={state.setupError}
                 onSelectFolder={selectWorkspaceFolder}
                 onSaveWorkspace={saveWorkspace}
-                onConnectCodex={connectCodex}
-                onRefreshCodex={refreshCodex}
+                onConnectProvider={connectProvider}
+                onRefreshProvider={refreshProvider}
               />
             }
           />
