@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest a product improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Ordinus do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches worth noting?
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Product workflow
+        - UI
+        - Electron shell
+        - Provider runtime
+        - Persistence
+        - Packaging
+        - Documentation
+        - Other
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, sketches, links, or examples if useful.

@@ -1,0 +1,36 @@
+{
+  "name": "ordinus-repo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Repository workspace for the Ordinus desktop app.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/idealabs/ordinus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/idealabs/ordinus/issues"
+  },
+  "engines": {
+    "node": ">=22.13.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "app:install": "npm install --prefix app",
+    "dev": "npm run dev --prefix app",
+    "db:generate": "npm run db:generate --prefix app",
+    "typecheck": "npm run typecheck --prefix app",
+    "lint": "npm run lint --prefix app",
+    "build": "npm run build --prefix app",
+    "ui:info": "npm run ui:info --prefix app",
+    "ui:add": "npm run ui:add --prefix app --",
+    "ui:check": "npm run ui:check --prefix app",
+    "build:unpack": "npm run build:unpack --prefix app",
+    "build:win": "npm run build:win --prefix app",
+    "build:win:local": "npm run build:win:local --prefix app",
+    "build:mac": "npm run build:mac --prefix app",
+    "build:linux": "npm run build:linux --prefix app",
+    "release:win": "npm run release:win --prefix app",
+    "release:mac": "npm run release:mac --prefix app"
+  }
+}

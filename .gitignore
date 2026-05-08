@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+app/node_modules/
+
+# Build outputs
+dist/
+out/
+app/dist/
+app/out/
+
+# Local prototype/reference snapshots
+prototype/
+
+# Logs and caches
+*.log*
+.eslintcache
+app/.eslintcache
+
+# Local SQLite files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.*
+app/.env
+app/.env.*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,20 @@
+{
+  "skill_name": "shadcn-project-workflow",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a settings panel for configuring a provider connection in Ordinus.",
+      "expected_behavior": "Uses existing shadcn-style components first, checks installed components before adding new ones, keeps renderer UI-only, and uses calm operational copy."
+    },
+    {
+      "id": 2,
+      "prompt": "Add a dashboard card that shows a run status, timestamp, and a retry action.",
+      "expected_behavior": "Uses Card composition, Badge for status, Button variants for actions, semantic tokens, gap spacing, and no raw Electron or Node access from renderer."
+    },
+    {
+      "id": 3,
+      "prompt": "Update an existing shadcn button component from upstream.",
+      "expected_behavior": "Uses shadcn dry-run and diff before changing files, preserves local changes, and does not overwrite without explicit approval."
+    }
+  ]
+}

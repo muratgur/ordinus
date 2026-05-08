@@ -1,0 +1,4 @@
+interface:
+  display_name: "SQLite Minimal Persistence"
+  short_description: "Extend SQLite persistence without premature schemas"
+  default_prompt: "Use this skill when changing better-sqlite3, Drizzle schema, database bootstrap, app_meta, migrations, durable state, or proposals to add new tables."

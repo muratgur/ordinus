@@ -1,0 +1,7 @@
+# App-local ignores are mirrored in the repository root .gitignore.
+node_modules/
+dist/
+out/
+.DS_Store
+.eslintcache
+*.log*

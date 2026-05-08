@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ordinus UI System"
+  short_description: "Build calm work-focused Ordinus renderer UI"
+  default_prompt: "Use this skill when changing React UI, Tailwind styling, shadcn-style components, layouts, status panels, forms, tables, or user-facing product text."
