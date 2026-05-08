@@ -71,6 +71,9 @@ Environment is deny-by-default:
 
 - Do not inherit the full parent environment.
 - Use an explicit env allowlist.
+- Keep provider CLI home/config directories under Electron `userData/runtime/<provider>` when
+  the CLI supports it, so app-managed authentication and terminal-managed authentication do not
+  overwrite each other.
 - Inject secrets only from secret references resolved in main process.
 - Never persist plaintext secrets in SQLite.
 - Never include secret values in stdout/stderr events, diagnostics, errors, or logs.
@@ -116,9 +119,18 @@ Minimum policy:
 
 ## Current Implementation Boundary
 
-The current code only defines the contract and typed runtime service shape:
+The current implementation supports provider status checks, login starts, and app-owned agent draft
+generation through main-process provider adapters:
 
-- `app/src/main/runtime/types.ts`
-- `app/src/main/runtime/index.ts`
+- `app/src/main/runtime/service.ts`
+- `app/src/main/runtime/adapters/registry.ts`
+- `app/src/main/runtime/adapters/*/adapter.ts`
+- `app/src/main/runtime/cli/*`
 
-It intentionally does not implement CLI detection, auth checks, process spawning, queues, cancellation, IPC run endpoints, or durable run tables.
+Renderer code still does not choose CLI commands, spawn processes, read provider logs, or pass provider
+flags. App-owned AI work, such as agent draft generation, reads the workspace default provider/model in
+main process before dispatching to an adapter.
+
+General provider run orchestration is still intentionally deferred. Queues, cancellation, normalized
+runtime event streams, log persistence, IPC run endpoints, and durable run tables should be added only
+when the product has a concrete run workflow.

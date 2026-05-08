@@ -40,6 +40,8 @@ Use an app-owned model catalog for common choices, plus a custom model id input.
 
 ## Consequences
 - Settings can choose a provider and model without renderer knowing CLI flags.
-- Future system AI jobs should read the workspace default instead of accepting arbitrary provider/model from renderer state.
+- System AI jobs read the workspace default in main process instead of accepting arbitrary provider/model from renderer state.
+- Provider-specific CLI behavior lives behind main-process runtime adapters selected through a provider registry.
+- Provider adapters should prefer app-owned CLI config homes under Electron `userData/runtime/<provider>` when the provider supports it, keeping Ordinus-managed auth separate from the user's terminal CLI profile.
 - Unsupported custom model ids fail at runtime with the provider CLI error, which is acceptable because model availability is provider-owned.
 - If a provider CLI later offers stable model discovery, it can enhance the catalog without changing the persisted contract.

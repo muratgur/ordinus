@@ -16,6 +16,7 @@ import type {
   WorkspaceSaveConfigInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
+import { getProviderDisplayName } from '@shared/provider-labels'
 import { DetailRow } from '@renderer/components/detail-row'
 import { ReadinessBadge } from '@renderer/components/readiness-badge'
 import { Badge } from '@renderer/components/ui/badge'
@@ -56,12 +57,14 @@ export function SetupScreen({
 }: SetupScreenProps): React.JSX.Element {
   const [workspaceRoot, setWorkspaceRoot] = useState(status.workspace?.workspaceRoot ?? '')
   const [workspaceName, setWorkspaceName] = useState(status.workspace?.workspaceName ?? '')
-  const codex = useMemo(
-    () => status.providers.find((provider) => provider.id === 'codex'),
-    [status.providers]
+  const defaultProviderId = status.workspace?.defaultProviderId ?? 'codex'
+  const defaultProvider = useMemo(
+    () => status.providers.find((provider) => provider.id === defaultProviderId),
+    [defaultProviderId, status.providers]
   )
+  const defaultProviderName = getProviderDisplayName(defaultProviderId)
   const [openStep, setOpenStep] = useState<SetupStepId | null>(() =>
-    getInitialOpenStep(status, codex)
+    getInitialOpenStep(status, defaultProvider)
   )
 
   async function chooseFolder(): Promise<void> {
@@ -93,7 +96,7 @@ export function SetupScreen({
                 Set up Ordinus
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Prepare a local workspace and connect Codex before entering the app.
+                Prepare a local workspace and connect {defaultProviderName} before entering the app.
               </p>
             </div>
           </div>
@@ -173,16 +176,18 @@ export function SetupScreen({
           <SetupStep
             number="02"
             title="Provider"
-            description="Connect Codex so Ordinus can prepare agent work from this machine."
-            ready={Boolean(codex?.connected)}
+            description={`Connect ${defaultProviderName} so Ordinus can prepare agent work from this machine.`}
+            ready={Boolean(defaultProvider?.connected)}
             open={openStep === 'provider'}
             onToggle={() => toggleStep('provider')}
           >
             <ProviderSetupPanel
-              provider={codex}
+              provider={defaultProvider}
+              providerId={defaultProviderId}
+              providerName={defaultProviderName}
               busyAction={busyAction}
-              onConnect={() => onConnectProvider('codex')}
-              onRefresh={() => onRefreshProvider('codex')}
+              onConnect={() => onConnectProvider(defaultProviderId)}
+              onRefresh={() => onRefreshProvider(defaultProviderId)}
             />
           </SetupStep>
 
@@ -201,8 +206,8 @@ export function SetupScreen({
                   <ReadinessBadge ready={status.workspaceConfigured} readyText="Ready" />
                 </div>
                 <div className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-3">
-                  <span className="font-medium">Codex</span>
-                  <ReadinessBadge ready={Boolean(codex?.connected)} readyText="Ready" />
+                  <span className="font-medium">{defaultProviderName}</span>
+                  <ReadinessBadge ready={Boolean(defaultProvider?.connected)} readyText="Ready" />
                 </div>
               </div>
               <Button onClick={onEnter} disabled={!status.ready} className="w-fit">
@@ -268,16 +273,20 @@ function SetupStep({
 
 function ProviderSetupPanel({
   provider,
+  providerId,
+  providerName,
   busyAction,
   onConnect,
   onRefresh
 }: {
   provider: ProviderStatus | undefined
+  providerId: ProviderId
+  providerName: string
   busyAction: string
   onConnect: () => Promise<void>
   onRefresh: () => Promise<void>
 }): React.JSX.Element {
-  const disabled = provider?.id !== 'codex'
+  const disabled = !provider
   const authUrl = provider?.authUrl ?? ''
 
   return (
@@ -318,7 +327,7 @@ function ProviderSetupPanel({
           target="_blank"
           rel="noreferrer"
         >
-          Open Codex login
+          Open {providerName} login
           <ExternalLink className="size-4" />
         </a>
       ) : null}
@@ -330,24 +339,35 @@ function ProviderSetupPanel({
           variant="outline"
           disabled={disabled || Boolean(busyAction)}
         >
-          {busyAction === 'refresh-codex' ? <Loader2 className="animate-spin" /> : <Circle />}
-          Check Codex
+          {busyAction === `refresh-${providerId}` ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <Circle />
+          )}
+          Check {providerName}
         </Button>
         <Button
           type="button"
           onClick={() => void onConnect()}
           disabled={disabled || Boolean(busyAction) || Boolean(provider?.connected)}
         >
-          {busyAction === 'connect-codex' ? <Loader2 className="animate-spin" /> : <PlugZap />}
-          Connect to Codex
+          {busyAction === `connect-${providerId}` ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <PlugZap />
+          )}
+          Connect to {providerName}
         </Button>
       </div>
     </div>
   )
 }
 
-function getInitialOpenStep(status: SetupStatus, codex: ProviderStatus | undefined): SetupStepId {
+function getInitialOpenStep(
+  status: SetupStatus,
+  defaultProvider: ProviderStatus | undefined
+): SetupStepId {
   if (!status.workspaceConfigured) return 'workspace'
-  if (!codex?.connected) return 'provider'
+  if (!defaultProvider?.connected) return 'provider'
   return 'review'
 }

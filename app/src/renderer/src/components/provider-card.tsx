@@ -1,5 +1,6 @@
 import { CheckCircle2, ExternalLink, Loader2, PlugZap, RefreshCcw } from 'lucide-react'
 import type { ProviderId, ProviderStatus } from '@shared/contracts'
+import { getProviderDisplayName } from '@shared/provider-labels'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
@@ -21,9 +22,9 @@ export function ProviderCard({
   onConnect,
   onRefresh
 }: ProviderCardProps): React.JSX.Element {
-  const disabled = !provider || provider.id === 'gemini'
+  const disabled = !provider
   const authUrl = provider?.authUrl ?? ''
-  const providerName = getProviderName(provider)
+  const providerName = provider ? getProviderDisplayName(provider.id) : 'Provider'
   const isDefault = provider?.id === defaultProviderId
 
   return (
@@ -105,11 +106,4 @@ export function ProviderCard({
       </CardContent>
     </Card>
   )
-}
-
-function getProviderName(provider: ProviderStatus | undefined): string {
-  if (!provider) return 'Provider'
-  if (provider.id === 'codex') return 'Codex'
-  if (provider.id === 'claude') return 'Claude'
-  return 'Gemini'
 }

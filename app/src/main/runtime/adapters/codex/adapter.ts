@@ -1,0 +1,251 @@
+import { spawn } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  ProviderStatusSchema,
+  type AgentDraft,
+  type ProviderConnectResult,
+  type ProviderStatus
+} from '@shared/contracts'
+import { buildRuntimeEnvironment } from '../../cli/environment'
+import { findCliExecutable, type CliExecutable } from '../../cli/executable'
+import { extractJsonObject, firstLine } from '../../cli/output'
+import { runCapture } from '../../cli/process'
+import { extractTrustedHttpsUrl } from '../../cli/url'
+import { getSystemPaths } from '../../../paths'
+import {
+  AgentDraftOutputSchema,
+  agentDraftOutputJsonSchema,
+  buildAgentDraft,
+  buildAgentDraftPrompt
+} from '../../prompts/agent-draft'
+import {
+  connectCliProvider,
+  createProviderLoginResult,
+  createProviderStatusBase,
+  getCliVersion,
+  scheduleLoginCleanup,
+  stopProviderLoginProcess
+} from '../shared'
+import type { ProviderAdapter, ProviderLoginProcess, RuntimeAgentDraftInput } from '../types'
+
+export const codexProviderAdapter: ProviderAdapter = {
+  id: 'codex',
+  label: 'Codex CLI',
+  getStatus(context) {
+    return getCodexStatus(context.loginProcesses.get('codex') ?? null)
+  },
+  connectProvider(_input, context) {
+    return connectCliProvider({
+      loginProcess: context.loginProcesses.get('codex') ?? null,
+      getStatus: getCodexStatus,
+      findExecutable: findCodexExecutable,
+      missingCliError: 'Codex CLI was not found.',
+      setLoginProcess: (process) => context.loginProcesses.set('codex', process),
+      clearLoginProcess: () => context.loginProcesses.delete('codex'),
+      startLogin: startCodexLogin
+    })
+  },
+  generateAgentDraft(input) {
+    return generateCodexAgentDraft(input)
+  }
+}
+
+async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
+  const executable = await findCodexExecutable()
+  if (!executable) {
+    throw new Error('Codex CLI was not found.')
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'ordinus-agent-draft-'))
+  const schemaPath = join(tempDir, 'agent-draft.schema.json')
+  const outputPath = join(tempDir, 'agent-draft.json')
+
+  try {
+    writeFileSync(schemaPath, JSON.stringify(agentDraftOutputJsonSchema, null, 2), 'utf8')
+
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--ephemeral',
+      '--ignore-rules',
+      '--sandbox',
+      'read-only',
+      '-C',
+      tempDir,
+      '--output-schema',
+      schemaPath,
+      '--output-last-message',
+      outputPath
+    ]
+
+    if (input.model !== 'default') {
+      args.push('--model', input.model)
+    }
+
+    const result = await runCapture(executable.command, args, {
+      env: getCodexEnvironment(),
+      shell: executable.shell,
+      stdin: buildAgentDraftPrompt(input.requestedWork),
+      timeoutMs: 90_000
+    })
+
+    if (result.code !== 0) {
+      throw new Error(
+        firstLine(result.stderr || result.stdout) || 'Codex could not draft the agent.'
+      )
+    }
+
+    const draftJson = AgentDraftOutputSchema.parse(readAgentDraftOutput(outputPath))
+
+    return buildAgentDraft(input, draftJson)
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true })
+  }
+}
+
+async function getCodexStatus(loginProcess: ProviderLoginProcess | null): Promise<ProviderStatus> {
+  const executable = await findCodexExecutable()
+  const base = createProviderStatusBase({
+    id: 'codex',
+    label: 'Codex CLI',
+    executable,
+    loginProcess
+  })
+
+  if (!executable) {
+    return ProviderStatusSchema.parse({
+      ...base,
+      lastError: 'Install Codex CLI or make it available on PATH.',
+      note: 'Not detected.'
+    })
+  }
+
+  try {
+    const env = getCodexEnvironment()
+    const version = await getCliVersion(executable, env)
+
+    const authResult = await runCapture(executable.command, ['login', 'status'], {
+      env,
+      shell: executable.shell,
+      timeoutMs: 10_000
+    })
+    const output = `${authResult.stdout}\n${authResult.stderr}`.trim()
+    const connected = authResult.code === 0 && /logged in/i.test(output)
+
+    return ProviderStatusSchema.parse({
+      ...base,
+      version,
+      connected,
+      accountLabel: connected ? firstLine(output) || 'Logged in' : '',
+      lastError: connected ? '' : output,
+      note: connected ? 'Ready.' : 'Needs login.'
+    })
+  } catch (error) {
+    return ProviderStatusSchema.parse({
+      ...base,
+      installed: false,
+      lastError: error instanceof Error ? error.message : 'Codex CLI could not be checked.',
+      note: 'Not detected.'
+    })
+  }
+}
+
+function getCodexHome(): string {
+  const codexHome = join(getSystemPaths().runtime, 'codex')
+  mkdirSync(codexHome, { recursive: true })
+  writeFileSync(join(codexHome, 'config.toml'), '# Generated by Ordinus.\n', 'utf8')
+  return codexHome
+}
+
+function getCodexEnvironment(): NodeJS.ProcessEnv {
+  return buildRuntimeEnvironment({
+    CODEX_HOME: getCodexHome()
+  })
+}
+
+function findCodexExecutable(): Promise<CliExecutable | null> {
+  return findCliExecutable('codex', 'CODEX_BIN')
+}
+
+function startCodexLogin(
+  executable: CliExecutable,
+  setProcess: (process: ProviderLoginProcess) => void
+): Promise<ProviderConnectResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let output = ''
+    const child = spawn(executable.command, ['login'], {
+      cwd: getSystemPaths().userData,
+      env: getCodexEnvironment(),
+      shell: executable.shell,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    const loginProcess: ProviderLoginProcess = {
+      child,
+      authUrl: '',
+      finished: false,
+      cleanupTimer: null
+    }
+
+    setProcess(loginProcess)
+
+    const timeout = setTimeout(() => {
+      if (settled) return
+      settled = true
+      stopProviderLoginProcess(loginProcess)
+      reject(new Error('Codex login did not provide an auth URL.'))
+    }, 15_000)
+
+    const finish = (value: ProviderConnectResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(value)
+    }
+
+    const onData = (chunk: Buffer): void => {
+      output += chunk.toString()
+      const authUrl = extractCodexAuthUrl(output)
+      if (!authUrl || loginProcess.authUrl) return
+
+      loginProcess.authUrl = authUrl
+      scheduleLoginCleanup(loginProcess)
+      finish(createProviderLoginResult('codex', 'Codex CLI', 'Waiting for browser login.', authUrl))
+    }
+
+    child.stdout?.on('data', onData)
+    child.stderr?.on('data', onData)
+    child.once('error', (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.once('close', (code) => {
+      loginProcess.finished = true
+      if (!settled && code) {
+        settled = true
+        clearTimeout(timeout)
+        reject(new Error(output.trim() || `Codex login exited with code ${code}.`))
+      }
+    })
+  })
+}
+
+function extractCodexAuthUrl(value: string): string {
+  return extractTrustedHttpsUrl(value, (url) => url.hostname === 'auth.openai.com')
+}
+
+function readAgentDraftOutput(outputPath: string): unknown {
+  if (!existsSync(outputPath)) {
+    throw new Error('Codex did not write an agent draft.')
+  }
+
+  try {
+    return JSON.parse(extractJsonObject(readFileSync(outputPath, 'utf8')))
+  } catch {
+    throw new Error('Codex returned an invalid agent draft.')
+  }
+}

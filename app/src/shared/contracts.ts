@@ -106,8 +106,6 @@ export const AgentSchema = z.object({
 
 export const AgentDraftFromIntentInputSchema = z.object({
   requestedWork: z.string().trim().min(12, 'Describe what the agent should help with.'),
-  providerId: ProviderIdSchema.default('codex'),
-  model: z.string().trim().min(1).default('default'),
   sandbox: AgentSandboxSchema.default('workspace-write'),
   workspaceRoot: z.string().trim().min(1).optional()
 })

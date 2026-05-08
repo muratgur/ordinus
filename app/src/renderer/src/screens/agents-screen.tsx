@@ -335,8 +335,6 @@ function CreateAgentDialog({
       setError('')
       const nextDraft = await window.ordinus.agents.draftFromIntent({
         requestedWork: intent,
-        providerId: 'codex',
-        model: 'default',
         sandbox: 'workspace-write'
       })
       setDraft(nextDraft)

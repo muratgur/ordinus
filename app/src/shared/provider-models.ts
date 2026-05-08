@@ -53,14 +53,24 @@ export const providerModelOptions = {
       description: 'Use the model selected by the Gemini CLI.'
     },
     {
-      id: 'gemini-pro',
-      label: 'Gemini Pro',
-      description: 'General Gemini model alias.'
+      id: 'gemini-3.1-pro-preview',
+      label: 'Gemini 3.1 Pro Preview',
+      description: 'Latest preview model when the local CLI supports it.'
     },
     {
-      id: 'gemini-flash',
-      label: 'Gemini Flash',
-      description: 'Faster Gemini model alias.'
+      id: 'gemini-3-flash-preview',
+      label: 'Gemini 3 Flash Preview',
+      description: 'Fast Gemini 3 preview model when the local CLI supports it.'
+    },
+    {
+      id: 'gemini-2.5-pro',
+      label: 'Gemini 2.5 Pro',
+      description: 'Deeper reasoning model when the local CLI supports it.'
+    },
+    {
+      id: 'gemini-2.5-flash',
+      label: 'Gemini 2.5 Flash',
+      description: 'Lower-latency Gemini model when the local CLI supports it.'
     }
   ]
 } satisfies Record<ProviderId, ProviderModelOption[]>
