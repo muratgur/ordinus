@@ -13,12 +13,13 @@ import { dirname, join } from 'node:path'
 import {
   ProviderStatusSchema,
   type AgentDraft,
+  type OrchestrationPlan,
   type ProviderConnectResult,
   type ProviderStatus
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
 import { findCliExecutable, type CliExecutable } from '../../cli/executable'
-import { extractJsonObject, firstLine, isRecord } from '../../cli/output'
+import { extractJsonObject, firstLine, isRecord, parseJsonFromCliOutput } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
@@ -28,6 +29,11 @@ import {
   buildAgentDraft,
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
+import {
+  buildOrchestrationPrompt,
+  orchestrationPlanJsonSchema,
+  parseOrchestrationPlan
+} from '../../prompts/orchestration'
 import {
   connectCliProvider,
   createProviderLoginResult,
@@ -42,6 +48,7 @@ import type {
   RuntimeAgentDraftInput,
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
+  RuntimeOrchestrationPlanInput,
   ProviderRuntimeContext
 } from '../types'
 
@@ -64,6 +71,9 @@ export const codexProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateCodexAgentDraft(input)
+  },
+  generateOrchestrationPlan(input) {
+    return generateCodexOrchestrationPlan(input)
   },
   sendConversationTurn(input, context) {
     return sendCodexConversationTurn(input, context)
@@ -303,6 +313,59 @@ async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<A
     const draftJson = AgentDraftOutputSchema.parse(readAgentDraftOutput(outputPath))
 
     return buildAgentDraft(input, draftJson)
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true })
+  }
+}
+
+async function generateCodexOrchestrationPlan(
+  input: RuntimeOrchestrationPlanInput
+): Promise<OrchestrationPlan> {
+  const executable = await findCodexExecutable()
+  if (!executable) {
+    throw new Error('Codex CLI was not found.')
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'ordinus-orchestrator-'))
+  const schemaPath = join(tempDir, 'orchestration-plan.schema.json')
+  const outputPath = join(tempDir, 'orchestration-plan.json')
+
+  try {
+    writeFileSync(schemaPath, JSON.stringify(orchestrationPlanJsonSchema, null, 2), 'utf8')
+
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--ephemeral',
+      '--ignore-rules',
+      '--sandbox',
+      'read-only',
+      '-C',
+      input.workspaceRoot,
+      '--output-schema',
+      schemaPath,
+      '--output-last-message',
+      outputPath
+    ]
+
+    if (input.model !== 'default') {
+      args.push('--model', input.model)
+    }
+
+    const result = await runCapture(executable.command, args, {
+      env: getCodexEnvironment(),
+      shell: executable.shell,
+      stdin: buildOrchestrationPrompt(input),
+      timeoutMs: 90_000
+    })
+
+    if (result.code !== 0) {
+      throw new Error(
+        firstLine(result.stderr || result.stdout) || 'Codex could not route this message.'
+      )
+    }
+
+    return parseOrchestrationPlan(parseJsonFromCliOutput(readFileSync(outputPath, 'utf8')))
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }

@@ -36,6 +36,7 @@ export const conversations = sqliteTable('conversations', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   mode: text('mode').notNull(),
+  routingMode: text('routing_mode').notNull().default('manual'),
   status: text('status').notNull(),
   summary: text('summary').notNull(),
   createdAt: text('created_at').notNull(),

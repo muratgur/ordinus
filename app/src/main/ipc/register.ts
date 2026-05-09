@@ -15,15 +15,20 @@ import {
   ConversationCreateManualInputSchema,
   ConversationGetInputSchema,
   ConversationSendTurnInputSchema,
+  ConversationUpdateRoutingModeInputSchema,
+  OrchestrationPlanSchema,
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
   SetupStatusSchema,
   WorkspaceSaveConfigInputSchema,
   WorkspaceSelectFolderResultSchema,
-  WorkspaceUpdateSystemDefaultInputSchema
+  WorkspaceUpdateSystemDefaultInputSchema,
+  type ConversationDetail,
+  type ConversationSendTurnInput,
+  type ProviderId
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
-import type { OrdinusDatabase } from '../db/database'
+import type { OrdinusDatabase, PreparedConversationTurn } from '../db/database'
 import { getSystemPaths } from '../paths'
 import type { RuntimeService } from '../runtime'
 import {
@@ -166,6 +171,10 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = ConversationCreateManualInputSchema.parse(payload)
     return database.createManualConversation(input)
   })
+  ipcMain.handle(ipcChannels.conversationsUpdateRoutingMode, (_event, payload) => {
+    const input = ConversationUpdateRoutingModeInputSchema.parse(payload)
+    return database.updateConversationRoutingMode(input)
+  })
   ipcMain.handle(ipcChannels.conversationsSendTurn, async (_event, payload) => {
     const input = ConversationSendTurnInputSchema.parse(payload)
     const current = database.getConversation({ conversationId: input.conversationId })
@@ -175,37 +184,12 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
       throw new Error('Conversation has no participant.')
     }
 
-    const prepared = database.prepareConversationTurn(input)
+    if (current.turns.some((turn) => turn.status === 'running')) {
+      throw new Error('Wait for the current turn to finish before sending another message.')
+    }
 
-    prepared.agentTurns.forEach((agentTurn) => {
-      const logRef = join('conversations', prepared.conversationId, agentTurn.agentTurnId)
-      const logDir = join(getSystemPaths().logs, logRef)
-      mkdirSync(logDir, { recursive: true })
-
-      void runtime
-        .sendConversationTurn({
-          turnId: agentTurn.agentTurnId,
-          conversationId: prepared.conversationId,
-          providerId: agentTurn.agent.providerId,
-          model: agentTurn.agent.model,
-          sandbox: agentTurn.agent.sandbox,
-          workspaceRoot: agentTurn.agent.workspaceRoot,
-          agentName: agentTurn.agent.name,
-          agentRole: agentTurn.agent.role,
-          instructions: agentTurn.agent.instructions,
-          providerSessionRef: agentTurn.providerSessionRef,
-          message: input.message,
-          logRef,
-          eventLogPath: join(logDir, 'events.jsonl'),
-          lastMessagePath: join(logDir, 'last-message.txt')
-        })
-        .then((result) => {
-          saveConversationTurnCompletion(database, agentTurn.agentTurnId, result)
-        })
-        .catch((error) => {
-          saveConversationTurnFailure(database, agentTurn.agentTurnId, error, logRef)
-        })
-    })
+    const prepared = await prepareConversationTurn(database, runtime, current, input)
+    startPreparedConversationTurns(database, runtime, prepared)
 
     return database.getConversation({ conversationId: prepared.conversationId })
   })
@@ -228,6 +212,87 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
 function requireAgent(database: OrdinusDatabase, agentId: string): void {
   if (!database.hasAgent(agentId)) {
     throw new Error('Agent was not found.')
+  }
+}
+
+async function prepareConversationTurn(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  current: ConversationDetail,
+  input: ConversationSendTurnInput
+): Promise<PreparedConversationTurn> {
+  if (current.routingMode !== 'orchestrated') {
+    return database.prepareConversationTurn(input)
+  }
+
+  const plan = OrchestrationPlanSchema.parse(
+    await runtime.generateOrchestrationPlan({
+      ...(await getOrchestratorRuntimeConfig(database, runtime)),
+      participants: current.participants,
+      mentionedParticipantIds: input.targetParticipantIds ?? [],
+      userMessage: input.message
+    })
+  )
+
+  return database.prepareOrchestratedConversationTurn(input, plan.assignments)
+}
+
+function startPreparedConversationTurns(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  prepared: PreparedConversationTurn
+): void {
+  prepared.agentTurns.forEach((agentTurn) => {
+    const logRef = join('conversations', prepared.conversationId, agentTurn.agentTurnId)
+    const logDir = join(getSystemPaths().logs, logRef)
+    mkdirSync(logDir, { recursive: true })
+
+    void runtime
+      .sendConversationTurn({
+        turnId: agentTurn.agentTurnId,
+        conversationId: prepared.conversationId,
+        providerId: agentTurn.agent.providerId,
+        model: agentTurn.agent.model,
+        sandbox: agentTurn.agent.sandbox,
+        workspaceRoot: agentTurn.agent.workspaceRoot,
+        agentName: agentTurn.agent.name,
+        agentRole: agentTurn.agent.role,
+        instructions: agentTurn.agent.instructions,
+        providerSessionRef: agentTurn.providerSessionRef,
+        message: agentTurn.message,
+        logRef,
+        eventLogPath: join(logDir, 'events.jsonl'),
+        lastMessagePath: join(logDir, 'last-message.txt')
+      })
+      .then((result) => {
+        saveConversationTurnCompletion(database, agentTurn.agentTurnId, result)
+      })
+      .catch((error) => {
+        saveConversationTurnFailure(database, agentTurn.agentTurnId, error, logRef)
+      })
+  })
+}
+
+async function getOrchestratorRuntimeConfig(
+  database: OrdinusDatabase,
+  runtime: RuntimeService
+): Promise<{ providerId: ProviderId; model: string; workspaceRoot: string }> {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before using Orchestrator.')
+  }
+
+  const providers = await runtime.getProviderStatuses()
+  const provider = providers.find((status) => status.id === workspace.defaultProviderId)
+
+  if (!provider?.connected) {
+    throw new Error('Connect the default provider before using Orchestrator.')
+  }
+
+  return {
+    providerId: workspace.defaultProviderId,
+    model: workspace.defaultModel,
+    workspaceRoot: workspace.workspaceRoot
   }
 }
 

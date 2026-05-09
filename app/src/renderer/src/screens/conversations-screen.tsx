@@ -7,6 +7,7 @@ import {
   Loader2,
   MessageSquareText,
   Plus,
+  Route,
   SendHorizontal,
   Square,
   UserRound,
@@ -73,6 +74,7 @@ export function ConversationsScreen(): React.JSX.Element {
   const [draftMentions, setDraftMentions] = useState<DraftMention[]>([])
   const [sending, setSending] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [updatingRoutingMode, setUpdatingRoutingMode] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
@@ -85,7 +87,7 @@ export function ConversationsScreen(): React.JSX.Element {
     sending ||
     !participant ||
     !message.trim() ||
-    (detail.mode === 'manual' && draftMentions.length === 0)
+    (requiresMentionTarget(detail) && draftMentions.length === 0)
   const latestTurn = detail?.turns.at(-1)
   const latestTurnSignature = latestTurn
     ? `${detail?.id}:${latestTurn.id}:${latestTurn.status}:${latestTurn.content}`
@@ -206,8 +208,9 @@ export function ConversationsScreen(): React.JSX.Element {
       setError('')
       const nextDetail = await window.ordinus.conversations.sendTurn({
         conversationId: detail.id,
-        targetParticipantIds:
-          detail.mode === 'manual' ? getDraftMentionParticipantIds(draftMentions) : undefined,
+        targetParticipantIds: sendsMentionTargets(detail)
+          ? getDraftMentionParticipantIds(draftMentions)
+          : undefined,
         message
       })
       setMessage('')
@@ -257,6 +260,27 @@ export function ConversationsScreen(): React.JSX.Element {
     }
   }
 
+  async function handleRoutingModeChange(orchestrated: boolean): Promise<void> {
+    if (!detail) {
+      return
+    }
+
+    try {
+      setUpdatingRoutingMode(true)
+      setError('')
+      const nextDetail = await window.ordinus.conversations.updateRoutingMode({
+        conversationId: detail.id,
+        routingMode: orchestrated ? 'orchestrated' : 'manual'
+      })
+      setDetail(nextDetail)
+      await loadConversations(nextDetail.id)
+    } catch (routingError) {
+      setError(getErrorMessage(routingError, 'Routing mode could not be updated.'))
+    } finally {
+      setUpdatingRoutingMode(false)
+    }
+  }
+
   return (
     <div className="grid h-[calc(100vh-7rem)] min-h-0 gap-4 overflow-hidden py-6 xl:grid-cols-[280px_minmax(0,1fr)_280px]">
       <ConversationList
@@ -277,7 +301,9 @@ export function ConversationsScreen(): React.JSX.Element {
                 participantName={participant?.agentName ?? ''}
                 runningTurns={runningTurns}
                 cancelling={cancelling}
+                updatingRoutingMode={updatingRoutingMode}
                 onCancelTurns={(turnIds) => void handleCancelTurns(turnIds)}
+                onRoutingModeChange={(orchestrated) => void handleRoutingModeChange(orchestrated)}
               />
               <ScrollArea className="min-h-0 flex-1">
                 <CardContent className="grid gap-3 p-4">
@@ -302,6 +328,7 @@ export function ConversationsScreen(): React.JSX.Element {
               <Composer
                 value={message}
                 participants={detail.participants}
+                routingMode={detail.routingMode}
                 selectedMentions={draftMentions}
                 blockedReason={getBlockedReason(detail, participant, runningTurn, draftMentions)}
                 disabled={composerBlocked}
@@ -413,14 +440,20 @@ function ConversationHeader({
   participantName,
   runningTurns,
   cancelling,
-  onCancelTurns
+  updatingRoutingMode,
+  onCancelTurns,
+  onRoutingModeChange
 }: {
   detail: ConversationDetail
   participantName: string
   runningTurns: ConversationTurn[]
   cancelling: boolean
+  updatingRoutingMode: boolean
   onCancelTurns: (turnIds: string[]) => void
+  onRoutingModeChange: (orchestrated: boolean) => void
 }): React.JSX.Element {
+  const orchestrated = usesOrchestrator(detail)
+
   return (
     <CardHeader className="border-b bg-accent/50">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -435,6 +468,23 @@ function ConversationHeader({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <StatusPill status={detail.status} />
+          {detail.participants.length > 1 ? (
+            <Button
+              type="button"
+              variant={orchestrated ? 'default' : 'outline'}
+              size="sm"
+              disabled={updatingRoutingMode || detail.status === 'running'}
+              title={
+                orchestrated
+                  ? 'Ordinus routes every message before agents run.'
+                  : 'Messages go directly to mentioned agents.'
+              }
+              onClick={() => onRoutingModeChange(!orchestrated)}
+            >
+              {updatingRoutingMode ? <Loader2 className="animate-spin" /> : <Route />}
+              Orchestrator
+            </Button>
+          ) : null}
           {runningTurns.length > 0 ? (
             <Button
               type="button"
@@ -505,6 +555,7 @@ function TurnCard({
 function Composer({
   value,
   participants,
+  routingMode,
   selectedMentions,
   blockedReason,
   disabled,
@@ -515,6 +566,7 @@ function Composer({
 }: {
   value: string
   participants: ConversationParticipant[]
+  routingMode: ConversationDetail['routingMode']
   selectedMentions: DraftMention[]
   blockedReason: string
   disabled: boolean
@@ -535,6 +587,10 @@ function Composer({
   const selectedMentionIds = selectedMentions.map((mention) =>
     getMentionOptionId(mention.participantIds)
   )
+  const placeholder =
+    routingMode === 'orchestrated'
+      ? 'Describe the work. Mentions are routing hints for Orchestrator.'
+      : 'Ask this agent to inspect, explain, plan, or change something in the workspace.'
 
   function selectMention(
     option: MentionOption,
@@ -639,7 +695,7 @@ function Composer({
           <textarea
             ref={textareaRef}
             className="ordinus-scrollbar max-h-52 min-h-28 w-full resize-y overflow-y-auto rounded-lg border bg-card p-3 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            placeholder="Ask this agent to inspect, explain, plan, or change something in the workspace."
+            placeholder={placeholder}
             value={value}
             onChange={handleTextareaChange}
             onKeyDown={handleTextareaKeyDown}
@@ -1080,11 +1136,23 @@ function getBlockedReason(
     return 'This conversation was cancelled. Send a new message to continue.'
   }
 
-  if (detail.mode === 'manual' && draftMentions.length === 0) {
+  if (requiresMentionTarget(detail) && draftMentions.length === 0) {
     return 'Choose a participant mention before sending.'
   }
 
   return ''
+}
+
+function usesOrchestrator(detail: ConversationDetail): boolean {
+  return detail.routingMode === 'orchestrated'
+}
+
+function requiresMentionTarget(detail: ConversationDetail): boolean {
+  return detail.routingMode === 'manual' && detail.mode === 'manual'
+}
+
+function sendsMentionTargets(detail: ConversationDetail): boolean {
+  return detail.mode === 'manual' || usesOrchestrator(detail)
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
