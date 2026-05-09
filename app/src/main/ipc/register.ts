@@ -176,33 +176,36 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     }
 
     const prepared = database.prepareConversationTurn(input)
-    const logRef = join('conversations', prepared.conversationId, prepared.agentTurnId)
-    const logDir = join(getSystemPaths().logs, logRef)
-    mkdirSync(logDir, { recursive: true })
 
-    void runtime
-      .sendConversationTurn({
-        turnId: prepared.agentTurnId,
-        conversationId: prepared.conversationId,
-        providerId: prepared.agent.providerId,
-        model: prepared.agent.model,
-        sandbox: prepared.agent.sandbox,
-        workspaceRoot: prepared.agent.workspaceRoot,
-        agentName: prepared.agent.name,
-        agentRole: prepared.agent.role,
-        instructions: prepared.agent.instructions,
-        providerSessionRef: prepared.providerSessionRef,
-        message: input.message,
-        logRef,
-        eventLogPath: join(logDir, 'events.jsonl'),
-        lastMessagePath: join(logDir, 'last-message.txt')
-      })
-      .then((result) => {
-        saveConversationTurnCompletion(database, prepared.agentTurnId, result)
-      })
-      .catch((error) => {
-        saveConversationTurnFailure(database, prepared.agentTurnId, error, logRef)
-      })
+    prepared.agentTurns.forEach((agentTurn) => {
+      const logRef = join('conversations', prepared.conversationId, agentTurn.agentTurnId)
+      const logDir = join(getSystemPaths().logs, logRef)
+      mkdirSync(logDir, { recursive: true })
+
+      void runtime
+        .sendConversationTurn({
+          turnId: agentTurn.agentTurnId,
+          conversationId: prepared.conversationId,
+          providerId: agentTurn.agent.providerId,
+          model: agentTurn.agent.model,
+          sandbox: agentTurn.agent.sandbox,
+          workspaceRoot: agentTurn.agent.workspaceRoot,
+          agentName: agentTurn.agent.name,
+          agentRole: agentTurn.agent.role,
+          instructions: agentTurn.agent.instructions,
+          providerSessionRef: agentTurn.providerSessionRef,
+          message: input.message,
+          logRef,
+          eventLogPath: join(logDir, 'events.jsonl'),
+          lastMessagePath: join(logDir, 'last-message.txt')
+        })
+        .then((result) => {
+          saveConversationTurnCompletion(database, agentTurn.agentTurnId, result)
+        })
+        .catch((error) => {
+          saveConversationTurnFailure(database, agentTurn.agentTurnId, error, logRef)
+        })
+    })
 
     return database.getConversation({ conversationId: prepared.conversationId })
   })

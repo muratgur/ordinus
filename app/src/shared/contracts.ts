@@ -244,7 +244,7 @@ export const ConversationCreateManualInputSchema = z.object({
 
 export const ConversationSendTurnInputSchema = z.object({
   conversationId: z.string().min(1),
-  targetParticipantId: z.string().min(1).optional(),
+  targetParticipantIds: z.array(z.string().min(1)).max(8).optional(),
   message: z.string().trim().min(1, 'Message is required.').max(64_000)
 })
 

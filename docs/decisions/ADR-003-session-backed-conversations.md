@@ -191,9 +191,11 @@ controls, clear attribution, and reviewable rationale for why each agent spoke.
 5. Add Claude and Gemini adapter parity using their session/resume capabilities.
 6. Add manual multi-agent conversations by allowing multiple participants and explicit targets.
 7. Add parallel broadcast once per-participant status and cancellation are reliable.
-8. Add sequential conversations with a visible fixed order policy.
-9. Add coordinator-routed conversations only after direct, manual, parallel, and sequential modes are
-   observable and controllable.
+8. Defer manual sequential conversations. Explicit user-authored agent order adds coordination work
+   without a clear near-term workflow; future coordinator-routed orchestration should own routing
+   and sequencing decisions.
+9. Add coordinator-routed conversations only after direct, manual, and parallel modes are observable
+   and controllable.
 10. Defer autonomous agent-to-agent loops until budget, maximum-turn, loop detection, and user stop
     controls are designed.
 
