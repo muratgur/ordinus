@@ -3,12 +3,16 @@ import type {
   AgentDraft,
   AgentDraftFromIntentInput,
   AgentSandbox,
+  OrchestrationPlan,
   ProviderActionInput,
   ProviderConnectInput,
   ProviderConnectResult,
   ProviderId,
   ProviderStatus
 } from '@shared/contracts'
+import type { RuntimeOrchestrationPlanInput } from '../prompts/orchestration'
+
+export type { RuntimeOrchestrationPlanInput } from '../prompts/orchestration'
 
 export type ProviderLoginProcess = {
   child: ChildProcess
@@ -72,6 +76,10 @@ export type ProviderAdapter = {
     input: RuntimeAgentDraftInput,
     context: ProviderRuntimeContext
   ): Promise<AgentDraft>
+  generateOrchestrationPlan?(
+    input: RuntimeOrchestrationPlanInput,
+    context: ProviderRuntimeContext
+  ): Promise<OrchestrationPlan>
   sendConversationTurn?(
     input: RuntimeConversationTurnInput,
     context: ProviderRuntimeContext

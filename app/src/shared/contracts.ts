@@ -167,6 +167,7 @@ export const AgentSkillCreateInputSchema = z.object({
 })
 
 export const ConversationModeSchema = z.enum(['direct', 'manual'])
+export const ConversationRoutingModeSchema = z.enum(['manual', 'orchestrated'])
 export const ConversationStatusSchema = z.enum(['active', 'running', 'failed', 'cancelled'])
 export const ConversationParticipantStatusSchema = z.enum([
   'ready',
@@ -211,6 +212,7 @@ export const ConversationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   mode: ConversationModeSchema,
+  routingMode: ConversationRoutingModeSchema.default('manual'),
   status: ConversationStatusSchema,
   summary: z.string(),
   createdAt: z.string(),
@@ -248,8 +250,23 @@ export const ConversationSendTurnInputSchema = z.object({
   message: z.string().trim().min(1, 'Message is required.').max(64_000)
 })
 
+export const ConversationUpdateRoutingModeInputSchema = z.object({
+  conversationId: z.string().min(1),
+  routingMode: ConversationRoutingModeSchema
+})
+
 export const ConversationCancelTurnInputSchema = z.object({
   turnId: z.string().min(1)
+})
+
+export const OrchestrationAssignmentSchema = z.object({
+  participantId: z.string().min(1),
+  instruction: z.string().trim().min(1).max(16_000)
+})
+
+export const OrchestrationPlanSchema = z.object({
+  action: z.literal('route'),
+  assignments: z.array(OrchestrationAssignmentSchema).min(1).max(8)
 })
 
 export type AppInfo = z.infer<typeof AppInfoSchema>
@@ -281,6 +298,7 @@ export type AgentSkill = z.infer<typeof AgentSkillSchema>
 export type AgentSkillsListInput = z.infer<typeof AgentSkillsListInputSchema>
 export type AgentSkillCreateInput = z.infer<typeof AgentSkillCreateInputSchema>
 export type ConversationMode = z.infer<typeof ConversationModeSchema>
+export type ConversationRoutingMode = z.infer<typeof ConversationRoutingModeSchema>
 export type ConversationStatus = z.infer<typeof ConversationStatusSchema>
 export type ConversationParticipantStatus = z.infer<typeof ConversationParticipantStatusSchema>
 export type ConversationTurnSpeaker = z.infer<typeof ConversationTurnSpeakerSchema>
@@ -294,4 +312,9 @@ export type ConversationGetInput = z.infer<typeof ConversationGetInputSchema>
 export type ConversationCreateDirectInput = z.infer<typeof ConversationCreateDirectInputSchema>
 export type ConversationCreateManualInput = z.infer<typeof ConversationCreateManualInputSchema>
 export type ConversationSendTurnInput = z.infer<typeof ConversationSendTurnInputSchema>
+export type ConversationUpdateRoutingModeInput = z.infer<
+  typeof ConversationUpdateRoutingModeInputSchema
+>
 export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>
+export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
+export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

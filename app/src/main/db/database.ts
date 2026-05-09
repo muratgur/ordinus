@@ -20,6 +20,7 @@ import {
   ConversationListItemSchema,
   ConversationSendTurnInputSchema,
   ConversationTurnSchema,
+  ConversationUpdateRoutingModeInputSchema,
   DbStatusSchema,
   WorkspaceConfigSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
@@ -34,7 +35,9 @@ import {
   type ConversationListItem,
   type ConversationSendTurnInput,
   type ConversationTurn,
+  type ConversationUpdateRoutingModeInput,
   type DbStatus,
+  type OrchestrationAssignment,
   type WorkspaceConfig,
   type WorkspaceSaveConfigInput,
   type WorkspaceUpdateSystemDefaultInput
@@ -59,6 +62,7 @@ export type PreparedConversationAgentTurn = {
   agentTurnId: string
   agent: Agent
   providerSessionRef: string | null
+  message: string
 }
 
 export type PreparedConversationTurn = {
@@ -566,6 +570,22 @@ export class OrdinusDatabase {
     return this.getConversation({ conversationId })
   }
 
+  updateConversationRoutingMode(input: ConversationUpdateRoutingModeInput): ConversationDetail {
+    const parsed = ConversationUpdateRoutingModeInputSchema.parse(input)
+    const now = new Date().toISOString()
+
+    this.db
+      .update(conversations)
+      .set({
+        routingMode: parsed.routingMode,
+        updatedAt: now
+      })
+      .where(eq(conversations.id, parsed.conversationId))
+      .run()
+
+    return this.getConversation({ conversationId: parsed.conversationId })
+  }
+
   prepareConversationTurn(input: ConversationSendTurnInput): PreparedConversationTurn {
     const parsed = ConversationSendTurnInputSchema.parse(input)
     const detail = this.getConversation({ conversationId: parsed.conversationId })
@@ -583,12 +603,68 @@ export class OrdinusDatabase {
       throw new Error('Choose at least one agent before sending.')
     }
 
+    return this.prepareConversationAssignments(
+      detail,
+      parsed.message,
+      targetParticipants.map((participant) => ({
+        participantId: participant.id,
+        instruction: parsed.message
+      }))
+    )
+  }
+
+  prepareOrchestratedConversationTurn(
+    input: ConversationSendTurnInput,
+    assignments: OrchestrationAssignment[]
+  ): PreparedConversationTurn {
+    const parsed = ConversationSendTurnInputSchema.parse(input)
+    const detail = this.getConversation({ conversationId: parsed.conversationId })
+
+    if (detail.turns.some((turn) => turn.status === 'running')) {
+      throw new Error('Wait for the current turn to finish before sending another message.')
+    }
+
+    const uniqueAssignments = mergeAssignmentsByParticipant(assignments)
+
+    if (uniqueAssignments.length === 0) {
+      throw new Error('Orchestrator did not choose an agent for this message.')
+    }
+
+    const targetParticipants = this.resolveConversationTurnTargets(
+      detail,
+      uniqueAssignments.map((assignment) => assignment.participantId)
+    )
+
+    if (targetParticipants.length === 0) {
+      throw new Error('Orchestrator did not choose an agent for this message.')
+    }
+
+    return this.prepareConversationAssignments(detail, parsed.message, uniqueAssignments)
+  }
+
+  private prepareConversationAssignments(
+    detail: ConversationDetail,
+    userMessage: string,
+    assignments: OrchestrationAssignment[]
+  ): PreparedConversationTurn {
+    const participantsById = new Map(
+      detail.participants.map((participant) => [participant.id, participant])
+    )
+    const targetParticipants = assignments.map((assignment) => {
+      const participant = participantsById.get(assignment.participantId)
+      if (!participant) {
+        throw new Error('One or more target agents are not part of this conversation.')
+      }
+
+      return participant
+    })
+
     const targetAgents = targetParticipants.map((participant) =>
       this.requireActiveAgent(participant.agentId)
     )
 
     const now = new Date().toISOString()
-    const userTurn = createBoundedTurnContent(parsed.message)
+    const userTurn = createBoundedTurnContent(userMessage)
     const userTurnId = createConversationTurnId()
     const nextSequence = this.getNextConversationTurnSequence(detail.id)
 
@@ -597,7 +673,8 @@ export class OrdinusDatabase {
       participantId: participant.id,
       agentTurnId: createConversationTurnId(),
       agent: targetAgents[index],
-      providerSessionRef: participant.providerSessionRef
+      providerSessionRef: participant.providerSessionRef,
+      message: buildAssignedConversationMessage(userMessage, assignments[index].instruction)
     }))
 
     this.db.transaction((tx) => {
@@ -950,6 +1027,47 @@ function createConversationTurnId(): string {
 
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
+}
+
+function buildAssignedConversationMessage(userMessage: string, instruction: string): string {
+  const trimmedInstruction = instruction.trim()
+
+  if (!trimmedInstruction || trimmedInstruction === userMessage.trim()) {
+    return userMessage
+  }
+
+  return [
+    'Original user message:',
+    userMessage,
+    '',
+    'Orchestrator assignment:',
+    trimmedInstruction,
+    '',
+    'Respond only to your assignment while preserving the relevant user context.'
+  ].join('\n')
+}
+
+function mergeAssignmentsByParticipant(
+  assignments: OrchestrationAssignment[]
+): OrchestrationAssignment[] {
+  const merged = new Map<string, string[]>()
+
+  assignments.forEach((assignment) => {
+    const instruction = assignment.instruction.trim()
+    if (!instruction) {
+      return
+    }
+
+    merged.set(assignment.participantId, [
+      ...(merged.get(assignment.participantId) ?? []),
+      instruction
+    ])
+  })
+
+  return Array.from(merged, ([participantId, instructions]) => ({
+    participantId,
+    instruction: uniqueValues(instructions).join('\n\n')
+  }))
 }
 
 function formatConversationAgentNames(agentNames: string[]): string {

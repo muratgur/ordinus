@@ -7,6 +7,7 @@ import {
   ProviderStatusSchema,
   type AgentDraft,
   type AgentSandbox,
+  type OrchestrationPlan,
   type ProviderConnectResult,
   type ProviderStatus
 } from '@shared/contracts'
@@ -21,6 +22,7 @@ import {
   buildAgentDraft,
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
+import { buildOrchestrationPrompt, parseOrchestrationPlan } from '../../prompts/orchestration'
 import {
   connectCliProvider,
   createProviderLoginResult,
@@ -38,7 +40,8 @@ import type {
   ProviderRuntimeContext,
   RuntimeAgentDraftInput,
   RuntimeConversationTurnInput,
-  RuntimeConversationTurnResult
+  RuntimeConversationTurnResult,
+  RuntimeOrchestrationPlanInput
 } from '../types'
 
 const geminiAuthEnvKeys = [
@@ -69,6 +72,9 @@ export const geminiProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateGeminiAgentDraft(input)
+  },
+  generateOrchestrationPlan(input) {
+    return generateGeminiOrchestrationPlan(input)
   },
   sendConversationTurn(input, context) {
     return sendGeminiConversationTurn(input, context)
@@ -224,6 +230,49 @@ async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }
+}
+
+async function generateGeminiOrchestrationPlan(
+  input: RuntimeOrchestrationPlanInput
+): Promise<OrchestrationPlan> {
+  const executable = await findGeminiExecutable()
+  if (!executable) {
+    throw new Error('Gemini CLI was not found.')
+  }
+
+  const status = await getGeminiStatus(null)
+  if (!status.connected) {
+    throw new Error('Gemini needs login before Ordinus can route messages with it.')
+  }
+
+  const args = [
+    '--skip-trust',
+    '--approval-mode',
+    'plan',
+    '--output-format',
+    'json',
+    '--prompt',
+    buildOrchestrationPrompt(input)
+  ]
+
+  if (input.model !== 'default') {
+    args.splice(0, 0, '--model', input.model)
+  }
+
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
+    cwd: input.workspaceRoot,
+    env: getGeminiEnvironment(),
+    shell: executable.shell,
+    timeoutMs: 90_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(
+      firstLine(result.stderr || result.stdout) || 'Gemini could not route this message.'
+    )
+  }
+
+  return parseOrchestrationPlan(readGeminiAgentDraftOutput(result.stdout))
 }
 
 async function getGeminiStatus(loginProcess: ProviderLoginProcess | null): Promise<ProviderStatus> {

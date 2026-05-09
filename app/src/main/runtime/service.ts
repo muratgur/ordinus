@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import {
   AgentDraftFromIntentInputSchema,
+  ConversationParticipantSchema,
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
   ProviderIdSchema,
+  type OrchestrationPlan,
   type AgentDraft,
   type ProviderActionInput,
   type ProviderConnectInput,
@@ -16,12 +18,22 @@ import type {
   ProviderRuntimeContext,
   RuntimeAgentDraftInput,
   RuntimeConversationTurnInput,
-  RuntimeConversationTurnResult
+  RuntimeConversationTurnResult,
+  RuntimeOrchestrationPlanInput
 } from './adapters/types'
 
 const RuntimeAgentDraftInputSchema = AgentDraftFromIntentInputSchema.extend({
   providerId: ProviderIdSchema,
   model: z.string().trim().min(1).default('default')
+})
+
+const RuntimeOrchestrationPlanInputSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string().trim().min(1).default('default'),
+  workspaceRoot: z.string().trim().min(1),
+  participants: z.array(ConversationParticipantSchema).min(1).max(8),
+  mentionedParticipantIds: z.array(z.string().min(1)).max(8),
+  userMessage: z.string().trim().min(1).max(64_000)
 })
 
 export type RuntimeService = {
@@ -31,6 +43,7 @@ export type RuntimeService = {
   refreshProvider(input: ProviderActionInput): Promise<ProviderStatus>
   connectProvider(input: ProviderConnectInput): Promise<ProviderConnectResult>
   generateAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft>
+  generateOrchestrationPlan(input: RuntimeOrchestrationPlanInput): Promise<OrchestrationPlan>
   sendConversationTurn(input: RuntimeConversationTurnInput): Promise<RuntimeConversationTurnResult>
   cancelConversationTurn(turnId: string): boolean
   subscribe(listener: RuntimeEventListener): () => void
@@ -84,6 +97,18 @@ export function createRuntimeService(): RuntimeService {
       }
 
       return adapter.generateAgentDraft(parsed, context)
+    },
+    async generateOrchestrationPlan(input) {
+      const parsed = RuntimeOrchestrationPlanInputSchema.parse(
+        input
+      ) as RuntimeOrchestrationPlanInput
+      const adapter = getProviderAdapter(parsed.providerId)
+
+      if (!adapter.generateOrchestrationPlan) {
+        throw new Error(`Orchestrator routing is not available for ${adapter.label} yet.`)
+      }
+
+      return adapter.generateOrchestrationPlan(parsed, context)
     },
     async sendConversationTurn(input) {
       const adapter = getProviderAdapter(input.providerId)

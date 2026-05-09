@@ -50,6 +50,13 @@
       "when": 1778327500000,
       "tag": "0006_conversation_turn_sequence",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1778330000000,
+      "tag": "0007_conversation_routing_mode",
+      "breakpoints": true
     }
   ]
 }

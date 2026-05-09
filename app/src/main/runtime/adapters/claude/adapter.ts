@@ -6,6 +6,7 @@ import {
   ProviderStatusSchema,
   type AgentDraft,
   type AgentSandbox,
+  type OrchestrationPlan,
   type ProviderConnectInput,
   type ProviderConnectResult,
   type ProviderStatus
@@ -23,6 +24,11 @@ import {
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
 import {
+  buildOrchestrationPrompt,
+  orchestrationPlanJsonSchema,
+  parseOrchestrationPlan
+} from '../../prompts/orchestration'
+import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
@@ -32,7 +38,12 @@ import {
   runConversationProcess,
   scheduleLoginCleanup
 } from '../shared'
-import type { ProviderAdapter, ProviderLoginProcess, RuntimeAgentDraftInput } from '../types'
+import type {
+  ProviderAdapter,
+  ProviderLoginProcess,
+  RuntimeAgentDraftInput,
+  RuntimeOrchestrationPlanInput
+} from '../types'
 import type {
   ProviderRuntimeContext,
   RuntimeConversationTurnInput,
@@ -59,6 +70,9 @@ export const claudeProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateClaudeAgentDraft(input)
+  },
+  generateOrchestrationPlan(input) {
+    return generateClaudeOrchestrationPlan(input)
   },
   sendConversationTurn(input, context) {
     return sendClaudeConversationTurn(input, context)
@@ -221,6 +235,51 @@ async function generateClaudeAgentDraft(input: RuntimeAgentDraftInput): Promise<
   const draftJson = AgentDraftOutputSchema.parse(readClaudeAgentDraftOutput(result.stdout))
 
   return buildAgentDraft(input, draftJson)
+}
+
+async function generateClaudeOrchestrationPlan(
+  input: RuntimeOrchestrationPlanInput
+): Promise<OrchestrationPlan> {
+  const executable = await findClaudeExecutable()
+  if (!executable) {
+    throw new Error('Claude Code CLI was not found.')
+  }
+
+  const status = await getClaudeStatus(null)
+  if (!status.connected) {
+    throw new Error('Claude needs login before Ordinus can route messages with it.')
+  }
+
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--json-schema',
+    JSON.stringify(orchestrationPlanJsonSchema),
+    '--no-session-persistence',
+    '--permission-mode',
+    'dontAsk'
+  ]
+
+  if (input.model !== 'default') {
+    args.splice(1, 0, '--model', input.model)
+  }
+
+  const result = await runCapture(executable.command, args, {
+    cwd: input.workspaceRoot,
+    env: getClaudeEnvironment(),
+    shell: executable.shell,
+    stdin: buildOrchestrationPrompt(input),
+    timeoutMs: 90_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(
+      firstLine(result.stderr || result.stdout) || 'Claude could not route this message.'
+    )
+  }
+
+  return parseOrchestrationPlan(readClaudeAgentDraftOutput(result.stdout))
 }
 
 async function getClaudeStatus(loginProcess: ProviderLoginProcess | null): Promise<ProviderStatus> {
