@@ -36,6 +36,20 @@
       "when": 1778278646753,
       "tag": "0004_first_shatterstar",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1778326800000,
+      "tag": "0005_session_backed_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1778327500000,
+      "tag": "0006_conversation_turn_sequence",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process'
 import type {
   AgentDraft,
   AgentDraftFromIntentInput,
+  AgentSandbox,
   ProviderActionInput,
   ProviderConnectInput,
   ProviderConnectResult,
@@ -16,6 +17,12 @@ export type ProviderLoginProcess = {
   cleanupTimer: NodeJS.Timeout | null
 }
 
+export type ProviderConversationProcess = {
+  child: ChildProcess
+  cancelled: boolean
+  cleanupTimer: NodeJS.Timeout | null
+}
+
 export type RuntimeAgentDraftInput = AgentDraftFromIntentInput & {
   providerId: ProviderId
   model: string
@@ -23,6 +30,30 @@ export type RuntimeAgentDraftInput = AgentDraftFromIntentInput & {
 
 export type ProviderRuntimeContext = {
   loginProcesses: Map<ProviderId, ProviderLoginProcess>
+  conversationProcesses: Map<string, ProviderConversationProcess>
+}
+
+export type RuntimeConversationTurnInput = {
+  turnId: string
+  conversationId: string
+  providerId: ProviderId
+  model: string
+  sandbox: AgentSandbox
+  workspaceRoot: string
+  agentName: string
+  agentRole: string
+  instructions: string
+  providerSessionRef: string | null
+  message: string
+  logRef: string
+  eventLogPath: string
+  lastMessagePath: string
+}
+
+export type RuntimeConversationTurnResult = {
+  providerSessionRef: string
+  responseText: string
+  logRef: string
 }
 
 export type ProviderAdapter = {
@@ -41,4 +72,8 @@ export type ProviderAdapter = {
     input: RuntimeAgentDraftInput,
     context: ProviderRuntimeContext
   ): Promise<AgentDraft>
+  sendConversationTurn?(
+    input: RuntimeConversationTurnInput,
+    context: ProviderRuntimeContext
+  ): Promise<RuntimeConversationTurnResult>
 }

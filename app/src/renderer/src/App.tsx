@@ -13,7 +13,7 @@ import type {
 import { AppShell } from './app/app-shell'
 import { defaultAppRoute, appRoutePaths } from './app/routes'
 import { AgentsScreen } from './screens/agents-screen'
-import { GroupChatScreen } from './screens/group-chat-screen'
+import { ConversationsScreen } from './screens/conversations-screen'
 import { HomeScreen } from './screens/home-screen'
 import { PlannerScreen } from './screens/planner-screen'
 import { SchedulesScreen } from './screens/schedules-screen'
@@ -177,7 +177,7 @@ function App(): React.JSX.Element {
           <Route path={appRoutePaths.home} element={<HomeScreen />} />
           <Route path={appRoutePaths.agents} element={<AgentsScreen />} />
           <Route path={appRoutePaths.planner} element={<PlannerScreen />} />
-          <Route path={appRoutePaths.groupChat} element={<GroupChatScreen />} />
+          <Route path={appRoutePaths.conversations} element={<ConversationsScreen />} />
           <Route path={appRoutePaths.schedules} element={<SchedulesScreen />} />
           <Route
             path={appRoutePaths.settings}

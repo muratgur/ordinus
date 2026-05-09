@@ -9,6 +9,12 @@ import type {
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
+  ConversationCancelTurnInput,
+  ConversationCreateDirectInput,
+  ConversationDetail,
+  ConversationGetInput,
+  ConversationListItem,
+  ConversationSendTurnInput,
   DbStatus,
   ProviderActionInput,
   ProviderConnectInput,
@@ -48,6 +54,13 @@ export type OrdinusApi = {
     updateSettings: (input: AgentUpdateSettingsInput) => Promise<Agent>
     listSkills: (input: AgentSkillsListInput) => Promise<AgentSkill[]>
     createSkill: (input: AgentSkillCreateInput) => Promise<AgentSkill>
+  }
+  conversations: {
+    list: () => Promise<ConversationListItem[]>
+    get: (input: ConversationGetInput) => Promise<ConversationDetail>
+    createDirect: (input: ConversationCreateDirectInput) => Promise<ConversationDetail>
+    sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>
+    cancelTurn: (input: ConversationCancelTurnInput) => Promise<ConversationDetail>
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>

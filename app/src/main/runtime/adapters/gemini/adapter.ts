@@ -3,8 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import {
+  AgentSandboxSchema,
   ProviderStatusSchema,
   type AgentDraft,
+  type AgentSandbox,
   type ProviderConnectResult,
   type ProviderStatus
 } from '@shared/contracts'
@@ -23,11 +25,21 @@ import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
+  getStringValue,
   getCliVersion,
+  readCliJsonErrorMessage,
+  runConversationProcess,
   scheduleLoginCleanup,
   stopProviderLoginProcess
 } from '../shared'
-import type { ProviderAdapter, ProviderLoginProcess, RuntimeAgentDraftInput } from '../types'
+import type {
+  ProviderAdapter,
+  ProviderLoginProcess,
+  ProviderRuntimeContext,
+  RuntimeAgentDraftInput,
+  RuntimeConversationTurnInput,
+  RuntimeConversationTurnResult
+} from '../types'
 
 const geminiAuthEnvKeys = [
   'GEMINI_API_KEY',
@@ -57,7 +69,112 @@ export const geminiProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateGeminiAgentDraft(input)
+  },
+  sendConversationTurn(input, context) {
+    return sendGeminiConversationTurn(input, context)
   }
+}
+
+async function sendGeminiConversationTurn(
+  input: RuntimeConversationTurnInput,
+  context: ProviderRuntimeContext
+): Promise<RuntimeConversationTurnResult> {
+  const executable = await findGeminiExecutable()
+  if (!executable) {
+    throw new Error('Gemini CLI was not found.')
+  }
+
+  const status = await getGeminiStatus(null)
+  if (!status.connected) {
+    throw new Error('Gemini needs login before this conversation can run.')
+  }
+
+  const args = buildGeminiConversationArgs(input)
+  const prompt = input.providerSessionRef ? input.message : buildGeminiConversationPrompt(input)
+  const result = await runConversationProcess({
+    executable,
+    args: withCliBaseArgs(executable, args),
+    input,
+    context,
+    env: getGeminiEnvironment(),
+    stdin: prompt,
+    streamErrorMessage: 'Gemini process streams could not be opened.'
+  })
+
+  if (result.cancelled) {
+    throw new Error('Conversation turn was cancelled.')
+  }
+
+  if (result.code !== 0) {
+    throw new Error(
+      readCliJsonErrorMessage(result.stdout, ['result', 'response', 'message']) ||
+        readCliJsonErrorMessage(result.stderr, ['result', 'response', 'message']) ||
+        firstLine(result.stderr || result.stdout) ||
+        'Gemini conversation turn failed.'
+    )
+  }
+
+  const parsed = readGeminiConversationOutput(result.stdout)
+  const providerSessionRef = parsed.sessionId || input.providerSessionRef || ''
+
+  if (!providerSessionRef) {
+    throw new Error('Gemini did not provide a session reference for this conversation.')
+  }
+
+  writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
+
+  return {
+    providerSessionRef,
+    responseText: readGeminiLastMessage(input.lastMessagePath),
+    logRef: input.logRef
+  }
+}
+
+function buildGeminiConversationArgs(input: RuntimeConversationTurnInput): string[] {
+  const args = [
+    '--skip-trust',
+    '--approval-mode',
+    getGeminiApprovalMode(input.sandbox),
+    '--output-format',
+    'json'
+  ]
+
+  if (input.providerSessionRef) {
+    args.push('--resume', input.providerSessionRef)
+  }
+
+  if (input.model !== 'default') {
+    args.unshift('--model', input.model)
+  }
+
+  return args
+}
+
+function getGeminiApprovalMode(sandbox: AgentSandbox): string {
+  const parsed = AgentSandboxSchema.parse(sandbox)
+
+  if (parsed === 'read-only') {
+    return 'plan'
+  }
+
+  if (parsed === 'workspace-write') {
+    return 'auto_edit'
+  }
+
+  return 'yolo'
+}
+
+function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): string {
+  return [
+    `You are ${input.agentName}.`,
+    `Role: ${input.agentRole}`,
+    '',
+    'Follow these agent instructions for this Ordinus conversation:',
+    input.instructions,
+    '',
+    'User message:',
+    input.message
+  ].join('\n')
 }
 
 async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -456,4 +573,42 @@ function extractGeminiAuthUrl(value: string): string {
     const host = url.hostname.toLowerCase()
     return host === 'accounts.google.com' || host === 'codeassist.google.com'
   })
+}
+
+function readGeminiConversationOutput(value: string): { sessionId: string; responseText: string } {
+  const parsed = parseJsonFromCliOutput(value)
+
+  if (!isRecord(parsed)) {
+    throw new Error('Gemini returned an invalid conversation response.')
+  }
+
+  const error = isRecord(parsed.error) ? parsed.error : null
+  if (error) {
+    const message = getStringValue(error.message) || 'Gemini conversation turn failed.'
+    throw new Error(message)
+  }
+
+  const sessionId = getStringValue(parsed.session_id) || getStringValue(parsed.sessionId)
+  const responseText =
+    getStringValue(parsed.response) ||
+    getStringValue(parsed.result) ||
+    getStringValue(parsed.message) ||
+    ''
+
+  if (!responseText.trim()) {
+    throw new Error('Gemini returned an empty conversation response.')
+  }
+
+  return {
+    sessionId,
+    responseText: responseText.trim()
+  }
+}
+
+function readGeminiLastMessage(outputPath: string): string {
+  if (!existsSync(outputPath)) {
+    throw new Error('Gemini did not write a conversation response.')
+  }
+
+  return readFileSync(outputPath, 'utf8').trim()
 }

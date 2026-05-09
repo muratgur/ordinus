@@ -10,6 +10,12 @@ import type {
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
+  ConversationCancelTurnInput,
+  ConversationCreateDirectInput,
+  ConversationDetail,
+  ConversationGetInput,
+  ConversationListItem,
+  ConversationSendTurnInput,
   DbStatus,
   ProviderActionInput,
   ProviderConnectInput,
@@ -61,6 +67,18 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.agentsListSkills, input),
     createSkill: async (input: AgentSkillCreateInput): Promise<AgentSkill> =>
       ipcRenderer.invoke(ipcChannels.agentsCreateSkill, input)
+  },
+  conversations: {
+    list: async (): Promise<ConversationListItem[]> =>
+      ipcRenderer.invoke(ipcChannels.conversationsList),
+    get: async (input: ConversationGetInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsGet, input),
+    createDirect: async (input: ConversationCreateDirectInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsCreateDirect, input),
+    sendTurn: async (input: ConversationSendTurnInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsSendTurn, input),
+    cancelTurn: async (input: ConversationCancelTurnInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsCancelTurn, input)
   },
   runtime: {
     getProviders: async (): Promise<ProviderStatus[]> =>

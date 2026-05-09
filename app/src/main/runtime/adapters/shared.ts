@@ -1,9 +1,16 @@
+import { spawn } from 'node:child_process'
+import { createWriteStream, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { withCliBaseArgs, type CliExecutable } from '../cli/executable'
-import { firstLine } from '../cli/output'
+import { firstLine, isRecord, parseJsonFromCliOutput } from '../cli/output'
 import { runCapture } from '../cli/process'
 import { ProviderConnectResultSchema, ProviderStatusSchema } from '@shared/contracts'
 import type { ProviderConnectResult, ProviderId, ProviderStatus } from '@shared/contracts'
-import type { ProviderLoginProcess } from './types'
+import type {
+  ProviderLoginProcess,
+  ProviderRuntimeContext,
+  RuntimeConversationTurnInput
+} from './types'
 
 export type ConnectProviderOptions = {
   loginProcess: ProviderLoginProcess | null
@@ -16,6 +23,144 @@ export type ConnectProviderOptions = {
     executable: CliExecutable,
     setProcess: (process: ProviderLoginProcess) => void
   ) => Promise<ProviderConnectResult>
+}
+
+export type ConversationProcessResult = {
+  code: number | null
+  stdout: string
+  stderr: string
+  cancelled: boolean
+}
+
+export type RunConversationProcessOptions = {
+  executable: CliExecutable
+  args: string[]
+  input: RuntimeConversationTurnInput
+  context: ProviderRuntimeContext
+  env: NodeJS.ProcessEnv
+  stdin: string
+  streamErrorMessage: string
+}
+
+export function runConversationProcess({
+  executable,
+  args,
+  input,
+  context,
+  env,
+  stdin,
+  streamErrorMessage
+}: RunConversationProcessOptions): Promise<ConversationProcessResult> {
+  return new Promise((resolve, reject) => {
+    mkdirSync(dirname(input.eventLogPath), { recursive: true })
+
+    const eventLog = createWriteStream(input.eventLogPath, { flags: 'a' })
+    const stderrLog = createWriteStream(join(dirname(input.eventLogPath), 'stderr.txt'), {
+      flags: 'a'
+    })
+    const child = spawn(executable.command, args, {
+      cwd: input.workspaceRoot,
+      env,
+      shell: executable.shell,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    const process = {
+      child,
+      cancelled: false,
+      cleanupTimer: null as NodeJS.Timeout | null
+    }
+
+    context.conversationProcesses.set(input.turnId, process)
+
+    let settled = false
+    let stdout = ''
+    let stderr = ''
+
+    process.cleanupTimer = setTimeout(
+      () => {
+        process.cancelled = true
+        child.kill()
+      },
+      10 * 60 * 1000
+    )
+
+    const cleanup = (): void => {
+      if (process.cleanupTimer) {
+        clearTimeout(process.cleanupTimer)
+      }
+      context.conversationProcesses.delete(input.turnId)
+      eventLog.end()
+      stderrLog.end()
+    }
+
+    const finish = (value: ConversationProcessResult): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      settled = true
+      cleanup()
+      reject(new Error(streamErrorMessage))
+      return
+    }
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      stdout += text
+      eventLog.write(text)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      stderr += text
+      stderrLog.write(text)
+    })
+    child.once('error', (error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    })
+    child.once('close', (code) => {
+      finish({
+        code,
+        stdout,
+        stderr,
+        cancelled: process.cancelled
+      })
+    })
+
+    child.stdin.write(stdin)
+    child.stdin.end()
+  })
+}
+
+export function readCliJsonErrorMessage(value: string, fallbackKeys: string[]): string {
+  if (!value.trim()) {
+    return ''
+  }
+
+  try {
+    const parsed = parseJsonFromCliOutput(value)
+    if (!isRecord(parsed)) {
+      return ''
+    }
+
+    const error = isRecord(parsed.error) ? parsed.error : null
+    return (
+      getStringValue(error?.message) ||
+      fallbackKeys.map((key) => getStringValue(parsed[key])).find(Boolean) ||
+      ''
+    )
+  } catch {
+    return ''
+  }
+}
+
+export function getStringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 export async function connectCliProvider({

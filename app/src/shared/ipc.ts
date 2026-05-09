@@ -13,6 +13,11 @@ export const ipcChannels = {
   agentsUpdateSettings: 'agents:update-settings',
   agentsListSkills: 'agents:list-skills',
   agentsCreateSkill: 'agents:create-skill',
+  conversationsList: 'conversations:list',
+  conversationsGet: 'conversations:get',
+  conversationsCreateDirect: 'conversations:create-direct',
+  conversationsSendTurn: 'conversations:send-turn',
+  conversationsCancelTurn: 'conversations:cancel-turn',
   runtimeGetProviders: 'runtime:get-providers',
   runtimeConnectProvider: 'runtime:connect-provider',
   runtimeRefreshProvider: 'runtime:refresh-provider'

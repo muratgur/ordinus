@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import {
+  AgentSandboxSchema,
   ProviderStatusSchema,
   type AgentDraft,
+  type AgentSandbox,
   type ProviderConnectInput,
   type ProviderConnectResult,
   type ProviderStatus
@@ -24,10 +26,18 @@ import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
+  getStringValue,
   getCliVersion,
+  readCliJsonErrorMessage,
+  runConversationProcess,
   scheduleLoginCleanup
 } from '../shared'
 import type { ProviderAdapter, ProviderLoginProcess, RuntimeAgentDraftInput } from '../types'
+import type {
+  ProviderRuntimeContext,
+  RuntimeConversationTurnInput,
+  RuntimeConversationTurnResult
+} from '../types'
 
 export const claudeProviderAdapter: ProviderAdapter = {
   id: 'claude',
@@ -49,7 +59,124 @@ export const claudeProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateClaudeAgentDraft(input)
+  },
+  sendConversationTurn(input, context) {
+    return sendClaudeConversationTurn(input, context)
   }
+}
+
+async function sendClaudeConversationTurn(
+  input: RuntimeConversationTurnInput,
+  context: ProviderRuntimeContext
+): Promise<RuntimeConversationTurnResult> {
+  const executable = await findClaudeExecutable()
+  if (!executable) {
+    throw new Error('Claude Code CLI was not found.')
+  }
+
+  const status = await getClaudeStatus(null)
+  if (!status.connected) {
+    throw new Error('Claude needs login before this conversation can run.')
+  }
+
+  const args = buildClaudeConversationArgs(input)
+  const prompt = input.providerSessionRef ? input.message : buildClaudeConversationPrompt(input)
+  const result = await runConversationProcess({
+    executable,
+    args,
+    input,
+    context,
+    env: getClaudeEnvironment(),
+    stdin: prompt,
+    streamErrorMessage: 'Claude process streams could not be opened.'
+  })
+
+  if (result.cancelled) {
+    throw new Error('Conversation turn was cancelled.')
+  }
+
+  if (result.code !== 0) {
+    throw new Error(
+      readCliJsonErrorMessage(result.stdout, ['result', 'message']) ||
+        readCliJsonErrorMessage(result.stderr, ['result', 'message']) ||
+        firstLine(result.stderr || result.stdout) ||
+        'Claude conversation turn failed.'
+    )
+  }
+
+  const parsed = readClaudeConversationOutput(result.stdout)
+  const providerSessionRef = parsed.sessionId || input.providerSessionRef || ''
+
+  if (!providerSessionRef) {
+    throw new Error('Claude did not provide a session reference for this conversation.')
+  }
+
+  writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
+
+  return {
+    providerSessionRef,
+    responseText: readClaudeLastMessage(input.lastMessagePath),
+    logRef: input.logRef
+  }
+}
+
+function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): string[] {
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--permission-mode',
+    getClaudePermissionMode(input.sandbox),
+    '--append-system-prompt-file',
+    writeClaudeSystemPromptFile(input)
+  ]
+
+  if (input.providerSessionRef) {
+    args.push('--resume', input.providerSessionRef)
+  } else {
+    args.push('--name', input.agentName)
+  }
+
+  if (input.model !== 'default') {
+    args.push('--model', input.model)
+  }
+
+  return args
+}
+
+function getClaudePermissionMode(sandbox: AgentSandbox): string {
+  const parsed = AgentSandboxSchema.parse(sandbox)
+
+  if (parsed === 'read-only') {
+    return 'plan'
+  }
+
+  if (parsed === 'workspace-write') {
+    return 'acceptEdits'
+  }
+
+  return 'bypassPermissions'
+}
+
+function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
+  return [
+    `You are ${input.agentName}.`,
+    `Role: ${input.agentRole}`,
+    '',
+    'Follow these agent instructions for this Ordinus conversation:',
+    input.instructions
+  ].join('\n')
+}
+
+function writeClaudeSystemPromptFile(input: RuntimeConversationTurnInput): string {
+  const systemPromptPath = join(dirname(input.eventLogPath), 'system-prompt.txt')
+  mkdirSync(dirname(systemPromptPath), { recursive: true })
+  writeFileSync(systemPromptPath, buildClaudeSystemPrompt(input), 'utf8')
+  return systemPromptPath
+}
+
+function buildClaudeConversationPrompt(input: RuntimeConversationTurnInput): string {
+  return ['User message:', input.message].join('\n')
 }
 
 async function generateClaudeAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -338,4 +465,41 @@ function unwrapClaudeStructuredOutput(value: unknown): unknown {
 
   const result = value.structured_output ?? value.result ?? value
   return typeof result === 'string' ? parseJsonFromCliOutput(result) : result
+}
+
+function readClaudeConversationOutput(value: string): { sessionId: string; responseText: string } {
+  const parsed = parseJsonFromCliOutput(value)
+
+  if (!isRecord(parsed)) {
+    throw new Error('Claude returned an invalid conversation response.')
+  }
+
+  const sessionId = getStringValue(parsed.session_id) || getStringValue(parsed.sessionId)
+  const responseText =
+    getStringValue(parsed.result) ||
+    getStringValue(parsed.response) ||
+    getStringValue(parsed.message) ||
+    ''
+  const isError = parsed.is_error === true
+
+  if (isError) {
+    throw new Error(firstLine(responseText) || 'Claude conversation turn failed.')
+  }
+
+  if (!responseText.trim()) {
+    throw new Error('Claude returned an empty conversation response.')
+  }
+
+  return {
+    sessionId,
+    responseText: responseText.trim()
+  }
+}
+
+function readClaudeLastMessage(outputPath: string): string {
+  if (!existsSync(outputPath)) {
+    throw new Error('Claude did not write a conversation response.')
+  }
+
+  return readFileSync(outputPath, 'utf8').trim()
 }

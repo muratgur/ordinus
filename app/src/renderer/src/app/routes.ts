@@ -4,7 +4,7 @@ export const appRoutePaths = {
   home: '/home',
   agents: '/agents',
   planner: '/planner',
-  groupChat: '/group-chat',
+  conversations: '/conversations',
   schedules: '/schedules',
   settings: '/settings'
 } as const
@@ -33,9 +33,9 @@ export const appNavigation = [
     icon: Route
   },
   {
-    id: 'groupChat',
-    label: 'Group Chat',
-    path: appRoutePaths.groupChat,
+    id: 'conversations',
+    label: 'Conversations',
+    path: appRoutePaths.conversations,
     icon: MessageSquareText
   },
   {

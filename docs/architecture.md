@@ -44,6 +44,11 @@ Runtime rules:
 
 See `docs/provider-runtime-contract.md`.
 
+Conversation runtime should follow the session-backed model in
+`docs/decisions/ADR-003-session-backed-conversations.md`: Ordinus stores lightweight conversation
+metadata and provider session references, while provider CLIs own detailed per-agent conversation
+memory.
+
 ## UI
 
 The renderer uses React, TypeScript, Tailwind, and shadcn/ui primitives. UI should feel calm, operational, and work-focused. Reusable primitives live under `app/src/renderer/src/components/ui`.

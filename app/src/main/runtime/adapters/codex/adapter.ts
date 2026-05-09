@@ -1,7 +1,15 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   ProviderStatusSchema,
   type AgentDraft,
@@ -10,7 +18,7 @@ import {
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
 import { findCliExecutable, type CliExecutable } from '../../cli/executable'
-import { extractJsonObject, firstLine } from '../../cli/output'
+import { extractJsonObject, firstLine, isRecord } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
@@ -28,7 +36,14 @@ import {
   scheduleLoginCleanup,
   stopProviderLoginProcess
 } from '../shared'
-import type { ProviderAdapter, ProviderLoginProcess, RuntimeAgentDraftInput } from '../types'
+import type {
+  ProviderAdapter,
+  ProviderLoginProcess,
+  RuntimeAgentDraftInput,
+  RuntimeConversationTurnInput,
+  RuntimeConversationTurnResult,
+  ProviderRuntimeContext
+} from '../types'
 
 export const codexProviderAdapter: ProviderAdapter = {
   id: 'codex',
@@ -49,7 +64,195 @@ export const codexProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateCodexAgentDraft(input)
+  },
+  sendConversationTurn(input, context) {
+    return sendCodexConversationTurn(input, context)
   }
+}
+
+async function sendCodexConversationTurn(
+  input: RuntimeConversationTurnInput,
+  context: ProviderRuntimeContext
+): Promise<RuntimeConversationTurnResult> {
+  const executable = await findCodexExecutable()
+  if (!executable) {
+    throw new Error('Codex CLI was not found.')
+  }
+
+  const args = buildCodexConversationArgs(input)
+  const prompt = input.providerSessionRef ? input.message : buildCodexConversationPrompt(input)
+  const result = await runCodexConversationProcess(executable, args, input, context, prompt)
+
+  if (result.cancelled) {
+    throw new Error('Conversation turn was cancelled.')
+  }
+
+  if (result.code !== 0) {
+    throw new Error(firstLine(result.stderr || result.stdout) || 'Codex conversation turn failed.')
+  }
+
+  const providerSessionRef = extractCodexSessionRef(result.stdout) || input.providerSessionRef || ''
+
+  if (!providerSessionRef) {
+    throw new Error('Codex did not provide a session reference for this conversation.')
+  }
+
+  return {
+    providerSessionRef,
+    responseText: readCodexLastMessage(input.lastMessagePath),
+    logRef: input.logRef
+  }
+}
+
+function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string[] {
+  if (input.providerSessionRef) {
+    const args = [
+      'exec',
+      'resume',
+      input.providerSessionRef,
+      '-',
+      '--json',
+      '--skip-git-repo-check',
+      '--output-last-message',
+      input.lastMessagePath
+    ]
+
+    if (input.model !== 'default') {
+      args.push('--model', input.model)
+    }
+
+    return args
+  }
+
+  const args = [
+    'exec',
+    '--json',
+    '-',
+    '--skip-git-repo-check',
+    '--sandbox',
+    input.sandbox,
+    '-C',
+    input.workspaceRoot,
+    '--output-last-message',
+    input.lastMessagePath
+  ]
+
+  if (input.model !== 'default') {
+    args.push('--model', input.model)
+  }
+
+  return args
+}
+
+function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): string {
+  return [
+    `You are ${input.agentName}.`,
+    `Role: ${input.agentRole}`,
+    '',
+    'Follow these agent instructions for this Ordinus conversation:',
+    input.instructions,
+    '',
+    'User message:',
+    input.message
+  ].join('\n')
+}
+
+type CodexConversationProcessResult = {
+  code: number | null
+  stdout: string
+  stderr: string
+  cancelled: boolean
+}
+
+function runCodexConversationProcess(
+  executable: CliExecutable,
+  args: string[],
+  input: RuntimeConversationTurnInput,
+  context: ProviderRuntimeContext,
+  stdin: string
+): Promise<CodexConversationProcessResult> {
+  return new Promise((resolve, reject) => {
+    mkdirSync(dirname(input.eventLogPath), { recursive: true })
+
+    const eventLog = createWriteStream(input.eventLogPath, { flags: 'a' })
+    const child = spawn(executable.command, args, {
+      cwd: input.workspaceRoot,
+      env: getCodexEnvironment(),
+      shell: executable.shell,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    const process = {
+      child,
+      cancelled: false,
+      cleanupTimer: null as NodeJS.Timeout | null
+    }
+
+    context.conversationProcesses.set(input.turnId, process)
+
+    let settled = false
+    let stdout = ''
+    let stderr = ''
+
+    process.cleanupTimer = setTimeout(
+      () => {
+        process.cancelled = true
+        child.kill()
+      },
+      10 * 60 * 1000
+    )
+
+    const finish = (value: CodexConversationProcessResult): void => {
+      if (settled) return
+      settled = true
+      if (process.cleanupTimer) {
+        clearTimeout(process.cleanupTimer)
+      }
+      context.conversationProcesses.delete(input.turnId)
+      eventLog.end()
+      resolve(value)
+    }
+
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      settled = true
+      if (process.cleanupTimer) {
+        clearTimeout(process.cleanupTimer)
+      }
+      context.conversationProcesses.delete(input.turnId)
+      eventLog.end()
+      reject(new Error('Codex process streams could not be opened.'))
+      return
+    }
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      stdout += text
+      eventLog.write(text)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    child.once('error', (error) => {
+      if (settled) return
+      settled = true
+      if (process.cleanupTimer) {
+        clearTimeout(process.cleanupTimer)
+      }
+      context.conversationProcesses.delete(input.turnId)
+      eventLog.end()
+      reject(error)
+    })
+    child.once('close', (code) => {
+      finish({
+        code,
+        stdout,
+        stderr,
+        cancelled: process.cancelled
+      })
+    })
+
+    child.stdin.write(stdin)
+    child.stdin.end()
+  })
 }
 
 async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -248,4 +451,90 @@ function readAgentDraftOutput(outputPath: string): unknown {
   } catch {
     throw new Error('Codex returned an invalid agent draft.')
   }
+}
+
+function readCodexLastMessage(outputPath: string): string {
+  if (!existsSync(outputPath)) {
+    throw new Error('Codex did not write a conversation response.')
+  }
+
+  return readFileSync(outputPath, 'utf8').trim()
+}
+
+function extractCodexSessionRef(value: string): string {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (const line of lines) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+
+    if (getEventType(parsed) !== 'thread.started') {
+      continue
+    }
+
+    const directCandidate =
+      getStringPath(parsed, ['thread_id']) ||
+      getStringPath(parsed, ['threadId']) ||
+      getStringPath(parsed, ['session_id']) ||
+      getStringPath(parsed, ['sessionId']) ||
+      getStringPath(parsed, ['payload', 'thread_id']) ||
+      getStringPath(parsed, ['payload', 'threadId']) ||
+      getStringPath(parsed, ['payload', 'session_id']) ||
+      getStringPath(parsed, ['payload', 'sessionId']) ||
+      getStringPath(parsed, ['payload', 'id'])
+
+    if (directCandidate) {
+      return directCandidate
+    }
+
+    const nestedCandidate = findSessionLikeString(parsed)
+    if (nestedCandidate) {
+      return nestedCandidate
+    }
+  }
+
+  return ''
+}
+
+function getEventType(value: unknown): string {
+  return getStringPath(value, ['type']) || getStringPath(value, ['event']) || ''
+}
+
+function getStringPath(value: unknown, path: string[]): string {
+  let current = value
+
+  for (const part of path) {
+    if (!isRecord(current)) {
+      return ''
+    }
+    current = current[part]
+  }
+
+  return typeof current === 'string' ? current : ''
+}
+
+function findSessionLikeString(value: unknown): string {
+  if (!isRecord(value)) {
+    return ''
+  }
+
+  for (const [key, nested] of Object.entries(value)) {
+    if (typeof nested === 'string' && /(?:session|thread).*id|id.*(?:session|thread)/i.test(key)) {
+      return nested
+    }
+
+    const childValue = findSessionLikeString(nested)
+    if (childValue) {
+      return childValue
+    }
+  }
+
+  return ''
 }

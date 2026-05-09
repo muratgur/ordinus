@@ -12,7 +12,12 @@ import {
 } from '@shared/contracts'
 import { providerIds, type RuntimeEventListener, type RuntimeProviderCapabilities } from './types'
 import { getProviderAdapter, listProviderAdapters } from './adapters/registry'
-import type { ProviderRuntimeContext, RuntimeAgentDraftInput } from './adapters/types'
+import type {
+  ProviderRuntimeContext,
+  RuntimeAgentDraftInput,
+  RuntimeConversationTurnInput,
+  RuntimeConversationTurnResult
+} from './adapters/types'
 
 const RuntimeAgentDraftInputSchema = AgentDraftFromIntentInputSchema.extend({
   providerId: ProviderIdSchema,
@@ -26,13 +31,16 @@ export type RuntimeService = {
   refreshProvider(input: ProviderActionInput): Promise<ProviderStatus>
   connectProvider(input: ProviderConnectInput): Promise<ProviderConnectResult>
   generateAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft>
+  sendConversationTurn(input: RuntimeConversationTurnInput): Promise<RuntimeConversationTurnResult>
+  cancelConversationTurn(turnId: string): boolean
   subscribe(listener: RuntimeEventListener): () => void
 }
 
 export function createRuntimeService(): RuntimeService {
   const listeners = new Set<RuntimeEventListener>()
   const context: ProviderRuntimeContext = {
-    loginProcesses: new Map()
+    loginProcesses: new Map(),
+    conversationProcesses: new Map()
   }
 
   return {
@@ -76,6 +84,32 @@ export function createRuntimeService(): RuntimeService {
       }
 
       return adapter.generateAgentDraft(parsed, context)
+    },
+    async sendConversationTurn(input) {
+      const adapter = getProviderAdapter(input.providerId)
+
+      if (!adapter.sendConversationTurn) {
+        throw new Error(`Direct conversations are not available for ${adapter.label} yet.`)
+      }
+
+      return adapter.sendConversationTurn(input, context)
+    },
+    cancelConversationTurn(turnId) {
+      const process = context.conversationProcesses.get(turnId)
+      if (!process) {
+        return false
+      }
+
+      process.cancelled = true
+      if (process.cleanupTimer) {
+        clearTimeout(process.cleanupTimer)
+      }
+
+      if (process.child.pid) {
+        process.child.kill()
+      }
+
+      return true
     },
     subscribe(listener) {
       listeners.add(listener)

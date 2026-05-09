@@ -155,6 +155,86 @@ export const AgentSkillCreateInputSchema = z.object({
   description: z.string().trim().max(500).optional()
 })
 
+export const ConversationModeSchema = z.enum(['direct'])
+export const ConversationStatusSchema = z.enum(['active', 'running', 'failed', 'cancelled'])
+export const ConversationParticipantStatusSchema = z.enum([
+  'ready',
+  'running',
+  'failed',
+  'cancelled'
+])
+export const ConversationTurnSpeakerSchema = z.enum(['user', 'agent'])
+export const ConversationTurnStatusSchema = z.enum(['running', 'completed', 'failed', 'cancelled'])
+
+export const ConversationParticipantSchema = z.object({
+  id: z.string().min(1),
+  conversationId: z.string().min(1),
+  agentId: z.string().min(1),
+  agentName: z.string().min(1),
+  agentRole: z.string().min(1),
+  providerId: ProviderIdSchema,
+  model: z.string().min(1),
+  providerSessionRef: z.string().nullable(),
+  status: ConversationParticipantStatusSchema,
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const ConversationTurnSchema = z.object({
+  id: z.string().min(1),
+  conversationId: z.string().min(1),
+  participantId: z.string().min(1),
+  sequence: z.number().int().positive(),
+  speaker: ConversationTurnSpeakerSchema,
+  content: z.string(),
+  preview: z.string(),
+  status: ConversationTurnStatusSchema,
+  error: z.string(),
+  logRef: z.string(),
+  truncated: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const ConversationSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  mode: ConversationModeSchema,
+  status: ConversationStatusSchema,
+  summary: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const ConversationListItemSchema = ConversationSchema.extend({
+  agentName: z.string(),
+  participantCount: z.number().int().nonnegative(),
+  lastPreview: z.string()
+})
+
+export const ConversationDetailSchema = ConversationSchema.extend({
+  participants: z.array(ConversationParticipantSchema),
+  turns: z.array(ConversationTurnSchema)
+})
+
+export const ConversationGetInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+export const ConversationCreateDirectInputSchema = z.object({
+  agentId: z.string().min(1),
+  title: z.string().trim().min(1).max(120).optional()
+})
+
+export const ConversationSendTurnInputSchema = z.object({
+  conversationId: z.string().min(1),
+  message: z.string().trim().min(1, 'Message is required.').max(64_000)
+})
+
+export const ConversationCancelTurnInputSchema = z.object({
+  turnId: z.string().min(1)
+})
+
 export type AppInfo = z.infer<typeof AppInfoSchema>
 export type SystemPaths = z.infer<typeof SystemPathsSchema>
 export type DbStatus = z.infer<typeof DbStatusSchema>
@@ -181,3 +261,17 @@ export type AgentUpdateSettingsInput = z.infer<typeof AgentUpdateSettingsInputSc
 export type AgentSkill = z.infer<typeof AgentSkillSchema>
 export type AgentSkillsListInput = z.infer<typeof AgentSkillsListInputSchema>
 export type AgentSkillCreateInput = z.infer<typeof AgentSkillCreateInputSchema>
+export type ConversationMode = z.infer<typeof ConversationModeSchema>
+export type ConversationStatus = z.infer<typeof ConversationStatusSchema>
+export type ConversationParticipantStatus = z.infer<typeof ConversationParticipantStatusSchema>
+export type ConversationTurnSpeaker = z.infer<typeof ConversationTurnSpeakerSchema>
+export type ConversationTurnStatus = z.infer<typeof ConversationTurnStatusSchema>
+export type ConversationParticipant = z.infer<typeof ConversationParticipantSchema>
+export type ConversationTurn = z.infer<typeof ConversationTurnSchema>
+export type Conversation = z.infer<typeof ConversationSchema>
+export type ConversationListItem = z.infer<typeof ConversationListItemSchema>
+export type ConversationDetail = z.infer<typeof ConversationDetailSchema>
+export type ConversationGetInput = z.infer<typeof ConversationGetInputSchema>
+export type ConversationCreateDirectInput = z.infer<typeof ConversationCreateDirectInputSchema>
+export type ConversationSendTurnInput = z.infer<typeof ConversationSendTurnInputSchema>
+export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>

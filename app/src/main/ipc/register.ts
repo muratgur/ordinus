@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
+import { mkdirSync } from 'node:fs'
 import { basename } from 'node:path'
+import { join } from 'node:path'
 import {
   AgentDraftFromIntentInputSchema,
   AgentSkillCreateInputSchema,
@@ -8,6 +10,10 @@ import {
   AgentUpdateSettingsInputSchema,
   AgentCreateInputSchema,
   AppInfoSchema,
+  ConversationCancelTurnInputSchema,
+  ConversationCreateDirectInputSchema,
+  ConversationGetInputSchema,
+  ConversationSendTurnInputSchema,
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
   SetupStatusSchema,
@@ -133,6 +139,70 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = AgentSkillCreateInputSchema.parse(payload)
     requireAgent(database, input.agentId)
     return createAgentSkill(input)
+  })
+  ipcMain.handle(ipcChannels.conversationsList, () => database.listConversations())
+  ipcMain.handle(ipcChannels.conversationsGet, (_event, payload) => {
+    const input = ConversationGetInputSchema.parse(payload)
+    return database.getConversation(input)
+  })
+  ipcMain.handle(ipcChannels.conversationsCreateDirect, (_event, payload) => {
+    const input = ConversationCreateDirectInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return database.createDirectConversation(input)
+  })
+  ipcMain.handle(ipcChannels.conversationsSendTurn, async (_event, payload) => {
+    const input = ConversationSendTurnInputSchema.parse(payload)
+    const current = database.getConversation({ conversationId: input.conversationId })
+    const participant = current.participants[0]
+
+    if (!participant) {
+      throw new Error('Conversation has no participant.')
+    }
+
+    const prepared = database.prepareConversationTurn(input)
+    const logRef = join('conversations', prepared.conversationId, prepared.agentTurnId)
+    const logDir = join(getSystemPaths().logs, logRef)
+    mkdirSync(logDir, { recursive: true })
+
+    void runtime
+      .sendConversationTurn({
+        turnId: prepared.agentTurnId,
+        conversationId: prepared.conversationId,
+        providerId: prepared.agent.providerId,
+        model: prepared.agent.model,
+        sandbox: prepared.agent.sandbox,
+        workspaceRoot: prepared.agent.workspaceRoot,
+        agentName: prepared.agent.name,
+        agentRole: prepared.agent.role,
+        instructions: prepared.agent.instructions,
+        providerSessionRef: prepared.providerSessionRef,
+        message: input.message,
+        logRef,
+        eventLogPath: join(logDir, 'events.jsonl'),
+        lastMessagePath: join(logDir, 'last-message.txt')
+      })
+      .then((result) => {
+        database.completeConversationTurn({
+          turnId: prepared.agentTurnId,
+          providerSessionRef: result.providerSessionRef,
+          responseText: result.responseText,
+          logRef: result.logRef
+        })
+      })
+      .catch((error) => {
+        database.failConversationTurn({
+          turnId: prepared.agentTurnId,
+          error: error instanceof Error ? error.message : 'Conversation turn failed.',
+          logRef
+        })
+      })
+
+    return database.getConversation({ conversationId: prepared.conversationId })
+  })
+  ipcMain.handle(ipcChannels.conversationsCancelTurn, (_event, payload) => {
+    const input = ConversationCancelTurnInputSchema.parse(payload)
+    runtime.cancelConversationTurn(input.turnId)
+    return database.cancelConversationTurn(input)
   })
   ipcMain.handle(ipcChannels.runtimeGetProviders, () => runtime.getProviderStatuses())
   ipcMain.handle(ipcChannels.runtimeConnectProvider, (_event, payload) => {

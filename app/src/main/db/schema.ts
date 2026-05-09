@@ -31,3 +31,41 @@ export const agents = sqliteTable('agents', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
+
+export const conversations = sqliteTable('conversations', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  mode: text('mode').notNull(),
+  status: text('status').notNull(),
+  summary: text('summary').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
+export const conversationParticipants = sqliteTable('conversation_participants', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  model: text('model').notNull(),
+  providerSessionRef: text('provider_session_ref'),
+  status: text('status').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
+export const conversationTurns = sqliteTable('conversation_turns', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull(),
+  participantId: text('participant_id').notNull(),
+  sequence: integer('sequence').notNull(),
+  speaker: text('speaker').notNull(),
+  content: text('content').notNull(),
+  preview: text('preview').notNull(),
+  status: text('status').notNull(),
+  error: text('error').notNull(),
+  logRef: text('log_ref').notNull(),
+  truncated: integer('truncated', { mode: 'boolean' }).notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
