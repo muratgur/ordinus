@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  AlertTriangle,
   ArrowLeft,
   Bot,
   FileText,
@@ -9,6 +10,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Trash2,
   WandSparkles
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
@@ -113,6 +115,19 @@ export function AgentsScreen(): React.JSX.Element {
     setCreateAgentOpen(false)
   }
 
+  function handleAgentDeleted(agentId: string): void {
+    const nextAgents = agents.filter((agent) => agent.id !== agentId)
+
+    setAgents(nextAgents)
+    setSelectedAgentId((current) => {
+      if (current !== agentId) {
+        return current
+      }
+      return nextAgents[0]?.id ?? ''
+    })
+    setActiveSection('settings')
+  }
+
   return (
     <div className="grid min-h-[calc(100vh-7rem)] gap-4 py-6 xl:grid-cols-[280px_minmax(0,1fr)]">
       <AgentLibrary
@@ -155,6 +170,7 @@ export function AgentsScreen(): React.JSX.Element {
                 agent={selectedAgent}
                 activeSection={activeSection}
                 onAgentSaved={handleAgentSaved}
+                onAgentDeleted={handleAgentDeleted}
               />
             ) : (
               <EmptyState
@@ -263,11 +279,13 @@ function AgentLibrary({
 function AgentDetail({
   agent,
   activeSection,
-  onAgentSaved
+  onAgentSaved,
+  onAgentDeleted
 }: {
   agent: Agent
   activeSection: AgentSection
   onAgentSaved: (agent: Agent) => void
+  onAgentDeleted: (agentId: string) => void
 }): React.JSX.Element {
   if (activeSection === 'instructions') {
     return <InstructionsPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
@@ -278,7 +296,14 @@ function AgentDetail({
   }
 
   if (activeSection === 'settings') {
-    return <SettingsPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+    return (
+      <SettingsPanel
+        key={agent.id}
+        agent={agent}
+        onAgentSaved={onAgentSaved}
+        onAgentDeleted={onAgentDeleted}
+      />
+    )
   }
 
   return (
@@ -774,28 +799,21 @@ Include:
 
 function SettingsPanel({
   agent,
-  onAgentSaved
+  onAgentSaved,
+  onAgentDeleted
 }: {
   agent: Agent
   onAgentSaved: (agent: Agent) => void
+  onAgentDeleted: (agentId: string) => void
 }): React.JSX.Element {
-  const initialSettings: SettingsDraft = {
-    providerId: agent.providerId,
-    model: agent.model,
-    sandbox: agent.sandbox,
-    workspaceRoot: agent.workspaceRoot,
-    enabled: agent.enabled
-  }
+  const initialSettings = getSettingsDraft(agent)
   const [savedSettings, setSavedSettings] = useState<SettingsDraft>(initialSettings)
   const [draft, setDraft] = useState<SettingsDraft>(initialSettings)
   const [saving, setSaving] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
-  const dirty =
-    draft.providerId !== savedSettings.providerId ||
-    draft.model !== savedSettings.model ||
-    draft.sandbox !== savedSettings.sandbox ||
-    draft.workspaceRoot !== savedSettings.workspaceRoot ||
-    draft.enabled !== savedSettings.enabled
+  const dirty = isSettingsDirty(draft, savedSettings)
   const modelOptions = getModelOptions(draft.providerId)
 
   function updateDraft(next: Partial<SettingsDraft>): void {
@@ -820,13 +838,7 @@ function SettingsPanel({
         id: agent.id,
         ...draft
       })
-      const nextSettings = {
-        providerId: nextAgent.providerId,
-        model: nextAgent.model,
-        sandbox: nextAgent.sandbox,
-        workspaceRoot: nextAgent.workspaceRoot,
-        enabled: nextAgent.enabled
-      }
+      const nextSettings = getSettingsDraft(nextAgent)
       setSavedSettings(nextSettings)
       setDraft(nextSettings)
       onAgentSaved(nextAgent)
@@ -834,6 +846,20 @@ function SettingsPanel({
       setError(getErrorMessage(saveError, 'Settings could not be saved.'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleDelete(): Promise<void> {
+    try {
+      setDeleting(true)
+      setError('')
+      await window.ordinus.agents.delete({ id: agent.id })
+      setDeleteOpen(false)
+      onAgentDeleted(agent.id)
+    } catch (deleteError) {
+      setError(getErrorMessage(deleteError, 'Agent could not be deleted.'))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -935,20 +961,83 @@ function SettingsPanel({
               onChange={(event) => updateDraft({ enabled: event.target.checked })}
             />
           </label>
-          <div className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
+          <div className="flex items-center justify-between gap-3 rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2">
             <span className="min-w-0">
-              <span className="block text-sm font-medium">Local state</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                Sessions and generated local data
+              <span className="block text-sm font-medium text-status-attention">
+                Delete permanently
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                Remove this agent, its conversations, local files, and app logs.
               </span>
             </span>
-            <Button variant="outline" size="sm" className="h-8 shrink-0 px-2.5 text-xs">
-              Reset
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 px-2.5 text-xs"
+              disabled={saving || deleting}
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 />
+              Delete
             </Button>
           </div>
         </div>
       </section>
+
+      <DeleteAgentDialog
+        agentName={agent.name}
+        deleting={deleting}
+        open={deleteOpen}
+        onDelete={() => void handleDelete()}
+        onOpenChange={setDeleteOpen}
+      />
     </div>
+  )
+}
+
+function DeleteAgentDialog({
+  agentName,
+  deleting,
+  open,
+  onDelete,
+  onOpenChange
+}: {
+  agentName: string
+  deleting: boolean
+  open: boolean
+  onDelete: () => void
+  onOpenChange: (open: boolean) => void
+}): React.JSX.Element {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-status-attention" />
+            Delete agent
+          </DialogTitle>
+          <DialogDescription>
+            This removes {agentName}, related conversations, local files, and app logs. This cannot
+            be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={deleting}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" disabled={deleting} onClick={onDelete}>
+            {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            Delete permanently
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1066,6 +1155,26 @@ function getAgentStatus(agent: Agent): AgentStatus {
     return 'needs-attention'
   }
   return 'ready'
+}
+
+function getSettingsDraft(agent: Agent): SettingsDraft {
+  return {
+    providerId: agent.providerId,
+    model: agent.model,
+    sandbox: agent.sandbox,
+    workspaceRoot: agent.workspaceRoot,
+    enabled: agent.enabled
+  }
+}
+
+function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): boolean {
+  return (
+    draft.providerId !== savedSettings.providerId ||
+    draft.model !== savedSettings.model ||
+    draft.sandbox !== savedSettings.sandbox ||
+    draft.workspaceRoot !== savedSettings.workspaceRoot ||
+    draft.enabled !== savedSettings.enabled
+  )
 }
 
 function getModelOptions(providerId: ProviderId): string[] {

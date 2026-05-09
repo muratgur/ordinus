@@ -137,6 +137,17 @@ export const AgentUpdateSettingsInputSchema = z.object({
   enabled: z.boolean()
 })
 
+export const AgentDeleteInputSchema = z.object({
+  id: z.string().min(1)
+})
+
+export const AgentDeleteResultSchema = z.object({
+  deletedAgentId: z.string().min(1),
+  deletedConversationCount: z.number().int().nonnegative(),
+  deletedTurnCount: z.number().int().nonnegative(),
+  deletedLogRefs: z.array(z.string())
+})
+
 export const AgentSkillSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -258,6 +269,8 @@ export type AgentDraft = z.infer<typeof AgentDraftSchema>
 export type AgentCreateInput = z.infer<typeof AgentCreateInputSchema>
 export type AgentUpdateInstructionsInput = z.infer<typeof AgentUpdateInstructionsInputSchema>
 export type AgentUpdateSettingsInput = z.infer<typeof AgentUpdateSettingsInputSchema>
+export type AgentDeleteInput = z.infer<typeof AgentDeleteInputSchema>
+export type AgentDeleteResult = z.infer<typeof AgentDeleteResultSchema>
 export type AgentSkill = z.infer<typeof AgentSkillSchema>
 export type AgentSkillsListInput = z.infer<typeof AgentSkillsListInputSchema>
 export type AgentSkillCreateInput = z.infer<typeof AgentSkillCreateInputSchema>

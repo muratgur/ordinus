@@ -1,8 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
-import { mkdirSync } from 'node:fs'
-import { basename } from 'node:path'
-import { join } from 'node:path'
+import { mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
+  AgentDeleteInputSchema,
   AgentDraftFromIntentInputSchema,
   AgentSkillCreateInputSchema,
   AgentSkillsListInputSchema,
@@ -25,7 +25,12 @@ import { ipcChannels } from '@shared/ipc'
 import type { OrdinusDatabase } from '../db/database'
 import { getSystemPaths } from '../paths'
 import type { RuntimeService } from '../runtime'
-import { createAgentSkill, ensureAgentHome, listAgentSkills } from '../agents/filesystem'
+import {
+  createAgentSkill,
+  deleteAgentHome,
+  ensureAgentHome,
+  listAgentSkills
+} from '../agents/filesystem'
 
 export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeService): void {
   ipcMain.handle(ipcChannels.appGetInfo, () =>
@@ -130,6 +135,13 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = AgentUpdateSettingsInputSchema.parse(payload)
     return database.updateAgentSettings(input)
   })
+  ipcMain.handle(ipcChannels.agentsDelete, (_event, payload) => {
+    const input = AgentDeleteInputSchema.parse(payload)
+    const result = database.deleteAgent(input)
+    deleteAgentHome(result.deletedAgentId)
+    deleteLogRefs(result.deletedLogRefs)
+    return result
+  })
   ipcMain.handle(ipcChannels.agentsListSkills, (_event, payload) => {
     const input = AgentSkillsListInputSchema.parse(payload)
     requireAgent(database, input.agentId)
@@ -147,7 +159,6 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   })
   ipcMain.handle(ipcChannels.conversationsCreateDirect, (_event, payload) => {
     const input = ConversationCreateDirectInputSchema.parse(payload)
-    requireAgent(database, input.agentId)
     return database.createDirectConversation(input)
   })
   ipcMain.handle(ipcChannels.conversationsSendTurn, async (_event, payload) => {
@@ -182,19 +193,10 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
         lastMessagePath: join(logDir, 'last-message.txt')
       })
       .then((result) => {
-        database.completeConversationTurn({
-          turnId: prepared.agentTurnId,
-          providerSessionRef: result.providerSessionRef,
-          responseText: result.responseText,
-          logRef: result.logRef
-        })
+        saveConversationTurnCompletion(database, prepared.agentTurnId, result)
       })
       .catch((error) => {
-        database.failConversationTurn({
-          turnId: prepared.agentTurnId,
-          error: error instanceof Error ? error.message : 'Conversation turn failed.',
-          logRef
-        })
+        saveConversationTurnFailure(database, prepared.agentTurnId, error, logRef)
       })
 
     return database.getConversation({ conversationId: prepared.conversationId })
@@ -219,4 +221,87 @@ function requireAgent(database: OrdinusDatabase, agentId: string): void {
   if (!database.hasAgent(agentId)) {
     throw new Error('Agent was not found.')
   }
+}
+
+function saveConversationTurnCompletion(
+  database: OrdinusDatabase,
+  turnId: string,
+  result: { providerSessionRef: string; responseText: string; logRef: string }
+): void {
+  try {
+    database.completeConversationTurn({
+      turnId,
+      providerSessionRef: result.providerSessionRef,
+      responseText: result.responseText,
+      logRef: result.logRef
+    })
+  } catch (error) {
+    console.warn('Conversation turn completion could not be saved.', error)
+  }
+}
+
+function saveConversationTurnFailure(
+  database: OrdinusDatabase,
+  turnId: string,
+  error: unknown,
+  logRef: string
+): void {
+  try {
+    database.failConversationTurn({
+      turnId,
+      error: error instanceof Error ? error.message : 'Conversation turn failed.',
+      logRef
+    })
+  } catch (failError) {
+    console.warn('Conversation turn failure could not be saved.', failError)
+  }
+}
+
+function deleteLogRefs(logRefs: string[]): void {
+  const logsRoot = resolve(getSystemPaths().logs)
+
+  logRefs.forEach((logRef) => {
+    const logPath = resolveInsideRoot(logsRoot, logRef, 'Log path')
+
+    rmSync(logPath, { recursive: true, force: true })
+    pruneEmptyDirectories(logsRoot, dirname(logPath))
+  })
+}
+
+function pruneEmptyDirectories(root: string, startPath: string): void {
+  let currentPath = startPath
+
+  while (currentPath !== root) {
+    if (!isInsideRoot(root, currentPath)) {
+      return
+    }
+
+    try {
+      if (readdirSync(currentPath).length > 0) {
+        return
+      }
+      rmSync(currentPath, { recursive: false, force: true })
+      currentPath = dirname(currentPath)
+    } catch {
+      return
+    }
+  }
+}
+
+function resolveInsideRoot(root: string, pathSegment: string, label: string): string {
+  const resolvedPath = resolve(root, pathSegment)
+
+  if (!isInsideRoot(root, resolvedPath)) {
+    throw new Error(`${label} must stay inside the Ordinus logs folder.`)
+  }
+
+  return resolvedPath
+}
+
+function isInsideRoot(root: string, pathToCheck: string): boolean {
+  const relativePath = relative(root, pathToCheck)
+
+  return (
+    relativePath !== '' && !relativePath.startsWith('..') && resolve(relativePath) !== relativePath
+  )
 }

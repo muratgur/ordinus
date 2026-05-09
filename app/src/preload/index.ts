@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   Agent,
   AgentCreateInput,
+  AgentDeleteInput,
+  AgentDeleteResult,
   AgentDraft,
   AgentDraftFromIntentInput,
   AgentSkill,
@@ -63,6 +65,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.agentsUpdateInstructions, input),
     updateSettings: async (input: AgentUpdateSettingsInput): Promise<Agent> =>
       ipcRenderer.invoke(ipcChannels.agentsUpdateSettings, input),
+    delete: async (input: AgentDeleteInput): Promise<AgentDeleteResult> =>
+      ipcRenderer.invoke(ipcChannels.agentsDelete, input),
     listSkills: async (input: AgentSkillsListInput): Promise<AgentSkill[]> =>
       ipcRenderer.invoke(ipcChannels.agentsListSkills, input),
     createSkill: async (input: AgentSkillCreateInput): Promise<AgentSkill> =>

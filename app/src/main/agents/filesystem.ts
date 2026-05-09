@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import {
   AgentSkillSchema,
@@ -49,6 +57,10 @@ export function createAgentSkill(input: AgentSkillCreateInput): AgentSkill {
 
 export function getAgentHome(agentId: string): string {
   return join(getAgentsRoot(), assertSafeSegment(agentId, 'Agent id'))
+}
+
+export function deleteAgentHome(agentId: string): void {
+  rmSync(getAgentHome(agentId), { recursive: true, force: true })
 }
 
 export function getAgentSkillsRoot(agentId: string): string {

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { randomUUID } from 'node:crypto'
@@ -7,6 +7,8 @@ import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   AgentCreateInputSchema,
+  AgentDeleteInputSchema,
+  AgentDeleteResultSchema,
   AgentSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
@@ -22,6 +24,8 @@ import {
   WorkspaceUpdateSystemDefaultInputSchema,
   type Agent,
   type AgentCreateInput,
+  type AgentDeleteInput,
+  type AgentDeleteResult,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
   type ConversationDetail,
@@ -217,8 +221,53 @@ export class OrdinusDatabase {
       .map((agent) => AgentSchema.parse(agent))
   }
 
+  listActiveAgents(): Agent[] {
+    return this.db
+      .select()
+      .from(agents)
+      .where(eq(agents.enabled, true))
+      .orderBy(desc(agents.createdAt))
+      .all()
+      .map((agent) => AgentSchema.parse(agent))
+  }
+
   hasAgent(id: string): boolean {
     return Boolean(this.db.select({ id: agents.id }).from(agents).where(eq(agents.id, id)).get())
+  }
+
+  hasRunningWorkForAgent(agentId: string): boolean {
+    const agent = this.getAgent(agentId)
+    const agentParticipants = this.db
+      .select({ id: conversationParticipants.id })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.agentId, agent.id))
+      .all()
+    const participantIds = agentParticipants.map((participant) => participant.id)
+
+    if (participantIds.length === 0) {
+      return false
+    }
+
+    return Boolean(
+      this.db
+        .select({ id: conversationTurns.id })
+        .from(conversationTurns)
+        .where(
+          and(
+            inArray(conversationTurns.participantId, participantIds),
+            eq(conversationTurns.status, 'running')
+          )
+        )
+        .get()
+    )
+  }
+
+  assertAgentHasNoRunningWork(agentId: string, action: 'delete' | 'disable'): void {
+    if (this.hasRunningWorkForAgent(agentId)) {
+      throw new Error(
+        `Stop this agent's running work before ${action === 'delete' ? 'deleting' : 'disabling'} it.`
+      )
+    }
   }
 
   createAgent(input: AgentCreateInput): Agent {
@@ -257,12 +306,81 @@ export class OrdinusDatabase {
     return this.getAgent(parsed.id)
   }
 
+  deleteAgent(input: AgentDeleteInput): AgentDeleteResult {
+    const parsed = AgentDeleteInputSchema.parse(input)
+    const agent = this.getAgent(parsed.id)
+    this.assertAgentHasNoRunningWork(agent.id, 'delete')
+
+    return this.db.transaction((tx) => {
+      const agentParticipants = tx
+        .select({
+          id: conversationParticipants.id,
+          conversationId: conversationParticipants.conversationId
+        })
+        .from(conversationParticipants)
+        .where(eq(conversationParticipants.agentId, agent.id))
+        .all()
+      const participantIds = agentParticipants.map((participant) => participant.id)
+      const candidateConversationIds = uniqueValues(
+        agentParticipants.map((participant) => participant.conversationId)
+      )
+
+      const deletedTurns =
+        participantIds.length > 0
+          ? tx
+              .select({
+                id: conversationTurns.id,
+                logRef: conversationTurns.logRef
+              })
+              .from(conversationTurns)
+              .where(inArray(conversationTurns.participantId, participantIds))
+              .all()
+          : []
+      const deletedLogRefs = uniqueValues(
+        deletedTurns.map((turn) => turn.logRef).filter((logRef) => logRef.trim())
+      )
+
+      if (participantIds.length > 0) {
+        tx.delete(conversationTurns)
+          .where(inArray(conversationTurns.participantId, participantIds))
+          .run()
+        tx.delete(conversationParticipants)
+          .where(inArray(conversationParticipants.id, participantIds))
+          .run()
+      }
+
+      const emptyConversationIds = candidateConversationIds.filter((conversationId) => {
+        const participant = tx
+          .select({ id: conversationParticipants.id })
+          .from(conversationParticipants)
+          .where(eq(conversationParticipants.conversationId, conversationId))
+          .get()
+
+        return !participant
+      })
+
+      if (emptyConversationIds.length > 0) {
+        tx.delete(conversations).where(inArray(conversations.id, emptyConversationIds)).run()
+      }
+
+      tx.delete(agents).where(eq(agents.id, agent.id)).run()
+
+      return AgentDeleteResultSchema.parse({
+        deletedAgentId: agent.id,
+        deletedConversationCount: emptyConversationIds.length,
+        deletedTurnCount: deletedTurns.length,
+        deletedLogRefs
+      })
+    })
+  }
+
   updateAgentSettings(input: AgentUpdateSettingsInput): Agent {
     const parsed = AgentUpdateSettingsInputSchema.parse(input)
     const now = new Date().toISOString()
+    const currentAgent = this.getAgent(parsed.id)
 
-    if (!this.hasAgent(parsed.id)) {
-      throw new Error('Agent was not found.')
+    if (currentAgent.enabled && !parsed.enabled) {
+      this.assertAgentHasNoRunningWork(currentAgent.id, 'disable')
     }
 
     this.db
@@ -355,11 +473,7 @@ export class OrdinusDatabase {
 
   createDirectConversation(input: { agentId: string; title?: string }): ConversationDetail {
     const parsed = ConversationCreateDirectInputSchema.parse(input)
-    const agent = this.getAgent(parsed.agentId)
-
-    if (!agent.enabled) {
-      throw new Error('Enable this agent before starting a conversation.')
-    }
+    const agent = this.requireActiveAgent(parsed.agentId)
 
     const now = new Date().toISOString()
     const conversationId = createConversationId()
@@ -412,10 +526,7 @@ export class OrdinusDatabase {
       throw new Error('Conversation has no participant.')
     }
 
-    const agent = this.getAgent(participant.agentId)
-    if (!agent.enabled) {
-      throw new Error('Enable this agent before sending a message.')
-    }
+    const agent = this.requireActiveAgent(participant.agentId)
 
     const now = new Date().toISOString()
     const userTurn = createBoundedTurnContent(parsed.message)
@@ -618,6 +729,16 @@ export class OrdinusDatabase {
     return AgentSchema.parse(agent)
   }
 
+  requireActiveAgent(id: string): Agent {
+    const agent = this.getAgent(id)
+
+    if (!agent.enabled) {
+      throw new Error('Enable this agent before assigning work.')
+    }
+
+    return agent
+  }
+
   private getConversationTurn(id: string): ConversationTurn {
     const turn = this.db.select().from(conversationTurns).where(eq(conversationTurns.id, id)).get()
 
@@ -692,6 +813,10 @@ function createConversationParticipantId(): string {
 
 function createConversationTurnId(): string {
   return `trn-${randomUUID()}`
+}
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values))
 }
 
 function createBoundedTurnContent(value: string): {
