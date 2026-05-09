@@ -34,7 +34,11 @@ import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import type { Agent, AgentDraft, AgentSandbox, AgentSkill, ProviderId } from '@shared/contracts'
-import { getProviderModelOptions } from '@shared/provider-models'
+import {
+  getDefaultModelForProvider,
+  getProviderModelOptions,
+  isKnownProviderModel
+} from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
@@ -329,7 +333,9 @@ function CreateAgentDialog({
   const [error, setError] = useState('')
   const canDraft = intent.trim().length >= 12 && !busy
   const canCreate =
-    Boolean(draft?.name.trim() && draft.role.trim() && draft.instructions.trim()) && !busy
+    Boolean(
+      draft?.name.trim() && draft.role.trim() && draft.instructions.trim() && draft.model.trim()
+    ) && !busy
 
   function resetDialog(): void {
     setStep('describe')
@@ -372,7 +378,7 @@ function CreateAgentDialog({
   }
 
   function handleProviderChange(providerId: ProviderId): void {
-    updateDraft({ providerId, model: getModelOptions(providerId)[0] })
+    updateDraft({ providerId, model: getDefaultModelForProvider(providerId) })
   }
 
   async function handleCreateAgent(): Promise<void> {
@@ -383,7 +389,7 @@ function CreateAgentDialog({
     try {
       setBusy(true)
       setError('')
-      const agent = await window.ordinus.agents.create(draft)
+      const agent = await window.ordinus.agents.create({ ...draft, model: draft.model.trim() })
       onAgentCreated(agent)
       resetDialog()
     } catch (createError) {
@@ -466,18 +472,11 @@ function CreateAgentDialog({
                         <option value="gemini">Gemini</option>
                       </SelectControl>
                     </FormField>
-                    <FormField label="Model">
-                      <SelectControl
-                        value={draft.model}
-                        onChange={(value) => updateDraft({ model: value })}
-                      >
-                        {getModelOptions(draft.providerId).map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </SelectControl>
-                    </FormField>
+                    <ModelField
+                      providerId={draft.providerId}
+                      model={draft.model}
+                      onChange={(model) => updateDraft({ model })}
+                    />
                     <FormField label="Sandbox">
                       <SelectControl
                         value={draft.sandbox}
@@ -814,20 +813,20 @@ function SettingsPanel({
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
   const dirty = isSettingsDirty(draft, savedSettings)
-  const modelOptions = getModelOptions(draft.providerId)
+  const canSave = dirty && Boolean(draft.model.trim()) && !saving
 
   function updateDraft(next: Partial<SettingsDraft>): void {
     setDraft((current) => {
       const merged = { ...current, ...next }
-      if (next.providerId && !getModelOptions(next.providerId).includes(merged.model)) {
-        merged.model = getModelOptions(next.providerId)[0]
+      if (next.providerId) {
+        merged.model = getDefaultModelForProvider(next.providerId)
       }
       return merged
     })
   }
 
   async function handleSave(): Promise<void> {
-    if (!dirty) {
+    if (!canSave) {
       return
     }
 
@@ -836,7 +835,8 @@ function SettingsPanel({
       setError('')
       const nextAgent = await window.ordinus.agents.updateSettings({
         id: agent.id,
-        ...draft
+        ...draft,
+        model: draft.model.trim()
       })
       const nextSettings = getSettingsDraft(nextAgent)
       setSavedSettings(nextSettings)
@@ -884,7 +884,7 @@ function SettingsPanel({
             type="button"
             size="sm"
             className="h-8 px-2.5 text-xs"
-            disabled={!dirty || saving}
+            disabled={!canSave}
             onClick={() => void handleSave()}
           >
             {saving ? <Loader2 className="animate-spin" /> : null}
@@ -909,15 +909,11 @@ function SettingsPanel({
             </SelectControl>
           </FormField>
 
-          <FormField label="Model">
-            <SelectControl value={draft.model} onChange={(value) => updateDraft({ model: value })}>
-              {modelOptions.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </SelectControl>
-          </FormField>
+          <ModelField
+            providerId={draft.providerId}
+            model={draft.model}
+            onChange={(model) => updateDraft({ model })}
+          />
 
           <FormField label="Sandbox">
             <SelectControl
@@ -1177,8 +1173,48 @@ function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): bo
   )
 }
 
-function getModelOptions(providerId: ProviderId): string[] {
-  return getProviderModelOptions(providerId).map((option) => option.id)
+function ModelField({
+  providerId,
+  model,
+  onChange
+}: {
+  providerId: ProviderId
+  model: string
+  onChange: (model: string) => void
+}): React.JSX.Element {
+  const modelOptions = getProviderModelOptions(providerId)
+  const knownModelSelected = isKnownProviderModel(providerId, model)
+  const selectValue = knownModelSelected ? model : 'custom'
+  const description =
+    modelOptions.find((option) => option.id === model)?.description ??
+    'Use a model id supported by the selected local CLI.'
+
+  function handleSelect(nextModel: string): void {
+    onChange(nextModel === 'custom' ? '' : nextModel)
+  }
+
+  return (
+    <FormField label="Model">
+      <div className="grid gap-2">
+        <SelectControl value={selectValue} onChange={handleSelect}>
+          {modelOptions.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+          <option value="custom">Custom model</option>
+        </SelectControl>
+        {selectValue === 'custom' ? (
+          <Input
+            value={model}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Provider-supported model id"
+          />
+        ) : null}
+        <p className="text-xs leading-5 text-muted-foreground">{description}</p>
+      </div>
+    </FormField>
+  )
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
