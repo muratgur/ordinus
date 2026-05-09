@@ -53,12 +53,17 @@ import {
 const turnContentLimit = 16_000
 const turnPreviewLimit = 240
 
-export type PreparedConversationTurn = {
+export type PreparedConversationAgentTurn = {
   conversationId: string
   participantId: string
   agentTurnId: string
   agent: Agent
   providerSessionRef: string | null
+}
+
+export type PreparedConversationTurn = {
+  conversationId: string
+  agentTurns: PreparedConversationAgentTurn[]
 }
 
 export class OrdinusDatabase {
@@ -569,68 +574,96 @@ export class OrdinusDatabase {
       throw new Error('Wait for the current turn to finish before sending another message.')
     }
 
-    const participant =
-      detail.mode === 'direct'
-        ? detail.participants[0]
-        : detail.participants.find((item) => item.id === parsed.targetParticipantId)
+    const targetParticipants = this.resolveConversationTurnTargets(
+      detail,
+      parsed.targetParticipantIds
+    )
 
-    if (!participant) {
-      throw new Error('Mention an agent in this conversation before sending.')
+    if (targetParticipants.length === 0) {
+      throw new Error('Choose at least one agent before sending.')
     }
 
-    const agent = this.requireActiveAgent(participant.agentId)
+    const targetAgents = targetParticipants.map((participant) =>
+      this.requireActiveAgent(participant.agentId)
+    )
 
     const now = new Date().toISOString()
     const userTurn = createBoundedTurnContent(parsed.message)
     const userTurnId = createConversationTurnId()
-    const agentTurnId = createConversationTurnId()
     const nextSequence = this.getNextConversationTurnSequence(detail.id)
 
-    this.db
-      .insert(conversationTurns)
-      .values({
-        id: userTurnId,
-        conversationId: detail.id,
-        participantId: participant.id,
-        sequence: nextSequence,
-        speaker: 'user',
-        content: userTurn.content,
-        preview: userTurn.preview,
-        status: 'completed',
-        error: '',
-        logRef: '',
-        truncated: userTurn.truncated,
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
-    this.db
-      .insert(conversationTurns)
-      .values({
-        id: agentTurnId,
-        conversationId: detail.id,
-        participantId: participant.id,
-        sequence: nextSequence + 1,
-        speaker: 'agent',
-        content: '',
-        preview: 'Running',
-        status: 'running',
-        error: '',
-        logRef: '',
-        truncated: false,
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
+    const agentTurns = targetParticipants.map((participant, index) => ({
+      conversationId: detail.id,
+      participantId: participant.id,
+      agentTurnId: createConversationTurnId(),
+      agent: targetAgents[index],
+      providerSessionRef: participant.providerSessionRef
+    }))
 
-    this.setConversationRunState(detail.id, participant.id, 'running', now)
+    this.db.transaction((tx) => {
+      tx.insert(conversationTurns)
+        .values({
+          id: userTurnId,
+          conversationId: detail.id,
+          participantId: targetParticipants[0].id,
+          sequence: nextSequence,
+          speaker: 'user',
+          content: userTurn.content,
+          preview: userTurn.preview,
+          status: 'completed',
+          error: '',
+          logRef: '',
+          truncated: userTurn.truncated,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+
+      agentTurns.forEach((agentTurn, index) => {
+        tx.insert(conversationTurns)
+          .values({
+            id: agentTurn.agentTurnId,
+            conversationId: detail.id,
+            participantId: agentTurn.participantId,
+            sequence: nextSequence + index + 1,
+            speaker: 'agent',
+            content: '',
+            preview: 'Running',
+            status: 'running',
+            error: '',
+            logRef: '',
+            truncated: false,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+      })
+
+      tx.update(conversations)
+        .set({
+          status: 'running',
+          updatedAt: now
+        })
+        .where(eq(conversations.id, detail.id))
+        .run()
+
+      tx.update(conversationParticipants)
+        .set({
+          status: 'running',
+          updatedAt: now
+        })
+        .where(
+          inArray(
+            conversationParticipants.id,
+            targetParticipants.map((participant) => participant.id)
+          )
+        )
+        .run()
+    })
 
     return {
       conversationId: detail.id,
-      participantId: participant.id,
-      agentTurnId,
-      agent,
-      providerSessionRef: participant.providerSessionRef
+      agentTurns
     }
   }
 
@@ -673,7 +706,7 @@ export class OrdinusDatabase {
     this.db
       .update(conversations)
       .set({
-        status: 'active',
+        status: this.getConversationStatusAfterTurnUpdate(turn.conversationId, turn.sequence),
         summary: output.preview,
         updatedAt: now
       })
@@ -718,7 +751,7 @@ export class OrdinusDatabase {
     this.db
       .update(conversations)
       .set({
-        status: 'failed',
+        status: this.getConversationStatusAfterTurnUpdate(turn.conversationId, turn.sequence),
         updatedAt: now
       })
       .where(eq(conversations.id, turn.conversationId))
@@ -762,7 +795,7 @@ export class OrdinusDatabase {
     this.db
       .update(conversations)
       .set({
-        status: 'cancelled',
+        status: this.getConversationStatusAfterTurnUpdate(turn.conversationId, turn.sequence),
         updatedAt: now
       })
       .where(eq(conversations.id, turn.conversationId))
@@ -812,28 +845,76 @@ export class OrdinusDatabase {
     return (latestTurn?.sequence ?? 0) + 1
   }
 
-  private setConversationRunState(
+  private resolveConversationTurnTargets(
+    detail: ConversationDetail,
+    targetParticipantIds: string[] | undefined
+  ): ConversationDetail['participants'] {
+    if (detail.mode === 'direct') {
+      return detail.participants[0] ? [detail.participants[0]] : []
+    }
+
+    const uniqueTargetIds = uniqueValues(targetParticipantIds ?? [])
+    const targets = uniqueTargetIds
+      .map((targetParticipantId) =>
+        detail.participants.find((participant) => participant.id === targetParticipantId)
+      )
+      .filter((participant): participant is ConversationDetail['participants'][number] =>
+        Boolean(participant)
+      )
+
+    if (targets.length !== uniqueTargetIds.length) {
+      throw new Error('One or more target agents are not part of this conversation.')
+    }
+
+    return targets
+  }
+
+  private getConversationStatusAfterTurnUpdate(
     conversationId: string,
-    participantId: string,
-    status: 'running',
-    updatedAt: string
-  ): void {
-    this.db
-      .update(conversations)
-      .set({
-        status,
-        updatedAt
-      })
-      .where(eq(conversations.id, conversationId))
-      .run()
-    this.db
-      .update(conversationParticipants)
-      .set({
-        status,
-        updatedAt
-      })
-      .where(eq(conversationParticipants.id, participantId))
-      .run()
+    turnSequence: number
+  ): 'active' | 'running' | 'failed' | 'cancelled' {
+    const userTurn = this.db
+      .select({ sequence: conversationTurns.sequence })
+      .from(conversationTurns)
+      .where(
+        and(
+          eq(conversationTurns.conversationId, conversationId),
+          eq(conversationTurns.speaker, 'user')
+        )
+      )
+      .orderBy(desc(conversationTurns.sequence))
+      .all()
+      .find((turn) => turn.sequence < turnSequence)
+
+    const agentTurns = this.db
+      .select({ sequence: conversationTurns.sequence, status: conversationTurns.status })
+      .from(conversationTurns)
+      .where(
+        and(
+          eq(conversationTurns.conversationId, conversationId),
+          eq(conversationTurns.speaker, 'agent')
+        )
+      )
+      .all()
+      .filter((turn) => !userTurn || turn.sequence > userTurn.sequence)
+
+    if (agentTurns.some((turn) => turn.status === 'running')) {
+      return 'running'
+    }
+
+    if (agentTurns.some((turn) => turn.status === 'completed')) {
+      return 'active'
+    }
+
+    if (agentTurns.some((turn) => turn.status === 'failed')) {
+      return 'failed'
+    }
+
+    if (agentTurns.some((turn) => turn.status === 'cancelled')) {
+      return 'cancelled'
+    }
+
+    return 'active'
   }
 
   close(): void {
