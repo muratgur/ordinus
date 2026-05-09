@@ -30,17 +30,30 @@ import {
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
-import { SelectControl } from '@renderer/components/select-control'
 import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
   ConversationDetail,
   ConversationListItem,
+  ConversationParticipant,
   ConversationStatus,
   ConversationTurn,
   ConversationTurnStatus
 } from '@shared/contracts'
 import { appRoutePaths } from '@renderer/app/routes'
+
+type DraftMention = {
+  participantId: string
+  label: string
+  start: number
+  end: number
+}
+
+type MentionPickerState = {
+  start: number
+  end: number
+  query: string
+}
 
 export function ConversationsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
@@ -50,6 +63,7 @@ export function ConversationsScreen(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [draftMention, setDraftMention] = useState<DraftMention | null>(null)
   const [sending, setSending] = useState(false)
   const [cancellingTurnId, setCancellingTurnId] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -58,7 +72,12 @@ export function ConversationsScreen(): React.JSX.Element {
   const runningTurn = detail?.turns.find((turn) => turn.status === 'running') ?? null
   const participant = detail?.participants[0] ?? null
   const composerBlocked =
-    !detail || Boolean(runningTurn) || sending || !participant || !message.trim()
+    !detail ||
+    Boolean(runningTurn) ||
+    sending ||
+    !participant ||
+    !message.trim() ||
+    (detail.mode === 'manual' && !draftMention)
   const latestTurn = detail?.turns.at(-1)
   const latestTurnSignature = latestTurn
     ? `${detail?.id}:${latestTurn.id}:${latestTurn.status}:${latestTurn.content}`
@@ -150,17 +169,21 @@ export function ConversationsScreen(): React.JSX.Element {
   }, [detail, latestTurnSignature])
 
   async function selectConversation(conversationId: string): Promise<void> {
+    setMessage('')
+    setDraftMention(null)
     setSelectedConversationId(conversationId)
     setDetail(await window.ordinus.conversations.get({ conversationId }))
   }
 
-  async function handleCreateConversation(agentId: string, title: string): Promise<void> {
-    const nextDetail = await window.ordinus.conversations.createDirect({
-      agentId,
-      title: title.trim() || undefined
-    })
+  async function handleCreateConversation(agentIds: string[], title: string): Promise<void> {
+    if (agentIds.length === 0) {
+      return
+    }
+
+    const nextDetail = await createConversationForAgents(agentIds, title)
     setDetail(nextDetail)
     setSelectedConversationId(nextDetail.id)
+    setDraftMention(null)
     await loadConversations(nextDetail.id)
     setCreateOpen(false)
   }
@@ -175,9 +198,11 @@ export function ConversationsScreen(): React.JSX.Element {
       setError('')
       const nextDetail = await window.ordinus.conversations.sendTurn({
         conversationId: detail.id,
+        targetParticipantId: detail.mode === 'manual' ? draftMention?.participantId : undefined,
         message
       })
       setMessage('')
+      setDraftMention(null)
       setDetail(nextDetail)
       await loadConversations(nextDetail.id)
     } catch (sendError) {
@@ -185,6 +210,16 @@ export function ConversationsScreen(): React.JSX.Element {
     } finally {
       setSending(false)
     }
+  }
+
+  function handleMessageChange(nextMessage: string): void {
+    setMessage(nextMessage)
+
+    if (!draftMention || hasIntactMention(nextMessage, draftMention)) {
+      return
+    }
+
+    setDraftMention(null)
   }
 
   async function handleCancelTurn(turnId: string): Promise<void> {
@@ -225,7 +260,16 @@ export function ConversationsScreen(): React.JSX.Element {
               <ScrollArea className="min-h-0 flex-1">
                 <CardContent className="grid gap-3 p-4">
                   {detail.turns.length > 0 ? (
-                    detail.turns.map((turn) => <TurnCard key={turn.id} turn={turn} />)
+                    detail.turns.map((turn) => (
+                      <TurnCard
+                        key={turn.id}
+                        turn={turn}
+                        participantName={
+                          detail.participants.find((item) => item.id === turn.participantId)
+                            ?.agentName ?? ''
+                        }
+                      />
+                    ))
                   ) : (
                     <EmptyState
                       icon={<MessageSquareText />}
@@ -238,10 +282,13 @@ export function ConversationsScreen(): React.JSX.Element {
               </ScrollArea>
               <Composer
                 value={message}
-                blockedReason={getBlockedReason(detail, participant, runningTurn)}
+                participants={detail.participants}
+                selectedMention={draftMention}
+                blockedReason={getBlockedReason(detail, participant, runningTurn, draftMention)}
                 disabled={composerBlocked}
                 sending={sending}
-                onChange={setMessage}
+                onChange={handleMessageChange}
+                onSelectMention={setDraftMention}
                 onSend={() => void handleSend()}
               />
             </>
@@ -255,7 +302,7 @@ export function ConversationsScreen(): React.JSX.Element {
         </Card>
       </main>
 
-      <ParticipantsPanel detail={detail} agents={agents} runningTurn={runningTurn} />
+      <ParticipantsPanel detail={detail} agents={agents} />
 
       <CreateConversationDialog
         agents={agents}
@@ -359,8 +406,10 @@ function ConversationHeader({
         <div className="min-w-0">
           <CardTitle className="truncate">{detail.title}</CardTitle>
           <CardDescription className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="rounded-full border bg-card px-2 py-0.5 text-xs">Direct</span>
-            <span>{participantName}</span>
+            <span className="rounded-full border bg-card px-2 py-0.5 text-xs capitalize">
+              {detail.mode}
+            </span>
+            <span>{getParticipantSummary(detail.participants, participantName)}</span>
           </CardDescription>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -387,7 +436,13 @@ function ConversationHeader({
   )
 }
 
-function TurnCard({ turn }: { turn: ConversationTurn }): React.JSX.Element {
+function TurnCard({
+  turn,
+  participantName
+}: {
+  turn: ConversationTurn
+  participantName: string
+}): React.JSX.Element {
   const isUser = turn.speaker === 'user'
   const Icon = isUser ? UserRound : Bot
 
@@ -401,7 +456,11 @@ function TurnCard({ turn }: { turn: ConversationTurn }): React.JSX.Element {
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Icon className="size-4 shrink-0 text-primary" />
-          <p className="truncate text-sm font-semibold">{isUser ? 'You' : 'Agent'}</p>
+          <p className="truncate text-sm font-semibold">
+            {isUser
+              ? `You${participantName ? ` to @${participantName}` : ''}`
+              : participantName || 'Agent'}
+          </p>
         </div>
         {turn.status !== 'completed' ? <TurnStatus status={turn.status} /> : null}
       </div>
@@ -428,19 +487,108 @@ function TurnCard({ turn }: { turn: ConversationTurn }): React.JSX.Element {
 
 function Composer({
   value,
+  participants,
+  selectedMention,
   blockedReason,
   disabled,
   sending,
   onChange,
+  onSelectMention,
   onSend
 }: {
   value: string
+  participants: ConversationParticipant[]
+  selectedMention: DraftMention | null
   blockedReason: string
   disabled: boolean
   sending: boolean
   onChange: (value: string) => void
+  onSelectMention: (mention: DraftMention) => void
   onSend: () => void
 }): React.JSX.Element {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [mentionPicker, setMentionPicker] = useState<MentionPickerState | null>(null)
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0)
+  const mentionOptions = useMemo(
+    () => getMentionOptions(participants, mentionPicker?.query ?? ''),
+    [mentionPicker?.query, participants]
+  )
+  const showMentionPicker =
+    participants.length > 1 && Boolean(mentionPicker && mentionOptions.length > 0)
+  const selectedParticipantId = selectedMention?.participantId ?? ''
+
+  function selectMention(
+    participant: ConversationParticipant,
+    range = getTextareaSelectionRange(textareaRef.current, value.length)
+  ): void {
+    const textarea = textareaRef.current
+    const insertion = insertMention(value, participant.agentName, range.start, range.end)
+
+    onChange(insertion.value)
+    onSelectMention({
+      participantId: participant.id,
+      label: participant.agentName,
+      start: insertion.start,
+      end: insertion.end
+    })
+    setMentionPicker(null)
+    setActiveMentionIndex(0)
+
+    window.requestAnimationFrame(() => {
+      textarea?.focus()
+      textarea?.setSelectionRange(insertion.caret, insertion.caret)
+    })
+  }
+
+  function updateMentionPicker(nextValue: string, caret: number): void {
+    const nextMentionPicker = getActiveMentionPicker(nextValue, caret)
+    setMentionPicker(nextMentionPicker)
+    setActiveMentionIndex(0)
+  }
+
+  function handleTextareaChange(event: React.ChangeEvent<HTMLTextAreaElement>): void {
+    onChange(event.target.value)
+    updateMentionPicker(event.target.value, event.target.selectionStart)
+  }
+
+  function handleTextareaKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    if (showMentionPicker && mentionPicker) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setActiveMentionIndex((index) => (index + 1) % mentionOptions.length)
+        return
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setActiveMentionIndex(
+          (index) => (index - 1 + mentionOptions.length) % mentionOptions.length
+        )
+        return
+      }
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        selectMention(mentionOptions[activeMentionIndex], mentionPicker)
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMentionPicker(null)
+        return
+      }
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      onSend()
+    }
+  }
+
+  function updateMentionPickerFromCaret(event: React.SyntheticEvent<HTMLTextAreaElement>): void {
+    updateMentionPicker(event.currentTarget.value, event.currentTarget.selectionStart)
+  }
+
   return (
     <div className="border-t bg-card p-4">
       {blockedReason ? (
@@ -449,17 +597,41 @@ function Composer({
         </p>
       ) : null}
       <div className="grid gap-3">
-        <textarea
-          className="ordinus-scrollbar max-h-52 min-h-28 resize-y overflow-y-auto rounded-lg border bg-card p-3 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          placeholder="Ask this agent to inspect, explain, plan, or change something in the workspace."
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-              onSend()
-            }
-          }}
-        />
+        {participants.length > 1 ? (
+          <MentionShortcutChips
+            participants={participants}
+            selectedParticipantId={selectedParticipantId}
+            onSelect={selectMention}
+          />
+        ) : null}
+        <div className="relative">
+          {showMentionPicker ? (
+            <MentionPicker
+              activeIndex={activeMentionIndex}
+              options={mentionOptions}
+              onActiveIndexChange={setActiveMentionIndex}
+              onSelect={(participant) => {
+                if (mentionPicker) {
+                  selectMention(participant, mentionPicker)
+                }
+              }}
+            />
+          ) : null}
+          <textarea
+            ref={textareaRef}
+            className="ordinus-scrollbar max-h-52 min-h-28 w-full resize-y overflow-y-auto rounded-lg border bg-card p-3 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            placeholder="Ask this agent to inspect, explain, plan, or change something in the workspace."
+            value={value}
+            onChange={handleTextareaChange}
+            onKeyDown={handleTextareaKeyDown}
+            onClick={updateMentionPickerFromCaret}
+            onKeyUp={(event) => {
+              if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                updateMentionPickerFromCaret(event)
+              }
+            }}
+          />
+        </div>
         <div className="flex justify-end">
           <Button type="button" disabled={disabled} onClick={onSend}>
             {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
@@ -471,14 +643,89 @@ function Composer({
   )
 }
 
+function MentionShortcutChips({
+  participants,
+  selectedParticipantId,
+  onSelect
+}: {
+  participants: ConversationParticipant[]
+  selectedParticipantId: string
+  onSelect: (participant: ConversationParticipant) => void
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {participants.map((participant) => {
+        const selected = selectedParticipantId === participant.id
+
+        return (
+          <button
+            key={participant.id}
+            type="button"
+            aria-pressed={selected}
+            className={cn(
+              'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-primary-soft hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              selected
+                ? 'border-primary/40 bg-primary-soft text-foreground'
+                : 'bg-accent text-muted-foreground'
+            )}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              onSelect(participant)
+            }}
+          >
+            @{participant.agentName}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function MentionPicker({
+  activeIndex,
+  options,
+  onActiveIndexChange,
+  onSelect
+}: {
+  activeIndex: number
+  options: ConversationParticipant[]
+  onActiveIndexChange: (index: number) => void
+  onSelect: (participant: ConversationParticipant) => void
+}): React.JSX.Element {
+  return (
+    <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-lg">
+      <div className="max-h-56 overflow-y-auto p-1">
+        {options.map((participant, index) => (
+          <button
+            key={participant.id}
+            type="button"
+            className={cn(
+              'grid w-full min-w-0 gap-1 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none',
+              index === activeIndex ? 'bg-primary-soft' : 'hover:bg-accent'
+            )}
+            onMouseEnter={() => onActiveIndexChange(index)}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              onSelect(participant)
+            }}
+          >
+            <span className="truncate font-medium">@{participant.agentName}</span>
+            <span className="line-clamp-1 text-xs text-muted-foreground">
+              {participant.agentRole}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ParticipantsPanel({
   detail,
-  agents,
-  runningTurn
+  agents
 }: {
   detail: ConversationDetail | null
   agents: Agent[]
-  runningTurn: ConversationTurn | null
 }): React.JSX.Element {
   return (
     <aside className="min-h-0 min-w-0">
@@ -506,7 +753,7 @@ function ParticipantsPanel({
                       name={participant.agentName}
                       role={participant.agentRole}
                       enabled={agent?.enabled ?? true}
-                      status={runningTurn ? 'running' : participant.status}
+                      status={participant.status}
                     />
                   )
                 })}
@@ -570,33 +817,33 @@ function CreateConversationDialog({
 }: {
   agents: Agent[]
   open: boolean
-  onCreateConversation: (agentId: string, title: string) => Promise<void>
+  onCreateConversation: (agentIds: string[], title: string) => Promise<void>
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const enabledAgents = useMemo(() => agents.filter((agent) => agent.enabled), [agents])
-  const [agentId, setAgentId] = useState('')
+  const [agentIds, setAgentIds] = useState<string[]>([])
   const [title, setTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const selectedAgentId = agentId || enabledAgents[0]?.id || ''
+  const selectedAgentIds = getSelectedAgentIds(agentIds, enabledAgents)
 
   function handleOpenChange(nextOpen: boolean): void {
     onOpenChange(nextOpen)
     if (!nextOpen) {
-      setAgentId('')
+      setAgentIds([])
       setTitle('')
       setError('')
     }
   }
 
   async function handleCreate(): Promise<void> {
-    if (!selectedAgentId || saving) return
+    if (selectedAgentIds.length === 0 || saving) return
 
     try {
       setSaving(true)
       setError('')
-      await onCreateConversation(selectedAgentId, title)
-      setAgentId('')
+      await onCreateConversation(selectedAgentIds, title)
+      setAgentIds([])
       setTitle('')
     } catch (createError) {
       setError(getErrorMessage(createError, 'Conversation could not be created.'))
@@ -611,25 +858,39 @@ function CreateConversationDialog({
         <DialogHeader>
           <DialogTitle>New conversation</DialogTitle>
           <DialogDescription>
-            Start a direct session-backed conversation with one agent.
+            Start a session-backed conversation with one or more agents.
           </DialogDescription>
         </DialogHeader>
         {enabledAgents.length > 0 ? (
           <div className="grid gap-3">
-            <label className="grid gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Agent</span>
-              <SelectControl value={selectedAgentId} onChange={setAgentId}>
-                {enabledAgents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-              </SelectControl>
-            </label>
+            <div className="grid gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Agents</span>
+              <div className="grid max-h-64 gap-2 overflow-y-auto rounded-lg border bg-card p-2">
+                {enabledAgents.map((agent) => {
+                  const selected = selectedAgentIds.includes(agent.id)
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      className={cn(
+                        'grid min-w-0 gap-1 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        selected ? 'border-primary/40 bg-primary-soft' : 'bg-card'
+                      )}
+                      onClick={() => setAgentIds(toggleAgentId(selectedAgentIds, agent.id))}
+                    >
+                      <span className="truncate font-medium">{agent.name}</span>
+                      <span className="line-clamp-1 text-xs text-muted-foreground">
+                        {agent.role}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             <label className="grid gap-2">
               <span className="text-xs font-medium text-muted-foreground">Title</span>
               <Input
-                placeholder="Defaults to the agent name"
+                placeholder="Defaults to the selected agents"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
               />
@@ -654,7 +915,7 @@ function CreateConversationDialog({
           </Button>
           <Button
             type="button"
-            disabled={!selectedAgentId || enabledAgents.length === 0 || saving}
+            disabled={selectedAgentIds.length === 0 || enabledAgents.length === 0 || saving}
             onClick={() => void handleCreate()}
           >
             {saving ? <Loader2 className="animate-spin" /> : <Plus />}
@@ -695,7 +956,7 @@ function NoConversationState({
           </p>
           <p className="text-sm leading-6 text-muted-foreground">
             {agents.length > 0
-              ? 'Direct conversations keep each agent in its own provider session.'
+              ? 'Mention an agent by name when a conversation has multiple participants.'
               : 'Create an agent before starting a session-backed conversation.'}
           </p>
         </div>
@@ -785,7 +1046,8 @@ function TurnStatus({ status }: { status: ConversationTurnStatus }): React.JSX.E
 function getBlockedReason(
   detail: ConversationDetail,
   participant: ConversationDetail['participants'][number] | null,
-  runningTurn: ConversationTurn | null
+  runningTurn: ConversationTurn | null,
+  draftMention: DraftMention | null
 ): string {
   if (runningTurn) {
     return 'This conversation is running. Stop it or wait for the agent response.'
@@ -799,9 +1061,146 @@ function getBlockedReason(
     return 'This conversation was cancelled. Send a new message to continue.'
   }
 
+  if (detail.mode === 'manual' && !draftMention) {
+    return 'Choose a participant mention before sending.'
+  }
+
   return ''
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+function createConversationForAgents(
+  agentIds: string[],
+  title: string
+): Promise<ConversationDetail> {
+  const trimmedTitle = title.trim() || undefined
+  const [firstAgentId] = agentIds
+
+  if (!firstAgentId) {
+    throw new Error('Choose an agent before starting a conversation.')
+  }
+
+  if (agentIds.length > 1) {
+    return window.ordinus.conversations.createManual({
+      agentIds,
+      title: trimmedTitle
+    })
+  }
+
+  return window.ordinus.conversations.createDirect({
+    agentId: firstAgentId,
+    title: trimmedTitle
+  })
+}
+
+function getSelectedAgentIds(selectedAgentIds: string[], enabledAgents: Agent[]): string[] {
+  if (selectedAgentIds.length > 0) {
+    return selectedAgentIds
+  }
+
+  const [firstAgent] = enabledAgents
+  return firstAgent ? [firstAgent.id] : []
+}
+
+function getParticipantSummary(
+  participants: ConversationParticipant[],
+  fallbackName: string
+): string {
+  if (participants.length <= 1) {
+    return fallbackName
+  }
+
+  return `${participants.length} agents`
+}
+
+function getMentionOptions(
+  participants: ConversationParticipant[],
+  query: string
+): ConversationParticipant[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+
+  if (!normalizedQuery) {
+    return participants
+  }
+
+  return participants.filter((participant) =>
+    participant.agentName.toLocaleLowerCase().includes(normalizedQuery)
+  )
+}
+
+function getActiveMentionPicker(value: string, caret: number): MentionPickerState | null {
+  const mentionStart = value.lastIndexOf('@', caret - 1)
+
+  if (mentionStart < 0 || !isMentionStart(value, mentionStart)) {
+    return null
+  }
+
+  const query = value.slice(mentionStart + 1, caret)
+
+  if (/\s/.test(query) || query.length > 80) {
+    return null
+  }
+
+  return {
+    start: mentionStart,
+    end: caret,
+    query
+  }
+}
+
+function isMentionStart(value: string, index: number): boolean {
+  return index === 0 || /\s/.test(value[index - 1])
+}
+
+function getTextareaSelectionRange(
+  textarea: HTMLTextAreaElement | null,
+  fallbackPosition: number
+): { start: number; end: number } {
+  const start = textarea?.selectionStart ?? fallbackPosition
+
+  return {
+    start,
+    end: textarea?.selectionEnd ?? start
+  }
+}
+
+function insertMention(
+  value: string,
+  agentName: string,
+  selectionStart: number,
+  selectionEnd: number
+): { value: string; start: number; end: number; caret: number } {
+  const mention = `@${agentName}`
+  const beforeSelection = value.slice(0, selectionStart)
+  const afterSelection = value.slice(selectionEnd)
+  const prefix = beforeSelection.length > 0 && !beforeSelection.endsWith(' ') ? ' ' : ''
+  const suffix = afterSelection.startsWith(' ') ? '' : ' '
+  const insertedMention = `${prefix}${mention}${suffix}`
+  const start = beforeSelection.length + prefix.length
+  const end = start + mention.length
+  const caret = end + suffix.length
+
+  return {
+    value: `${beforeSelection}${insertedMention}${afterSelection}`,
+    start,
+    end,
+    caret
+  }
+}
+
+function getMentionText(mention: DraftMention): string {
+  return `@${mention.label}`
+}
+
+function hasIntactMention(value: string, mention: DraftMention): boolean {
+  return value.slice(mention.start, mention.end) === getMentionText(mention)
+}
+
+function toggleAgentId(agentIds: string[], agentId: string): string[] {
+  return agentIds.includes(agentId)
+    ? agentIds.filter((item) => item !== agentId)
+    : [...agentIds, agentId]
 }

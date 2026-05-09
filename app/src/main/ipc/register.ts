@@ -12,6 +12,7 @@ import {
   AppInfoSchema,
   ConversationCancelTurnInputSchema,
   ConversationCreateDirectInputSchema,
+  ConversationCreateManualInputSchema,
   ConversationGetInputSchema,
   ConversationSendTurnInputSchema,
   ProviderActionInputSchema,
@@ -160,6 +161,10 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.conversationsCreateDirect, (_event, payload) => {
     const input = ConversationCreateDirectInputSchema.parse(payload)
     return database.createDirectConversation(input)
+  })
+  ipcMain.handle(ipcChannels.conversationsCreateManual, (_event, payload) => {
+    const input = ConversationCreateManualInputSchema.parse(payload)
+    return database.createManualConversation(input)
   })
   ipcMain.handle(ipcChannels.conversationsSendTurn, async (_event, payload) => {
     const input = ConversationSendTurnInputSchema.parse(payload)

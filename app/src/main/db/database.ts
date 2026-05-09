@@ -14,6 +14,7 @@ import {
   AgentUpdateSettingsInputSchema,
   ConversationCancelTurnInputSchema,
   ConversationCreateDirectInputSchema,
+  ConversationCreateManualInputSchema,
   ConversationDetailSchema,
   ConversationGetInputSchema,
   ConversationListItemSchema,
@@ -28,6 +29,7 @@ import {
   type AgentDeleteResult,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
+  type ConversationCreateManualInput,
   type ConversationDetail,
   type ConversationListItem,
   type ConversationSendTurnInput,
@@ -411,8 +413,10 @@ export class OrdinusDatabase {
           .from(conversationParticipants)
           .where(eq(conversationParticipants.conversationId, conversation.id))
           .all()
-        const firstParticipant = participants[0] ?? null
-        const agentName = firstParticipant ? this.getAgent(firstParticipant.agentId).name : ''
+        const participantAgents = participants.map((participant) =>
+          this.getAgent(participant.agentId)
+        )
+        const agentName = formatConversationAgentNames(participantAgents.map((agent) => agent.name))
         const latestTurn = this.db
           .select()
           .from(conversationTurns)
@@ -509,21 +513,69 @@ export class OrdinusDatabase {
     return this.getConversation({ conversationId })
   }
 
+  createManualConversation(input: ConversationCreateManualInput): ConversationDetail {
+    const parsed = ConversationCreateManualInputSchema.parse(input)
+    const agentIds = uniqueValues(parsed.agentIds)
+
+    if (agentIds.length < 2) {
+      throw new Error('Choose at least two agents for a multi-agent conversation.')
+    }
+
+    const selectedAgents = agentIds.map((agentId) => this.requireActiveAgent(agentId))
+    const now = new Date().toISOString()
+    const conversationId = createConversationId()
+    const title =
+      parsed.title?.trim() ||
+      formatConversationAgentNames(selectedAgents.map((agent) => agent.name))
+
+    this.db.transaction((tx) => {
+      tx.insert(conversations)
+        .values({
+          id: conversationId,
+          title,
+          mode: 'manual',
+          status: 'active',
+          summary: '',
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+
+      for (const agent of selectedAgents) {
+        tx.insert(conversationParticipants)
+          .values({
+            id: createConversationParticipantId(),
+            conversationId,
+            agentId: agent.id,
+            providerId: agent.providerId,
+            model: agent.model,
+            providerSessionRef: null,
+            status: 'ready',
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+      }
+    })
+
+    return this.getConversation({ conversationId })
+  }
+
   prepareConversationTurn(input: ConversationSendTurnInput): PreparedConversationTurn {
     const parsed = ConversationSendTurnInputSchema.parse(input)
     const detail = this.getConversation({ conversationId: parsed.conversationId })
-
-    if (detail.mode !== 'direct') {
-      throw new Error('Only direct conversations can send turns right now.')
-    }
 
     if (detail.turns.some((turn) => turn.status === 'running')) {
       throw new Error('Wait for the current turn to finish before sending another message.')
     }
 
-    const participant = detail.participants[0]
+    const participant =
+      detail.mode === 'direct'
+        ? detail.participants[0]
+        : detail.participants.find((item) => item.id === parsed.targetParticipantId)
+
     if (!participant) {
-      throw new Error('Conversation has no participant.')
+      throw new Error('Mention an agent in this conversation before sending.')
     }
 
     const agent = this.requireActiveAgent(participant.agentId)
@@ -817,6 +869,21 @@ function createConversationTurnId(): string {
 
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
+}
+
+function formatConversationAgentNames(agentNames: string[]): string {
+  const names = agentNames.filter(Boolean)
+  const [firstName] = names
+
+  if (!firstName) {
+    return ''
+  }
+
+  if (names.length === 1) {
+    return firstName
+  }
+
+  return `${firstName} + ${names.length - 1}`
 }
 
 function createBoundedTurnContent(value: string): {

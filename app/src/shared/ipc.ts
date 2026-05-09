@@ -17,6 +17,7 @@ export const ipcChannels = {
   conversationsList: 'conversations:list',
   conversationsGet: 'conversations:get',
   conversationsCreateDirect: 'conversations:create-direct',
+  conversationsCreateManual: 'conversations:create-manual',
   conversationsSendTurn: 'conversations:send-turn',
   conversationsCancelTurn: 'conversations:cancel-turn',
   runtimeGetProviders: 'runtime:get-providers',

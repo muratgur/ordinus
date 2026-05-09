@@ -14,6 +14,7 @@ import type {
   AppInfo,
   ConversationCancelTurnInput,
   ConversationCreateDirectInput,
+  ConversationCreateManualInput,
   ConversationDetail,
   ConversationGetInput,
   ConversationListItem,
@@ -79,6 +80,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.conversationsGet, input),
     createDirect: async (input: ConversationCreateDirectInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsCreateDirect, input),
+    createManual: async (input: ConversationCreateManualInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsCreateManual, input),
     sendTurn: async (input: ConversationSendTurnInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsSendTurn, input),
     cancelTurn: async (input: ConversationCancelTurnInput): Promise<ConversationDetail> =>
