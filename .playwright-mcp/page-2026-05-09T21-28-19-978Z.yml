@@ -1,0 +1,38 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - link "Ordinus" [ref=e7] [cursor=pointer]:
+        - /url: "#/home"
+      - generic [ref=e8]:
+        - link "Settings" [ref=e9] [cursor=pointer]:
+          - /url: "#/settings"
+          - img [ref=e10]
+          - generic [ref=e13]: Settings
+        - button "Switch to dark mode" [ref=e14] [cursor=pointer]:
+          - img [ref=e15]
+          - generic [ref=e17]: Switch to dark mode
+        - button "Refresh status" [ref=e18] [cursor=pointer]:
+          - img [ref=e19]
+          - generic [ref=e24]: Refresh status
+    - navigation "Primary" [ref=e25]:
+      - link "Home" [ref=e26] [cursor=pointer]:
+        - /url: "#/home"
+        - img [ref=e27]
+        - text: Home
+      - link "Agents" [ref=e30] [cursor=pointer]:
+        - /url: "#/agents"
+        - img [ref=e31]
+        - text: Agents
+      - link "Planner" [ref=e34] [cursor=pointer]:
+        - /url: "#/planner"
+        - img [ref=e35]
+        - text: Planner
+      - link "Conversations" [ref=e39] [cursor=pointer]:
+        - /url: "#/conversations"
+        - img [ref=e40]
+        - text: Conversations
+      - link "Schedules" [ref=e42] [cursor=pointer]:
+        - /url: "#/schedules"
+        - img [ref=e43]
+        - text: Schedules
+  - heading "Hello Ordinus" [level=2] [ref=e49]

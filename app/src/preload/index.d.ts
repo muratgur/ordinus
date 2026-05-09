@@ -13,6 +13,7 @@ import type {
   AppInfo,
   ConversationCancelTurnInput,
   ConversationCreateDirectInput,
+  ConversationCreateManualInput,
   ConversationDetail,
   ConversationGetInput,
   ConversationListItem,
@@ -62,6 +63,7 @@ export type OrdinusApi = {
     list: () => Promise<ConversationListItem[]>
     get: (input: ConversationGetInput) => Promise<ConversationDetail>
     createDirect: (input: ConversationCreateDirectInput) => Promise<ConversationDetail>
+    createManual: (input: ConversationCreateManualInput) => Promise<ConversationDetail>
     sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>
     cancelTurn: (input: ConversationCancelTurnInput) => Promise<ConversationDetail>
   }

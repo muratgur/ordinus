@@ -166,7 +166,7 @@ export const AgentSkillCreateInputSchema = z.object({
   description: z.string().trim().max(500).optional()
 })
 
-export const ConversationModeSchema = z.enum(['direct'])
+export const ConversationModeSchema = z.enum(['direct', 'manual'])
 export const ConversationStatusSchema = z.enum(['active', 'running', 'failed', 'cancelled'])
 export const ConversationParticipantStatusSchema = z.enum([
   'ready',
@@ -237,8 +237,14 @@ export const ConversationCreateDirectInputSchema = z.object({
   title: z.string().trim().min(1).max(120).optional()
 })
 
+export const ConversationCreateManualInputSchema = z.object({
+  agentIds: z.array(z.string().min(1)).min(2).max(8),
+  title: z.string().trim().min(1).max(120).optional()
+})
+
 export const ConversationSendTurnInputSchema = z.object({
   conversationId: z.string().min(1),
+  targetParticipantId: z.string().min(1).optional(),
   message: z.string().trim().min(1, 'Message is required.').max(64_000)
 })
 
@@ -286,5 +292,6 @@ export type ConversationListItem = z.infer<typeof ConversationListItemSchema>
 export type ConversationDetail = z.infer<typeof ConversationDetailSchema>
 export type ConversationGetInput = z.infer<typeof ConversationGetInputSchema>
 export type ConversationCreateDirectInput = z.infer<typeof ConversationCreateDirectInputSchema>
+export type ConversationCreateManualInput = z.infer<typeof ConversationCreateManualInputSchema>
 export type ConversationSendTurnInput = z.infer<typeof ConversationSendTurnInputSchema>
 export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>
