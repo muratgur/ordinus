@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
   Bot,
-  CheckCircle2,
   Clock3,
   Loader2,
   MessageSquareText,
@@ -54,11 +53,16 @@ export function ConversationsScreen(): React.JSX.Element {
   const [sending, setSending] = useState(false)
   const [cancellingTurnId, setCancellingTurnId] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const runningTurn = detail?.turns.find((turn) => turn.status === 'running') ?? null
   const participant = detail?.participants[0] ?? null
   const composerBlocked =
     !detail || Boolean(runningTurn) || sending || !participant || !message.trim()
+  const latestTurn = detail?.turns.at(-1)
+  const latestTurnSignature = latestTurn
+    ? `${detail?.id}:${latestTurn.id}:${latestTurn.status}:${latestTurn.content}`
+    : detail?.id
 
   async function loadConversations(nextSelectedId = selectedConversationId): Promise<void> {
     const nextConversations = await window.ordinus.conversations.list()
@@ -132,6 +136,18 @@ export function ConversationsScreen(): React.JSX.Element {
 
     return () => window.clearInterval(timer)
   }, [runningTurn, selectedConversationId])
+
+  useEffect(() => {
+    if (!detail || detail.turns.length === 0) {
+      return
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: 'end' })
+    })
+
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [detail, latestTurnSignature])
 
   async function selectConversation(conversationId: string): Promise<void> {
     setSelectedConversationId(conversationId)
@@ -217,6 +233,7 @@ export function ConversationsScreen(): React.JSX.Element {
                       detail="Send the first request to start this agent session."
                     />
                   )}
+                  <div ref={messagesEndRef} aria-hidden="true" />
                 </CardContent>
               </ScrollArea>
               <Composer
@@ -386,7 +403,7 @@ function TurnCard({ turn }: { turn: ConversationTurn }): React.JSX.Element {
           <Icon className="size-4 shrink-0 text-primary" />
           <p className="truncate text-sm font-semibold">{isUser ? 'You' : 'Agent'}</p>
         </div>
-        <TurnStatus status={turn.status} />
+        {turn.status !== 'completed' ? <TurnStatus status={turn.status} /> : null}
       </div>
       {turn.status === 'running' ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -748,20 +765,12 @@ function StatusPill({ status }: { status: ConversationStatus }): React.JSX.Eleme
 }
 
 function TurnStatus({ status }: { status: ConversationTurnStatus }): React.JSX.Element {
-  const Icon =
-    status === 'completed'
-      ? CheckCircle2
-      : status === 'running'
-        ? Clock3
-        : status === 'cancelled'
-          ? XCircle
-          : AlertTriangle
+  const Icon = status === 'running' ? Clock3 : status === 'cancelled' ? XCircle : AlertTriangle
 
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs font-medium capitalize',
-        status === 'completed' && 'text-status-completed',
         status === 'running' && 'text-status-running',
         status === 'failed' && 'text-status-failed',
         status === 'cancelled' && 'text-muted-foreground'
