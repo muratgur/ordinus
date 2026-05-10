@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute, join, relative } from 'node:path'
 import {
   AgentCreateInputSchema,
   AgentDeleteInputSchema,
@@ -147,6 +147,7 @@ export class OrdinusDatabase {
         conversationParticipants,
         conversations,
         conversationTurns,
+        workRequests,
         workRunDependencies,
         workRunEvents,
         workRuns,
@@ -501,6 +502,8 @@ export class OrdinusDatabase {
           expectedOutput: parsed.expectedOutput,
           resultSummary: '',
           resultArtifactRef: '',
+          artifactRefs: JSON.stringify([]),
+          changedFiles: JSON.stringify([]),
           error: '',
           createdAt: now,
           updatedAt: now,
@@ -535,21 +538,33 @@ export class OrdinusDatabase {
   createWorkRequest(input: WorkboardStartRequestInput): WorkRequest {
     const parsed = WorkboardStartRequestInputSchema.parse(input)
     const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before creating a Work Request.')
+    }
+
     const agentsById = new Map(
       this.listAgents()
-        .filter((agent) => agent.enabled)
+        .filter((agent) => agent.enabled && agent.workspaceRoot === workspace.workspaceRoot)
         .map((agent) => [agent.id, agent])
     )
     plan.items.forEach((item) => {
       if (!agentsById.has(item.assignedAgentId)) {
-        throw new Error('One or more Work Items are assigned to an unavailable agent.')
+        throw new Error(
+          'One or more Work Items are assigned to an unavailable agent in this workspace.'
+        )
       }
     })
     validateWorkboardDraftPlanDependencies(plan.items)
 
     const now = new Date().toISOString()
     const requestId = createWorkRequestId()
+    const artifactRoot = createWorkRequestArtifactRoot(
+      plan.title || parsed.originalRequest,
+      requestId
+    )
     const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
+    mkdirSync(join(workspace.workspaceRoot, artifactRoot), { recursive: true })
 
     this.db.transaction((tx) => {
       tx.insert(workRequests)
@@ -558,6 +573,8 @@ export class OrdinusDatabase {
           title: plan.title,
           originalRequest: parsed.originalRequest,
           summary: plan.summary,
+          workspaceRoot: workspace.workspaceRoot,
+          artifactRoot,
           status: 'active',
           createdAt: now,
           updatedAt: now,
@@ -593,11 +610,13 @@ export class OrdinusDatabase {
             providerId: agent.providerId,
             model: agent.model,
             providerSessionRef: null,
-            workspaceRoot: agent.workspaceRoot,
+            workspaceRoot: workspace.workspaceRoot,
             sandbox: agent.sandbox,
             expectedOutput: item.expectedOutput,
             resultSummary: '',
             resultArtifactRef: '',
+            artifactRefs: JSON.stringify([]),
+            changedFiles: JSON.stringify([]),
             error: '',
             createdAt: now,
             updatedAt: now,
@@ -694,11 +713,12 @@ export class OrdinusDatabase {
       .all()
       .map((run) => {
         const parsedRun = parseWorkRun(run)
+        const displayRun = withExistingWorkspaceFileRefs(parsedRun)
         const requestId = parsedRun.source?.id ?? ''
         const request = requestById.get(requestId)
 
         return {
-          ...parsedRun,
+          ...displayRun,
           agentName: parsedRun.assignedAgentName.trim() || 'Former agent',
           agentRole: parsedRun.assignedAgentRole.trim() || 'Agent',
           requestId,
@@ -833,6 +853,8 @@ export class OrdinusDatabase {
     }
 
     const now = new Date().toISOString()
+    const artifactRefs = uniqueValues(parsed.artifactRefs)
+    const changedFiles = uniqueValues(parsed.changedFiles)
     this.db.transaction((tx) => {
       const appendEvent = (
         runId: string,
@@ -863,6 +885,8 @@ export class OrdinusDatabase {
           status: 'completed',
           resultSummary: parsed.resultSummary,
           resultArtifactRef: parsed.artifactRef ?? run.resultArtifactRef,
+          artifactRefs: JSON.stringify(artifactRefs),
+          changedFiles: JSON.stringify(changedFiles),
           providerSessionRef: parsed.providerSessionRef ?? run.providerSessionRef,
           error: '',
           completedAt: now,
@@ -872,6 +896,8 @@ export class OrdinusDatabase {
         .run()
       appendEvent(run.id, 'completed', {
         resultSummary: parsed.resultSummary,
+        artifactRefs,
+        changedFiles,
         artifactRef: parsed.artifactRef ?? run.resultArtifactRef
       })
 
@@ -1128,8 +1154,11 @@ export class OrdinusDatabase {
         return WorkRunInputSummarySchema.parse({
           runId: parsedRun.id,
           title: parsedRun.title,
+          agentName: parsedRun.assignedAgentName.trim() || 'Former agent',
+          agentRole: parsedRun.assignedAgentRole.trim() || 'Agent',
           resultSummary: parsedRun.resultSummary,
-          artifactRef: parsedRun.resultArtifactRef
+          artifactRefs: parsedRun.artifactRefs,
+          changedFiles: parsedRun.changedFiles
         })
       })
   }
@@ -2243,6 +2272,31 @@ function createWorkRunInputRequestId(): string {
   return `wir-${randomUUID()}`
 }
 
+function createWorkRequestArtifactRoot(title: string, requestId: string): string {
+  const slug = slugifyPathSegment(title) || 'work-request'
+  return `workboard/${slug}-${shortStableId(requestId)}`
+}
+
+function slugifyPathSegment(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/g, '')
+}
+
+function shortStableId(value: string): string {
+  return (
+    value
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .slice(-6)
+      .toLowerCase() || '000000'
+  )
+}
+
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
 }
@@ -2254,6 +2308,8 @@ function parseWorkRun(value: unknown): WorkRun {
 
   return WorkRunSchema.parse({
     ...value,
+    artifactRefs: parseJsonStringArray(value.artifactRefs),
+    changedFiles: parseJsonStringArray(value.changedFiles),
     source:
       value.sourceType && value.sourceId
         ? {
@@ -2269,13 +2325,17 @@ function isDatabaseWorkRun(value: unknown): value is {
   sourceType: string | null
   sourceId: string | null
   sourceItemId: string | null
+  artifactRefs: string
+  changedFiles: string
 } {
   return (
     typeof value === 'object' &&
     value !== null &&
     'sourceType' in value &&
     'sourceId' in value &&
-    'sourceItemId' in value
+    'sourceItemId' in value &&
+    'artifactRefs' in value &&
+    'changedFiles' in value
   )
 }
 
@@ -2329,6 +2389,36 @@ function getSatisfiedRequiredRunIds(requiredRuns: WorkRun[]): Set<string> {
 
 function hasCompletedWorkRunOutput(run: WorkRun): boolean {
   return run.status === 'completed' && Boolean(run.resultSummary.trim())
+}
+
+function withExistingWorkspaceFileRefs(run: WorkRun): WorkRun {
+  return {
+    ...run,
+    artifactRefs: filterExistingWorkspacePaths(run.workspaceRoot, run.artifactRefs),
+    changedFiles: filterExistingWorkspacePaths(run.workspaceRoot, run.changedFiles)
+  }
+}
+
+function filterExistingWorkspacePaths(workspaceRoot: string, relativePaths: string[]): string[] {
+  return relativePaths.filter((path) => workspaceRelativePathExists(workspaceRoot, path))
+}
+
+function workspaceRelativePathExists(workspaceRoot: string, relativePath: string): boolean {
+  try {
+    const absolutePath = join(workspaceRoot, relativePath)
+    const relativeToWorkspace = relativePathFromWorkspace(workspaceRoot, absolutePath)
+    return Boolean(relativeToWorkspace) && existsSync(absolutePath)
+  } catch {
+    return false
+  }
+}
+
+function relativePathFromWorkspace(workspaceRoot: string, absolutePath: string): string {
+  const relativePath = relative(workspaceRoot, absolutePath)
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    return ''
+  }
+  return relativePath
 }
 
 function getInitialWorkRunStatus(
@@ -2408,6 +2498,10 @@ function parseJsonArray(value: string): unknown[] {
     throw new Error('Expected a JSON array.')
   }
   return parsed
+}
+
+function parseJsonStringArray(value: string): string[] {
+  return parseJsonArray(value).filter((item): item is string => typeof item === 'string')
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {

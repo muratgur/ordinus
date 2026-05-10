@@ -29,6 +29,7 @@ export const ipcChannels = {
   workboardDirectStart: 'workboard:direct-start',
   workboardCancelRun: 'workboard:cancel-run',
   workboardAnswerInputRequest: 'workboard:answer-input-request',
+  workboardRevealPath: 'workboard:reveal-path',
   runtimeGetProviders: 'runtime:get-providers',
   runtimeConnectProvider: 'runtime:connect-provider',
   runtimeRefreshProvider: 'runtime:refresh-provider'

@@ -163,7 +163,7 @@ export function createRuntimeService(): RuntimeService {
           agentRole: input.agentRole,
           instructions: input.instructions,
           providerSessionRef: input.providerSessionRef,
-          message: input.resumeMessage ?? buildWorkRunMessage(input),
+          message: buildWorkRunMessage(input),
           logRef: input.logRef,
           eventLogPath: input.eventLogPath,
           lastMessagePath: input.lastMessagePath
@@ -199,25 +199,24 @@ export function createRuntimeService(): RuntimeService {
 }
 
 function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
-  const upstream =
-    input.requiredInputs.length > 0
-      ? [
-          'Required upstream outputs:',
-          ...input.requiredInputs.map((item, index) =>
-            [
-              `${index + 1}. ${item.title}`,
-              `Work Run: ${item.runId}`,
-              `Output: ${item.resultSummary}`,
-              item.artifactRef ? `Artifact: ${item.artifactRef}` : ''
-            ]
-              .filter(Boolean)
-              .join('\n')
-          )
-        ].join('\n\n')
-      : 'Required upstream outputs: none'
-
   return [
     `Work Item: ${input.title}`,
+    '',
+    'Workspace:',
+    input.workspaceRoot,
+    '',
+    'Work Request artifact root:',
+    input.workRequestArtifactRoot,
+    '',
+    'Suggested agent artifact folder:',
+    input.agentArtifactDir,
+    '',
+    'Artifact rules:',
+    '- Save shared or final deliverables in the Work Request artifact root.',
+    '- Save role-specific or intermediate files in your suggested agent artifact folder.',
+    '- If this Work Item naturally changes existing project files, write them in their normal project locations.',
+    '- Report every user-facing artifact in artifactRefs and every created or modified file in changedFiles using workspace-relative paths.',
+    '- Do not report a file path unless you actually created or modified that file in the workspace.',
     '',
     'Instruction:',
     input.instruction,
@@ -225,8 +224,51 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
     'Expected output:',
     input.expectedOutput || 'Provide a concise result summary for this Work Item.',
     '',
-    upstream,
+    formatRequiredInputs(input.requiredInputs),
+    '',
+    'Read upstream files from the workspace when you need full detail. Do not assume the summary contains everything.',
+    ...formatResumeMessage(input.resumeMessage),
     '',
     'Complete only this Work Item. If you need the user to decide something before continuing, return a structured input request.'
   ].join('\n')
+}
+
+function formatRequiredInputs(inputs: RuntimeWorkRunInput['requiredInputs']): string {
+  if (inputs.length === 0) {
+    return 'Upstream work available: none'
+  }
+
+  return [
+    'Upstream work available:',
+    ...inputs.map((item, index) =>
+      [
+        `${index + 1}. ${item.title}`,
+        `Work Run: ${item.runId}`,
+        `Agent: ${item.agentName} (${item.agentRole})`,
+        `Summary: ${item.resultSummary}`,
+        formatFileList('Artifacts', item.artifactRefs),
+        formatFileList('Changed files', item.changedFiles)
+      ].join('\n')
+    )
+  ].join('\n\n')
+}
+
+function formatFileList(label: string, paths: string[]): string {
+  return paths.length > 0
+    ? [label + ':', ...paths.map((path) => `- ${path}`)].join('\n')
+    : `${label}: none`
+}
+
+function formatResumeMessage(message: string | undefined): string[] {
+  if (!message) {
+    return []
+  }
+
+  return [
+    '',
+    'User input received for this Work Item:',
+    message,
+    '',
+    'Continue this Work Item using the answers above while following the artifact rules in this prompt.'
+  ]
 }

@@ -3,6 +3,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Columns3,
+  FolderOpen,
   GitBranch,
   Loader2,
   PauseCircle,
@@ -178,8 +179,13 @@ export function WorkboardScreen(): React.JSX.Element {
       originalRequest: request,
       plan
     })
+    const startedRequest = nextData.requests.find(
+      (item) => item.originalRequest === request && item.title === plan.title
+    )
 
     setData(nextData)
+    setRequestFilter(startedRequest?.id ?? 'all')
+    setSelectedRunId('')
     setDraftPlan(null)
     setSelectedDraftId('')
     setRequest('')
@@ -625,9 +631,10 @@ function RunDetailDrawer({
   const [answers, setAnswers] = useState<Record<string, InteractionAnswer>>({})
 
   if (!run) return null
+  const activeRun = run
 
   const waitsFor = dependencies
-    .filter((dependency) => dependency.runId === run.id)
+    .filter((dependency) => dependency.runId === activeRun.id)
     .map((dependency) => runs.find((candidate) => candidate.id === dependency.dependsOnRunId))
     .filter((item): item is WorkboardRun => Boolean(item))
 
@@ -642,6 +649,17 @@ function RunDetailDrawer({
       onAnswered(nextData)
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Input request could not be answered.')
+    }
+  }
+
+  async function revealPath(relativePath: string): Promise<void> {
+    try {
+      await window.ordinus.workboard.revealPath({
+        runId: activeRun.id,
+        relativePath
+      })
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'File could not be shown.')
     }
   }
 
@@ -667,6 +685,16 @@ function RunDetailDrawer({
             {waitsFor.length > 0 ? waitsFor.map((item) => item.title).join(', ') : 'None'}
           </DetailBlock>
           {run.resultSummary ? <DetailBlock label="Output">{run.resultSummary}</DetailBlock> : null}
+          {run.artifactRefs.length > 0 ? (
+            <DetailBlock label="Artifacts">
+              <PathList paths={run.artifactRefs} onReveal={(path) => void revealPath(path)} />
+            </DetailBlock>
+          ) : null}
+          {run.changedFiles.length > 0 ? (
+            <DetailBlock label="Changed files">
+              <PathList paths={run.changedFiles} onReveal={(path) => void revealPath(path)} />
+            </DetailBlock>
+          ) : null}
           {run.error ? <DetailBlock label="Error">{run.error}</DetailBlock> : null}
 
           {inputRequest ? (
@@ -723,6 +751,38 @@ function DetailBlock({
     <div>
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
       <div className="mt-1 whitespace-pre-wrap text-sm leading-6">{children}</div>
+    </div>
+  )
+}
+
+function PathList({
+  paths,
+  onReveal
+}: {
+  paths: string[]
+  onReveal: (path: string) => void
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-2">
+      {paths.map((path) => (
+        <div
+          key={path}
+          className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5"
+        >
+          <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground">
+            {path}
+          </code>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={() => onReveal(path)}
+          >
+            <FolderOpen />
+            <span className="sr-only">Show in Finder</span>
+          </Button>
+        </div>
+      ))}
     </div>
   )
 }
