@@ -80,6 +80,8 @@ export type RuntimeWorkRunInput = {
   instruction: string
   expectedOutput: string
   requiredInputs: WorkRunInputSummary[]
+  workRequestArtifactRoot: string
+  agentArtifactDir: string
   resumeMessage?: string
   logRef: string
   eventLogPath: string

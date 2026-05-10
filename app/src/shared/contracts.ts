@@ -269,10 +269,24 @@ export const InteractionAnswerSchema = z.discriminatedUnion('type', [
   })
 ])
 
+export const WorkspaceRelativePathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .refine((value) => !value.includes('\0'), 'Path cannot contain null bytes.')
+  .refine((value) => !/^(?:[a-zA-Z]:|[\\/])/.test(value), 'Path must be workspace-relative.')
+  .refine(
+    (value) => !value.split(/[\\/]+/).some((segment) => segment === '..'),
+    'Path cannot contain parent directory segments.'
+  )
+
 export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('final_response'),
-    content: z.string().trim().min(1).max(64_000)
+    content: z.string().trim().min(1).max(64_000),
+    artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
+    changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([])
   }),
   z.object({
     outcome: z.literal('needs_input'),
@@ -432,6 +446,8 @@ export const WorkRequestSchema = z.object({
   title: z.string().min(1),
   originalRequest: z.string().min(1),
   summary: z.string(),
+  workspaceRoot: z.string(),
+  artifactRoot: z.string(),
   status: WorkRequestStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -461,6 +477,8 @@ export const WorkRunSchema = z.object({
   expectedOutput: z.string(),
   resultSummary: z.string(),
   resultArtifactRef: z.string(),
+  artifactRefs: z.array(WorkspaceRelativePathSchema),
+  changedFiles: z.array(WorkspaceRelativePathSchema),
   error: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -496,8 +514,11 @@ export const WorkRunEventSchema = z.object({
 export const WorkRunInputSummarySchema = z.object({
   runId: z.string().min(1),
   title: z.string().min(1),
+  agentName: z.string().min(1),
+  agentRole: z.string().min(1),
   resultSummary: z.string().min(1),
-  artifactRef: z.string()
+  artifactRefs: z.array(WorkspaceRelativePathSchema),
+  changedFiles: z.array(WorkspaceRelativePathSchema)
 })
 
 export const WorkRunInputRequestSchema = z.object({
@@ -532,6 +553,8 @@ export const WorkRunActionInputSchema = z.object({
 export const WorkRunCompleteInputSchema = WorkRunActionInputSchema.extend({
   resultSummary: z.string().trim().min(1, 'Result summary is required.').max(16_000),
   artifactRef: z.string().trim().max(500).optional(),
+  artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
+  changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([]),
   providerSessionRef: z.string().trim().min(1).optional()
 })
 
@@ -576,6 +599,10 @@ export const WorkboardDataSchema = z.object({
 export const WorkboardAnswerInputRequestInputSchema = z.object({
   requestId: z.string().min(1),
   answers: z.array(InteractionAnswerSchema).max(3)
+})
+
+export const WorkboardRevealPathInputSchema = WorkRunActionInputSchema.extend({
+  relativePath: WorkspaceRelativePathSchema
 })
 
 export type WorkboardDraftDependencyItem = {
@@ -728,5 +755,6 @@ export type WorkboardData = z.infer<typeof WorkboardDataSchema>
 export type WorkboardAnswerInputRequestInput = z.infer<
   typeof WorkboardAnswerInputRequestInputSchema
 >
+export type WorkboardRevealPathInput = z.infer<typeof WorkboardRevealPathInputSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

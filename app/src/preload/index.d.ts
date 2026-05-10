@@ -33,6 +33,7 @@ import type {
   WorkboardDirectStartInput,
   WorkboardDraftPlan,
   WorkboardGeneratePlanInput,
+  WorkboardRevealPathInput,
   WorkboardStartRequestInput,
   WorkRunActionInput,
   WorkspaceConfig,
@@ -87,6 +88,7 @@ export type OrdinusApi = {
     directStart: (input: WorkboardDirectStartInput) => Promise<WorkboardData>
     cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
     answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
+    revealPath: (input: WorkboardRevealPathInput) => Promise<void>
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>

@@ -7,6 +7,16 @@ export const agentTurnOutcomeJsonSchema = {
   properties: {
     outcome: { type: 'string', enum: ['final_response', 'needs_input'] },
     content: { type: ['string', 'null'], maxLength: 64000 },
+    artifactRefs: {
+      type: ['array', 'null'],
+      maxItems: 64,
+      items: { type: 'string', minLength: 1, maxLength: 500 }
+    },
+    changedFiles: {
+      type: ['array', 'null'],
+      maxItems: 128,
+      items: { type: 'string', minLength: 1, maxLength: 500 }
+    },
     title: { type: ['string', 'null'], maxLength: 160 },
     detail: { type: ['string', 'null'], maxLength: 1000 },
     questions: {
@@ -59,7 +69,7 @@ export const agentTurnOutcomeJsonSchema = {
       }
     }
   },
-  required: ['outcome', 'content', 'title', 'detail', 'questions']
+  required: ['outcome', 'content', 'artifactRefs', 'changedFiles', 'title', 'detail', 'questions']
 } as const
 
 export function parseAgentTurnOutcome(value: unknown): AgentTurnOutcome {
@@ -75,7 +85,9 @@ function normalizeAgentTurnOutcome(value: unknown): unknown {
   if (value.outcome === 'final_response') {
     return {
       outcome: 'final_response',
-      content: typeof value.content === 'string' ? value.content : ''
+      content: typeof value.content === 'string' ? value.content : '',
+      artifactRefs: normalizeStringArray(value.artifactRefs),
+      changedFiles: normalizeStringArray(value.changedFiles)
     }
   }
 
@@ -143,6 +155,12 @@ function normalizeChoiceOption(value: unknown): unknown {
   }
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
 function optionalStringProperty(key: string, value: unknown): Record<string, string> {
   return typeof value === 'string' && value.trim() ? { [key]: value } : {}
 }
@@ -159,7 +177,9 @@ Your response must match exactly one of these shapes:
 For a normal answer:
 {
   "outcome": "final_response",
-  "content": "Your complete response to the user."
+  "content": "Concise summary of the completed work.",
+  "artifactRefs": ["workspace-relative/path/to/user-facing-output.md"],
+  "changedFiles": ["workspace-relative/path/to/created-or-modified-file.md"]
 }
 
 If you cannot continue without user input:
@@ -191,5 +211,12 @@ Input request rules:
 - Do not create placeholder choice options such as "I will write it myself"; use a text question instead.
 - Set recommendedOptionId only for a substantive recommended option, not for a custom-entry placeholder.
 - Set allowCustom to true unless custom answers would be unsafe.
-- Ask only for information that is necessary to continue.`
+- Ask only for information that is necessary to continue.
+
+Final response rules:
+- Keep content as a concise result summary, not a full copied report when files were created.
+- Use artifactRefs for user-facing deliverables such as reports, PDFs, spreadsheets, images, or final documents.
+- Use changedFiles for every file you created or modified, including artifacts.
+- All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..".
+- Do not include a file path unless you actually created or modified that file in the workspace.`
 }
