@@ -9,11 +9,15 @@ import type {
   ProviderConnectInput,
   ProviderConnectResult,
   ProviderId,
-  ProviderStatus
+  ProviderStatus,
+  WorkboardDraftPlan,
+  WorkRunInputSummary
 } from '@shared/contracts'
 import type { RuntimeOrchestrationPlanInput } from '../prompts/orchestration'
+import type { RuntimeWorkboardPlanInput } from '../prompts/work-plan'
 
 export type { RuntimeOrchestrationPlanInput } from '../prompts/orchestration'
+export type { RuntimeWorkboardPlanInput } from '../prompts/work-plan'
 
 export type ProviderLoginProcess = {
   child: ChildProcess
@@ -61,6 +65,29 @@ export type RuntimeConversationTurnResult = {
   logRef: string
 }
 
+export type RuntimeWorkRunInput = {
+  runId: string
+  workRequestId: string
+  providerId: ProviderId
+  model: string
+  sandbox: AgentSandbox
+  workspaceRoot: string
+  agentName: string
+  agentRole: string
+  instructions: string
+  providerSessionRef: string | null
+  title: string
+  instruction: string
+  expectedOutput: string
+  requiredInputs: WorkRunInputSummary[]
+  resumeMessage?: string
+  logRef: string
+  eventLogPath: string
+  lastMessagePath: string
+}
+
+export type RuntimeWorkRunResult = RuntimeConversationTurnResult
+
 export type ProviderAdapter = {
   id: ProviderId
   label: string
@@ -81,6 +108,10 @@ export type ProviderAdapter = {
     input: RuntimeOrchestrationPlanInput,
     context: ProviderRuntimeContext
   ): Promise<OrchestrationPlan>
+  generateWorkboardPlan?(
+    input: RuntimeWorkboardPlanInput,
+    context: ProviderRuntimeContext
+  ): Promise<WorkboardDraftPlan>
   sendConversationTurn?(
     input: RuntimeConversationTurnInput,
     context: ProviderRuntimeContext

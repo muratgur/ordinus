@@ -9,7 +9,8 @@ import {
   type AgentSandbox,
   type OrchestrationPlan,
   type ProviderConnectResult,
-  type ProviderStatus
+  type ProviderStatus,
+  type WorkboardDraftPlan
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
 import { findCliExecutable, withCliBaseArgs, type CliExecutable } from '../../cli/executable'
@@ -23,6 +24,7 @@ import {
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
 import { buildOrchestrationPrompt, parseOrchestrationPlan } from '../../prompts/orchestration'
+import { buildWorkboardPlanPrompt, parseWorkboardDraftPlan } from '../../prompts/work-plan'
 import {
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
@@ -45,7 +47,8 @@ import type {
   RuntimeAgentDraftInput,
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
-  RuntimeOrchestrationPlanInput
+  RuntimeOrchestrationPlanInput,
+  RuntimeWorkboardPlanInput
 } from '../types'
 
 const geminiAuthEnvKeys = [
@@ -79,6 +82,9 @@ export const geminiProviderAdapter: ProviderAdapter = {
   },
   generateOrchestrationPlan(input) {
     return generateGeminiOrchestrationPlan(input)
+  },
+  generateWorkboardPlan(input) {
+    return generateGeminiWorkboardPlan(input)
   },
   sendConversationTurn(input, context) {
     return sendGeminiConversationTurn(input, context)
@@ -285,6 +291,49 @@ async function generateGeminiOrchestrationPlan(
   }
 
   return parseOrchestrationPlan(readGeminiAgentDraftOutput(result.stdout))
+}
+
+async function generateGeminiWorkboardPlan(
+  input: RuntimeWorkboardPlanInput
+): Promise<WorkboardDraftPlan> {
+  const executable = await findGeminiExecutable()
+  if (!executable) {
+    throw new Error('Gemini CLI was not found.')
+  }
+
+  const status = await getGeminiStatus(null)
+  if (!status.connected) {
+    throw new Error('Gemini needs login before Ordinus can prepare Work Requests with it.')
+  }
+
+  const args = [
+    '--skip-trust',
+    '--approval-mode',
+    'plan',
+    '--output-format',
+    'json',
+    '--prompt',
+    buildWorkboardPlanPrompt(input)
+  ]
+
+  if (input.model !== 'default') {
+    args.splice(0, 0, '--model', input.model)
+  }
+
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
+    cwd: input.workspaceRoot,
+    env: getGeminiEnvironment(),
+    shell: executable.shell,
+    timeoutMs: 90_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(
+      firstLine(result.stderr || result.stdout) || 'Gemini could not prepare this Work Request.'
+    )
+  }
+
+  return parseWorkboardDraftPlan(readGeminiAgentDraftOutput(result.stdout))
 }
 
 async function getGeminiStatus(loginProcess: ProviderLoginProcess | null): Promise<ProviderStatus> {

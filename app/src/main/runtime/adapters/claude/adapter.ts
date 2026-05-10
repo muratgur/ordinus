@@ -9,7 +9,8 @@ import {
   type OrchestrationPlan,
   type ProviderConnectInput,
   type ProviderConnectResult,
-  type ProviderStatus
+  type ProviderStatus,
+  type WorkboardDraftPlan
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
 import { findCliExecutable, type CliExecutable } from '../../cli/executable'
@@ -29,6 +30,11 @@ import {
   parseOrchestrationPlan
 } from '../../prompts/orchestration'
 import {
+  buildWorkboardPlanPrompt,
+  parseWorkboardDraftPlan,
+  workboardDraftPlanJsonSchema
+} from '../../prompts/work-plan'
+import {
   agentTurnOutcomeJsonSchema,
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
@@ -47,7 +53,8 @@ import type {
   ProviderAdapter,
   ProviderLoginProcess,
   RuntimeAgentDraftInput,
-  RuntimeOrchestrationPlanInput
+  RuntimeOrchestrationPlanInput,
+  RuntimeWorkboardPlanInput
 } from '../types'
 import type {
   ProviderRuntimeContext,
@@ -78,6 +85,9 @@ export const claudeProviderAdapter: ProviderAdapter = {
   },
   generateOrchestrationPlan(input) {
     return generateClaudeOrchestrationPlan(input)
+  },
+  generateWorkboardPlan(input) {
+    return generateClaudeWorkboardPlan(input)
   },
   sendConversationTurn(input, context) {
     return sendClaudeConversationTurn(input, context)
@@ -295,6 +305,51 @@ async function generateClaudeOrchestrationPlan(
   }
 
   return parseOrchestrationPlan(readClaudeAgentDraftOutput(result.stdout))
+}
+
+async function generateClaudeWorkboardPlan(
+  input: RuntimeWorkboardPlanInput
+): Promise<WorkboardDraftPlan> {
+  const executable = await findClaudeExecutable()
+  if (!executable) {
+    throw new Error('Claude Code CLI was not found.')
+  }
+
+  const status = await getClaudeStatus(null)
+  if (!status.connected) {
+    throw new Error('Claude needs login before Ordinus can prepare Work Requests with it.')
+  }
+
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--json-schema',
+    JSON.stringify(workboardDraftPlanJsonSchema),
+    '--no-session-persistence',
+    '--permission-mode',
+    'dontAsk'
+  ]
+
+  if (input.model !== 'default') {
+    args.splice(1, 0, '--model', input.model)
+  }
+
+  const result = await runCapture(executable.command, args, {
+    cwd: input.workspaceRoot,
+    env: getClaudeEnvironment(),
+    shell: executable.shell,
+    stdin: buildWorkboardPlanPrompt(input),
+    timeoutMs: 90_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(
+      firstLine(result.stderr || result.stdout) || 'Claude could not prepare this Work Request.'
+    )
+  }
+
+  return parseWorkboardDraftPlan(readClaudeAgentDraftOutput(result.stdout))
 }
 
 async function getClaudeStatus(loginProcess: ProviderLoginProcess | null): Promise<ProviderStatus> {

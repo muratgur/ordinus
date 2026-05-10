@@ -15,7 +15,8 @@ import {
   type AgentDraft,
   type OrchestrationPlan,
   type ProviderConnectResult,
-  type ProviderStatus
+  type ProviderStatus,
+  type WorkboardDraftPlan
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
 import { findCliExecutable, type CliExecutable } from '../../cli/executable'
@@ -34,6 +35,11 @@ import {
   orchestrationPlanJsonSchema,
   parseOrchestrationPlan
 } from '../../prompts/orchestration'
+import {
+  buildWorkboardPlanPrompt,
+  parseWorkboardDraftPlan,
+  workboardDraftPlanJsonSchema
+} from '../../prompts/work-plan'
 import {
   agentTurnOutcomeJsonSchema,
   buildConversationOutcomeInstructions,
@@ -54,6 +60,7 @@ import type {
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
   RuntimeOrchestrationPlanInput,
+  RuntimeWorkboardPlanInput,
   ProviderRuntimeContext
 } from '../types'
 
@@ -80,6 +87,9 @@ export const codexProviderAdapter: ProviderAdapter = {
   generateOrchestrationPlan(input) {
     return generateCodexOrchestrationPlan(input)
   },
+  generateWorkboardPlan(input) {
+    return generateCodexWorkboardPlan(input)
+  },
   sendConversationTurn(input, context) {
     return sendCodexConversationTurn(input, context)
   }
@@ -105,7 +115,7 @@ async function sendCodexConversationTurn(
   }
 
   if (result.code !== 0) {
-    throw new Error(firstLine(result.stderr || result.stdout) || 'Codex conversation turn failed.')
+    throw new Error(getCodexFailureMessage(result.stderr, result.stdout))
   }
 
   const providerSessionRef = extractCodexSessionRef(result.stdout) || input.providerSessionRef || ''
@@ -394,6 +404,59 @@ async function generateCodexOrchestrationPlan(
   }
 }
 
+async function generateCodexWorkboardPlan(
+  input: RuntimeWorkboardPlanInput
+): Promise<WorkboardDraftPlan> {
+  const executable = await findCodexExecutable()
+  if (!executable) {
+    throw new Error('Codex CLI was not found.')
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'ordinus-workboard-'))
+  const schemaPath = join(tempDir, 'workboard-plan.schema.json')
+  const outputPath = join(tempDir, 'workboard-plan.json')
+
+  try {
+    writeFileSync(schemaPath, JSON.stringify(workboardDraftPlanJsonSchema, null, 2), 'utf8')
+
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--ephemeral',
+      '--ignore-rules',
+      '--sandbox',
+      'read-only',
+      '-C',
+      input.workspaceRoot,
+      '--output-schema',
+      schemaPath,
+      '--output-last-message',
+      outputPath
+    ]
+
+    if (input.model !== 'default') {
+      args.push('--model', input.model)
+    }
+
+    const result = await runCapture(executable.command, args, {
+      env: getCodexEnvironment(),
+      shell: executable.shell,
+      stdin: buildWorkboardPlanPrompt(input),
+      timeoutMs: 90_000
+    })
+
+    if (result.code !== 0) {
+      throw new Error(
+        firstLine(result.stderr || result.stdout) || 'Codex could not prepare this Work Request.'
+      )
+    }
+
+    return parseWorkboardDraftPlan(parseJsonFromCliOutput(readFileSync(outputPath, 'utf8')))
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true })
+  }
+}
+
 async function getCodexStatus(loginProcess: ProviderLoginProcess | null): Promise<ProviderStatus> {
   const executable = await findCodexExecutable()
   const base = createProviderStatusBase({
@@ -547,6 +610,53 @@ function readCodexLastMessage(outputPath: string): string {
   return readFileSync(outputPath, 'utf8').trim()
 }
 
+function getCodexFailureMessage(stderr: string, stdout: string): string {
+  const stderrMessage = firstLine(stderr)
+  if (stderrMessage) {
+    return stderrMessage
+  }
+
+  const eventMessage = extractCodexErrorEventMessage(stdout)
+  if (eventMessage) {
+    return eventMessage
+  }
+
+  const textMessage = [...stdout.split(/\r?\n/)]
+    .reverse()
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('{'))
+
+  return textMessage || 'Codex exited before returning a Work Item result.'
+}
+
+function extractCodexErrorEventMessage(value: string): string {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (const line of [...lines].reverse()) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+
+    const eventType = getEventType(parsed)
+    if (eventType === 'thread.started') {
+      continue
+    }
+
+    const message = findErrorLikeString(parsed)
+    if (message) {
+      return message
+    }
+  }
+
+  return ''
+}
+
 function extractCodexSessionRef(value: string): string {
   const lines = value
     .split(/\r?\n/)
@@ -619,6 +729,28 @@ function findSessionLikeString(value: unknown): string {
     const childValue = findSessionLikeString(nested)
     if (childValue) {
       return childValue
+    }
+  }
+
+  return ''
+}
+
+function findErrorLikeString(value: unknown): string {
+  if (!isRecord(value)) {
+    return ''
+  }
+
+  for (const key of ['message', 'error', 'detail', 'reason']) {
+    const direct = value[key]
+    if (typeof direct === 'string' && direct.trim()) {
+      return direct.trim()
+    }
+  }
+
+  for (const key of ['payload', 'data', 'event']) {
+    const nested = findErrorLikeString(value[key])
+    if (nested) {
+      return nested
     }
   }
 

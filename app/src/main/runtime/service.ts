@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   AgentDraftFromIntentInputSchema,
+  AgentSchema,
   ConversationParticipantSchema,
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
@@ -10,7 +11,8 @@ import {
   type ProviderActionInput,
   type ProviderConnectInput,
   type ProviderConnectResult,
-  type ProviderStatus
+  type ProviderStatus,
+  type WorkboardDraftPlan
 } from '@shared/contracts'
 import { providerIds, type RuntimeEventListener, type RuntimeProviderCapabilities } from './types'
 import { getProviderAdapter, listProviderAdapters } from './adapters/registry'
@@ -19,7 +21,10 @@ import type {
   RuntimeAgentDraftInput,
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
-  RuntimeOrchestrationPlanInput
+  RuntimeOrchestrationPlanInput,
+  RuntimeWorkboardPlanInput,
+  RuntimeWorkRunInput,
+  RuntimeWorkRunResult
 } from './adapters/types'
 
 const RuntimeAgentDraftInputSchema = AgentDraftFromIntentInputSchema.extend({
@@ -36,6 +41,14 @@ const RuntimeOrchestrationPlanInputSchema = z.object({
   userMessage: z.string().trim().min(1).max(64_000)
 })
 
+const RuntimeWorkboardPlanInputSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string().trim().min(1).default('default'),
+  workspaceRoot: z.string().trim().min(1),
+  agents: z.array(AgentSchema).min(1).max(16),
+  request: z.string().trim().min(1).max(64_000)
+})
+
 export type RuntimeService = {
   readonly ready: boolean
   getProviderCapabilities(): readonly RuntimeProviderCapabilities[]
@@ -44,7 +57,9 @@ export type RuntimeService = {
   connectProvider(input: ProviderConnectInput): Promise<ProviderConnectResult>
   generateAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft>
   generateOrchestrationPlan(input: RuntimeOrchestrationPlanInput): Promise<OrchestrationPlan>
+  generateWorkboardPlan(input: RuntimeWorkboardPlanInput): Promise<WorkboardDraftPlan>
   sendConversationTurn(input: RuntimeConversationTurnInput): Promise<RuntimeConversationTurnResult>
+  sendWorkRun(input: RuntimeWorkRunInput): Promise<RuntimeWorkRunResult>
   cancelConversationTurn(turnId: string): boolean
   subscribe(listener: RuntimeEventListener): () => void
 }
@@ -110,6 +125,16 @@ export function createRuntimeService(): RuntimeService {
 
       return adapter.generateOrchestrationPlan(parsed, context)
     },
+    async generateWorkboardPlan(input) {
+      const parsed = RuntimeWorkboardPlanInputSchema.parse(input) as RuntimeWorkboardPlanInput
+      const adapter = getProviderAdapter(parsed.providerId)
+
+      if (!adapter.generateWorkboardPlan) {
+        throw new Error(`Workboard planning is not available for ${adapter.label} yet.`)
+      }
+
+      return adapter.generateWorkboardPlan(parsed, context)
+    },
     async sendConversationTurn(input) {
       const adapter = getProviderAdapter(input.providerId)
 
@@ -118,6 +143,33 @@ export function createRuntimeService(): RuntimeService {
       }
 
       return adapter.sendConversationTurn(input, context)
+    },
+    async sendWorkRun(input) {
+      const adapter = getProviderAdapter(input.providerId)
+
+      if (!adapter.sendConversationTurn) {
+        throw new Error(`Work execution is not available for ${adapter.label} yet.`)
+      }
+
+      return adapter.sendConversationTurn(
+        {
+          turnId: input.runId,
+          conversationId: input.workRequestId,
+          providerId: input.providerId,
+          model: input.model,
+          sandbox: input.sandbox,
+          workspaceRoot: input.workspaceRoot,
+          agentName: input.agentName,
+          agentRole: input.agentRole,
+          instructions: input.instructions,
+          providerSessionRef: input.providerSessionRef,
+          message: input.resumeMessage ?? buildWorkRunMessage(input),
+          logRef: input.logRef,
+          eventLogPath: input.eventLogPath,
+          lastMessagePath: input.lastMessagePath
+        },
+        context
+      )
     },
     cancelConversationTurn(turnId) {
       const process = context.conversationProcesses.get(turnId)
@@ -144,4 +196,37 @@ export function createRuntimeService(): RuntimeService {
       }
     }
   }
+}
+
+function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
+  const upstream =
+    input.requiredInputs.length > 0
+      ? [
+          'Required upstream outputs:',
+          ...input.requiredInputs.map((item, index) =>
+            [
+              `${index + 1}. ${item.title}`,
+              `Work Run: ${item.runId}`,
+              `Output: ${item.resultSummary}`,
+              item.artifactRef ? `Artifact: ${item.artifactRef}` : ''
+            ]
+              .filter(Boolean)
+              .join('\n')
+          )
+        ].join('\n\n')
+      : 'Required upstream outputs: none'
+
+  return [
+    `Work Item: ${input.title}`,
+    '',
+    'Instruction:',
+    input.instruction,
+    '',
+    'Expected output:',
+    input.expectedOutput || 'Provide a concise result summary for this Work Item.',
+    '',
+    upstream,
+    '',
+    'Complete only this Work Item. If you need the user to decide something before continuing, return a structured input request.'
+  ].join('\n')
 }

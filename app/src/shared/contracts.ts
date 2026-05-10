@@ -399,6 +399,14 @@ export const WorkRunStatusSchema = z.enum([
   'cancelled'
 ])
 
+export const WorkRequestStatusSchema = z.enum([
+  'active',
+  'running',
+  'waiting_for_user',
+  'completed',
+  'failed',
+  'cancelled'
+])
 export const WorkRunCreatedByTypeSchema = z.enum(['user', 'agent', 'system'])
 export const WorkRunDependencyStatusSchema = z.enum(['pending', 'satisfied'])
 export const WorkRunEventKindSchema = z.enum([
@@ -411,6 +419,7 @@ export const WorkRunEventKindSchema = z.enum([
   'cancelled',
   'dependency_satisfied'
 ])
+export const WorkRunInputRequestStatusSchema = ConversationInputRequestStatusSchema
 
 export const WorkRunSourceSchema = z.object({
   type: z.string().trim().min(1).max(80),
@@ -418,11 +427,25 @@ export const WorkRunSourceSchema = z.object({
   itemId: z.string().trim().min(1).max(160).optional()
 })
 
+export const WorkRequestSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  originalRequest: z.string().min(1),
+  summary: z.string(),
+  status: WorkRequestStatusSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable()
+})
+
 export const WorkRunSchema = z.object({
   id: z.string().min(1),
   rootRunId: z.string().min(1),
   parentRunId: z.string().min(1).nullable(),
   assignedAgentId: z.string().min(1),
+  assignedAgentName: z.string(),
+  assignedAgentRole: z.string(),
   createdByType: WorkRunCreatedByTypeSchema,
   createdByAgentId: z.string().min(1).nullable(),
   source: WorkRunSourceSchema.nullable(),
@@ -435,6 +458,7 @@ export const WorkRunSchema = z.object({
   providerSessionRef: z.string().nullable(),
   workspaceRoot: z.string().min(1),
   sandbox: AgentSandboxSchema,
+  expectedOutput: z.string(),
   resultSummary: z.string(),
   resultArtifactRef: z.string(),
   error: z.string(),
@@ -442,6 +466,13 @@ export const WorkRunSchema = z.object({
   updatedAt: z.string(),
   startedAt: z.string().nullable(),
   completedAt: z.string().nullable()
+})
+
+export const WorkboardRunSchema = WorkRunSchema.extend({
+  agentName: z.string().min(1),
+  agentRole: z.string().min(1),
+  requestId: z.string().min(1),
+  requestTitle: z.string().min(1)
 })
 
 export const WorkRunDependencySchema = z.object({
@@ -469,10 +500,23 @@ export const WorkRunInputSummarySchema = z.object({
   artifactRef: z.string()
 })
 
+export const WorkRunInputRequestSchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  status: WorkRunInputRequestStatusSchema,
+  title: z.string().min(1),
+  detail: z.string(),
+  questions: z.array(InteractionQuestionSchema).min(1).max(3),
+  answers: z.array(InteractionAnswerSchema).nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
 export const WorkRunCreateInputSchema = z.object({
   assignedAgentId: z.string().min(1),
   title: z.string().trim().min(1, 'Title is required.').max(160),
   instruction: z.string().trim().min(1, 'Instruction is required.').max(64_000),
+  expectedOutput: z.string().trim().max(2_000).default(''),
   parentRunId: z.string().min(1).optional(),
   requiredRunIds: z.array(z.string().min(1)).max(16).default([]),
   createdByType: WorkRunCreatedByTypeSchema.default('user'),
@@ -494,6 +538,99 @@ export const WorkRunCompleteInputSchema = WorkRunActionInputSchema.extend({
 export const WorkRunFailInputSchema = WorkRunActionInputSchema.extend({
   error: z.string().trim().min(1, 'Error is required.').max(2_000)
 })
+
+export const WorkboardDraftItemSchema = z.object({
+  tempId: z.string().trim().min(1).max(80),
+  title: z.string().trim().min(1).max(160),
+  instruction: z.string().trim().min(1).max(64_000),
+  expectedOutput: z.string().trim().min(1).max(2_000),
+  assignedAgentId: z.string().min(1),
+  dependsOnTempIds: z.array(z.string().trim().min(1).max(80)).max(16).default([]),
+  priority: z.number().int().min(-100).max(100).default(0)
+})
+
+export const WorkboardDraftPlanSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  summary: z.string().trim().max(2_000).default(''),
+  items: z.array(WorkboardDraftItemSchema).min(1).max(16)
+})
+
+export const WorkboardGeneratePlanInputSchema = z.object({
+  request: z.string().trim().min(12, 'Describe the work request.').max(64_000)
+})
+
+export const WorkboardStartRequestInputSchema = z.object({
+  originalRequest: z.string().trim().min(1).max(64_000),
+  plan: WorkboardDraftPlanSchema
+})
+
+export const WorkboardDirectStartInputSchema = WorkboardGeneratePlanInputSchema
+
+export const WorkboardDataSchema = z.object({
+  requests: z.array(WorkRequestSchema),
+  runs: z.array(WorkboardRunSchema),
+  dependencies: z.array(WorkRunDependencySchema),
+  inputRequests: z.array(WorkRunInputRequestSchema)
+})
+
+export const WorkboardAnswerInputRequestInputSchema = z.object({
+  requestId: z.string().min(1),
+  answers: z.array(InteractionAnswerSchema).max(3)
+})
+
+export type WorkboardDraftDependencyItem = {
+  tempId: string
+  dependsOnTempIds: string[]
+}
+
+export function validateWorkboardDraftPlanDependencies(
+  items: WorkboardDraftDependencyItem[]
+): void {
+  const tempIds = new Set(items.map((item) => item.tempId))
+  if (tempIds.size !== items.length) {
+    throw new Error('The generated plan contains duplicate Work Item ids.')
+  }
+
+  items.forEach((item) => {
+    item.dependsOnTempIds.forEach((dependsOnTempId) => {
+      if (!tempIds.has(dependsOnTempId)) {
+        throw new Error('The generated plan contains a missing dependency.')
+      }
+      if (dependsOnTempId === item.tempId) {
+        throw new Error('A Work Item cannot depend on itself.')
+      }
+    })
+  })
+
+  validateAcyclicWorkboardPlan(items)
+}
+
+function validateAcyclicWorkboardPlan(items: WorkboardDraftDependencyItem[]): void {
+  const itemById = new Map(items.map((item) => [item.tempId, item]))
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+
+  function visit(tempId: string): void {
+    if (visited.has(tempId)) {
+      return
+    }
+    if (visiting.has(tempId)) {
+      throw new Error('Work Item dependencies cannot contain a cycle.')
+    }
+
+    const item = itemById.get(tempId)
+    if (!item) {
+      return
+    }
+
+    visiting.add(tempId)
+    item.dependsOnTempIds.forEach(visit)
+    visiting.delete(tempId)
+    visited.add(tempId)
+  }
+
+  items.forEach((item) => visit(item.tempId))
+}
 
 export const OrchestrationAssignmentSchema = z.object({
   participantId: z.string().min(1),
@@ -565,17 +702,31 @@ export type ConversationCancelInputRequestInput = z.infer<
   typeof ConversationCancelInputRequestInputSchema
 >
 export type WorkRunStatus = z.infer<typeof WorkRunStatusSchema>
+export type WorkRequestStatus = z.infer<typeof WorkRequestStatusSchema>
 export type WorkRunCreatedByType = z.infer<typeof WorkRunCreatedByTypeSchema>
 export type WorkRunDependencyStatus = z.infer<typeof WorkRunDependencyStatusSchema>
 export type WorkRunEventKind = z.infer<typeof WorkRunEventKindSchema>
+export type WorkRunInputRequestStatus = z.infer<typeof WorkRunInputRequestStatusSchema>
 export type WorkRunSource = z.infer<typeof WorkRunSourceSchema>
+export type WorkRequest = z.infer<typeof WorkRequestSchema>
 export type WorkRun = z.infer<typeof WorkRunSchema>
+export type WorkboardRun = z.infer<typeof WorkboardRunSchema>
 export type WorkRunDependency = z.infer<typeof WorkRunDependencySchema>
 export type WorkRunEvent = z.infer<typeof WorkRunEventSchema>
 export type WorkRunInputSummary = z.infer<typeof WorkRunInputSummarySchema>
+export type WorkRunInputRequest = z.infer<typeof WorkRunInputRequestSchema>
 export type WorkRunCreateInput = z.input<typeof WorkRunCreateInputSchema>
 export type WorkRunActionInput = z.infer<typeof WorkRunActionInputSchema>
 export type WorkRunCompleteInput = z.infer<typeof WorkRunCompleteInputSchema>
 export type WorkRunFailInput = z.infer<typeof WorkRunFailInputSchema>
+export type WorkboardDraftItem = z.infer<typeof WorkboardDraftItemSchema>
+export type WorkboardDraftPlan = z.infer<typeof WorkboardDraftPlanSchema>
+export type WorkboardGeneratePlanInput = z.infer<typeof WorkboardGeneratePlanInputSchema>
+export type WorkboardStartRequestInput = z.infer<typeof WorkboardStartRequestInputSchema>
+export type WorkboardDirectStartInput = z.infer<typeof WorkboardDirectStartInputSchema>
+export type WorkboardData = z.infer<typeof WorkboardDataSchema>
+export type WorkboardAnswerInputRequestInput = z.infer<
+  typeof WorkboardAnswerInputRequestInputSchema
+>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

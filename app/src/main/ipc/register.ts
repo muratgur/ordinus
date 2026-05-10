@@ -22,15 +22,25 @@ import {
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
   SetupStatusSchema,
+  WorkboardAnswerInputRequestInputSchema,
+  WorkboardDirectStartInputSchema,
+  WorkboardDraftPlanSchema,
+  WorkboardGeneratePlanInputSchema,
+  WorkboardStartRequestInputSchema,
+  WorkRunActionInputSchema,
   WorkspaceSaveConfigInputSchema,
   WorkspaceSelectFolderResultSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
+  validateWorkboardDraftPlanDependencies,
+  type Agent,
   type ConversationDetail,
   type ConversationSendTurnInput,
-  type ProviderId
+  type ProviderId,
+  type WorkboardDraftPlan,
+  type WorkRun
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
-import type { OrdinusDatabase, PreparedConversationTurn } from '../db/database'
+import type { OrdinusDatabase, PreparedConversationTurn, PreparedWorkRun } from '../db/database'
 import { getSystemPaths } from '../paths'
 import type { RuntimeService } from '../runtime'
 import {
@@ -39,6 +49,8 @@ import {
   ensureAgentHome,
   listAgentSkills
 } from '../agents/filesystem'
+
+const workRequestConcurrencyLimit = 3
 
 export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeService): void {
   ipcMain.handle(ipcChannels.appGetInfo, () =>
@@ -211,6 +223,46 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = ConversationCancelInputRequestInputSchema.parse(payload)
     return database.cancelConversationInputRequest(input)
   })
+  ipcMain.handle(ipcChannels.workboardList, () => database.getWorkboardData())
+  ipcMain.handle(ipcChannels.workboardGeneratePlan, async (_event, payload) => {
+    const input = WorkboardGeneratePlanInputSchema.parse(payload)
+    return generateWorkboardPlan(database, runtime, input.request)
+  })
+  ipcMain.handle(ipcChannels.workboardStartRequest, (_event, payload) => {
+    const input = WorkboardStartRequestInputSchema.parse(payload)
+    const request = database.createWorkRequest(input)
+    startWorkRequestRuns(database, runtime, request.id)
+    return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardDirectStart, async (_event, payload) => {
+    const input = WorkboardDirectStartInputSchema.parse(payload)
+    const plan = await generateWorkboardPlan(database, runtime, input.request)
+    if (plan.items.length > 8) {
+      throw new Error('Review this Work Request before starting because it has many Work Items.')
+    }
+    const request = database.createWorkRequest({
+      originalRequest: input.request,
+      plan
+    })
+    startWorkRequestRuns(database, runtime, request.id)
+    return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardCancelRun, (_event, payload) => {
+    const input = WorkRunActionInputSchema.parse(payload)
+    runtime.cancelConversationTurn(input.runId)
+    const run = database.cancelWorkRun(input)
+    const requestId = getOptionalWorkRequestId(run)
+    if (requestId) {
+      startWorkRequestRuns(database, runtime, requestId)
+    }
+    return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardAnswerInputRequest, (_event, payload) => {
+    const input = WorkboardAnswerInputRequestInputSchema.parse(payload)
+    const prepared = database.answerWorkRunInputRequest(input)
+    startPreparedWorkRun(database, runtime, prepared)
+    return database.getWorkboardData()
+  })
   ipcMain.handle(ipcChannels.runtimeGetProviders, () => runtime.getProviderStatuses())
   ipcMain.handle(ipcChannels.runtimeConnectProvider, (_event, payload) => {
     const input = ProviderConnectInputSchema.parse(payload)
@@ -226,6 +278,189 @@ function requireAgent(database: OrdinusDatabase, agentId: string): void {
   if (!database.hasAgent(agentId)) {
     throw new Error('Agent was not found.')
   }
+}
+
+async function generateWorkboardPlan(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  request: string
+): Promise<WorkboardDraftPlan> {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before creating a Work Request.')
+  }
+
+  const providers = await runtime.getProviderStatuses()
+  const provider = providers.find((status) => status.id === workspace.defaultProviderId)
+  if (!provider?.connected) {
+    throw new Error('Connect the default provider before creating a Work Request.')
+  }
+
+  const agents = database.listAgents().filter((agent) => agent.enabled)
+  if (agents.length === 0) {
+    throw new Error('Create and enable at least one agent before creating a Work Request.')
+  }
+
+  const plan = WorkboardDraftPlanSchema.parse(
+    await runtime.generateWorkboardPlan({
+      providerId: workspace.defaultProviderId,
+      model: workspace.defaultModel,
+      workspaceRoot: workspace.workspaceRoot,
+      agents,
+      request
+    })
+  )
+
+  validateWorkboardPlanAgents(plan.items, agents)
+  validateWorkboardDraftPlanDependencies(plan.items)
+
+  return plan
+}
+
+function validateWorkboardPlanAgents(
+  items: Array<{ assignedAgentId: string }>,
+  agents: Agent[]
+): void {
+  const agentIds = new Set(agents.map((agent) => agent.id))
+  if (items.some((item) => !agentIds.has(item.assignedAgentId))) {
+    throw new Error('The generated plan assigned work to an unavailable agent.')
+  }
+}
+
+function startWorkRequestRuns(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  requestId: string
+): void {
+  const availableSlots =
+    workRequestConcurrencyLimit - database.countRunningWorkRunsForRequest(requestId)
+  if (availableSlots <= 0) {
+    return
+  }
+
+  database
+    .listRunnableWorkRunsForRequest(requestId, availableSlots)
+    .map((run) => database.startWorkRun({ runId: run.id }))
+    .forEach((run) => {
+      const agent = database.getAgent(run.assignedAgentId)
+      const requiredInputs = database.getRequiredInputSummaries(run.id)
+
+      startPreparedWorkRun(
+        database,
+        runtime,
+        {
+          run,
+          agent,
+          message: '',
+          providerSessionRef: run.providerSessionRef
+        },
+        requiredInputs
+      )
+    })
+}
+
+function startPreparedWorkRun(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  prepared: PreparedWorkRun,
+  requiredInputs = database.getRequiredInputSummaries(prepared.run.id)
+): void {
+  const requestId = getWorkRequestId(prepared.run)
+  const logRef = join('work-requests', requestId, prepared.run.id)
+  const logDir = join(getSystemPaths().logs, logRef)
+  mkdirSync(logDir, { recursive: true })
+
+  void runtime
+    .sendWorkRun({
+      runId: prepared.run.id,
+      workRequestId: requestId,
+      providerId: prepared.run.providerId,
+      model: prepared.run.model,
+      sandbox: prepared.run.sandbox,
+      workspaceRoot: prepared.run.workspaceRoot,
+      agentName: prepared.agent.name,
+      agentRole: prepared.agent.role,
+      instructions: prepared.agent.instructions,
+      providerSessionRef: prepared.providerSessionRef,
+      title: prepared.run.title,
+      instruction: prepared.run.instruction,
+      expectedOutput: prepared.run.expectedOutput,
+      requiredInputs,
+      resumeMessage: prepared.message || undefined,
+      logRef,
+      eventLogPath: join(logDir, 'events.jsonl'),
+      lastMessagePath: join(logDir, 'last-message.txt')
+    })
+    .then((result) => {
+      try {
+        if (isTerminalWorkRunStatus(database.getWorkRun(prepared.run.id).status)) {
+          return
+        }
+
+        if (result.outcome.outcome === 'needs_input') {
+          database.waitForWorkRunInput({
+            runId: prepared.run.id,
+            providerSessionRef: result.providerSessionRef,
+            outcome: result.outcome
+          })
+          return
+        }
+
+        database.completeWorkRun({
+          runId: prepared.run.id,
+          resultSummary: result.outcome.content,
+          providerSessionRef: result.providerSessionRef,
+          artifactRef: result.logRef
+        })
+      } catch (error) {
+        saveWorkRunFailure(database, prepared.run.id, error)
+      } finally {
+        startWorkRequestRuns(database, runtime, requestId)
+      }
+    })
+    .catch((error) => {
+      saveWorkRunFailure(database, prepared.run.id, error)
+      startWorkRequestRuns(database, runtime, requestId)
+    })
+}
+
+function getWorkRequestId(run: WorkRun): string {
+  if (run.source?.type !== 'work_request') {
+    throw new Error('Work Item is not part of a Work Request.')
+  }
+
+  return run.source.id
+}
+
+function getOptionalWorkRequestId(run: WorkRun): string {
+  return run.source?.type === 'work_request' ? run.source.id : ''
+}
+
+function saveWorkRunFailure(database: OrdinusDatabase, runId: string, error: unknown): void {
+  try {
+    const current = database.getWorkRun(runId)
+    if (isTerminalWorkRunStatus(current.status)) {
+      return
+    }
+
+    database.failWorkRun({
+      runId,
+      error: error instanceof Error ? error.message : 'Work Item failed.'
+    })
+  } catch (failError) {
+    try {
+      if (isTerminalWorkRunStatus(database.getWorkRun(runId).status)) {
+        return
+      }
+    } catch {
+      // The run may have been deleted while the background provider process was resolving.
+    }
+    console.warn('Work Item failure could not be saved.', failError)
+  }
+}
+
+function isTerminalWorkRunStatus(status: WorkRun['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
 async function prepareConversationTurn(

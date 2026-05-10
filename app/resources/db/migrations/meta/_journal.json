@@ -78,6 +78,20 @@
       "when": 1778337600000,
       "tag": "0010_work_run_artifact_ref",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1778340000000,
+      "tag": "0011_work_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1778342400000,
+      "tag": "0012_work_run_agent_snapshot",
+      "breakpoints": true
     }
   ]
 }

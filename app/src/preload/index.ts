@@ -29,6 +29,13 @@ import type {
   ProviderStatus,
   SetupStatus,
   SystemPaths,
+  WorkboardAnswerInputRequestInput,
+  WorkboardData,
+  WorkboardDirectStartInput,
+  WorkboardDraftPlan,
+  WorkboardGeneratePlanInput,
+  WorkboardStartRequestInput,
+  WorkRunActionInput,
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
   WorkspaceUpdateSystemDefaultInput,
@@ -101,6 +108,19 @@ const ordinus = {
       input: ConversationCancelInputRequestInput
     ): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsCancelInputRequest, input)
+  },
+  workboard: {
+    list: async (): Promise<WorkboardData> => ipcRenderer.invoke(ipcChannels.workboardList),
+    generatePlan: async (input: WorkboardGeneratePlanInput): Promise<WorkboardDraftPlan> =>
+      ipcRenderer.invoke(ipcChannels.workboardGeneratePlan, input),
+    startRequest: async (input: WorkboardStartRequestInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardStartRequest, input),
+    directStart: async (input: WorkboardDirectStartInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardDirectStart, input),
+    cancelRun: async (input: WorkRunActionInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardCancelRun, input),
+    answerInputRequest: async (input: WorkboardAnswerInputRequestInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardAnswerInputRequest, input)
   },
   runtime: {
     getProviders: async (): Promise<ProviderStatus[]> =>

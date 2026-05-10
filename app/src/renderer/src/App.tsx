@@ -15,7 +15,7 @@ import { defaultAppRoute, appRoutePaths } from './app/routes'
 import { AgentsScreen } from './screens/agents-screen'
 import { ConversationsScreen } from './screens/conversations-screen'
 import { HomeScreen } from './screens/home-screen'
-import { PlannerScreen } from './screens/planner-screen'
+import { WorkboardScreen } from './screens/workboard-screen'
 import { SchedulesScreen } from './screens/schedules-screen'
 import { SetupScreen } from './screens/setup-screen'
 import { SettingsScreen } from './screens/settings-screen'
@@ -176,7 +176,7 @@ function App(): React.JSX.Element {
           <Route index element={<Navigate to={defaultAppRoute} replace />} />
           <Route path={appRoutePaths.home} element={<HomeScreen />} />
           <Route path={appRoutePaths.agents} element={<AgentsScreen />} />
-          <Route path={appRoutePaths.planner} element={<PlannerScreen />} />
+          <Route path={appRoutePaths.workboard} element={<WorkboardScreen />} />
           <Route path={appRoutePaths.conversations} element={<ConversationsScreen />} />
           <Route path={appRoutePaths.schedules} element={<SchedulesScreen />} />
           <Route
