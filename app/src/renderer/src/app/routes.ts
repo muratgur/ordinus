@@ -1,9 +1,9 @@
-import { Bot, CalendarClock, House, MessageSquareText, Route, Settings } from 'lucide-react'
+import { Bot, CalendarClock, Columns3, House, MessageSquareText, Settings } from 'lucide-react'
 
 export const appRoutePaths = {
   home: '/home',
   agents: '/agents',
-  planner: '/planner',
+  workboard: '/workboard',
   conversations: '/conversations',
   schedules: '/schedules',
   settings: '/settings'
@@ -27,10 +27,10 @@ export const appNavigation = [
     icon: Bot
   },
   {
-    id: 'planner',
-    label: 'Planner',
-    path: appRoutePaths.planner,
-    icon: Route
+    id: 'workboard',
+    label: 'Workboard',
+    path: appRoutePaths.workboard,
+    icon: Columns3
   },
   {
     id: 'conversations',

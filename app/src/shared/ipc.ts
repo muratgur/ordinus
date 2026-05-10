@@ -23,6 +23,12 @@ export const ipcChannels = {
   conversationsCancelTurn: 'conversations:cancel-turn',
   conversationsAnswerInputRequest: 'conversations:answer-input-request',
   conversationsCancelInputRequest: 'conversations:cancel-input-request',
+  workboardList: 'workboard:list',
+  workboardGeneratePlan: 'workboard:generate-plan',
+  workboardStartRequest: 'workboard:start-request',
+  workboardDirectStart: 'workboard:direct-start',
+  workboardCancelRun: 'workboard:cancel-run',
+  workboardAnswerInputRequest: 'workboard:answer-input-request',
   runtimeGetProviders: 'runtime:get-providers',
   runtimeConnectProvider: 'runtime:connect-provider',
   runtimeRefreshProvider: 'runtime:refresh-provider'

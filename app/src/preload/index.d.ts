@@ -28,6 +28,13 @@ import type {
   ProviderStatus,
   SetupStatus,
   SystemPaths,
+  WorkboardAnswerInputRequestInput,
+  WorkboardData,
+  WorkboardDirectStartInput,
+  WorkboardDraftPlan,
+  WorkboardGeneratePlanInput,
+  WorkboardStartRequestInput,
+  WorkRunActionInput,
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
   WorkspaceUpdateSystemDefaultInput,
@@ -72,6 +79,14 @@ export type OrdinusApi = {
     cancelTurn: (input: ConversationCancelTurnInput) => Promise<ConversationDetail>
     answerInputRequest: (input: ConversationAnswerInputRequestInput) => Promise<ConversationDetail>
     cancelInputRequest: (input: ConversationCancelInputRequestInput) => Promise<ConversationDetail>
+  }
+  workboard: {
+    list: () => Promise<WorkboardData>
+    generatePlan: (input: WorkboardGeneratePlanInput) => Promise<WorkboardDraftPlan>
+    startRequest: (input: WorkboardStartRequestInput) => Promise<WorkboardData>
+    directStart: (input: WorkboardDirectStartInput) => Promise<WorkboardData>
+    cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
+    answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>

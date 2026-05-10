@@ -6,11 +6,11 @@ export const agentTurnOutcomeJsonSchema = {
   additionalProperties: false,
   properties: {
     outcome: { type: 'string', enum: ['final_response', 'needs_input'] },
-    content: { type: 'string', maxLength: 64000 },
-    title: { type: 'string', maxLength: 160 },
-    detail: { type: 'string', maxLength: 1000 },
+    content: { type: ['string', 'null'], maxLength: 64000 },
+    title: { type: ['string', 'null'], maxLength: 160 },
+    detail: { type: ['string', 'null'], maxLength: 1000 },
     questions: {
-      type: 'array',
+      type: ['array', 'null'],
       minItems: 1,
       maxItems: 3,
       items: {
@@ -19,11 +19,11 @@ export const agentTurnOutcomeJsonSchema = {
         properties: {
           id: { type: 'string', minLength: 1, maxLength: 80 },
           label: { type: 'string', minLength: 1, maxLength: 300 },
-          detail: { type: 'string', maxLength: 1000 },
+          detail: { type: ['string', 'null'], maxLength: 1000 },
           kind: { type: 'string', enum: ['choice', 'text', 'boolean'] },
           required: { type: 'boolean' },
           options: {
-            type: 'array',
+            type: ['array', 'null'],
             minItems: 1,
             maxItems: 4,
             items: {
@@ -32,27 +32,123 @@ export const agentTurnOutcomeJsonSchema = {
               properties: {
                 id: { type: 'string', minLength: 1, maxLength: 80 },
                 label: { type: 'string', minLength: 1, maxLength: 120 },
-                description: { type: 'string', maxLength: 500 }
+                description: { type: ['string', 'null'], maxLength: 500 }
               },
-              required: ['id', 'label']
+              required: ['id', 'label', 'description']
             }
           },
-          recommendedOptionId: { type: 'string', minLength: 1, maxLength: 80 },
-          allowCustom: { type: 'boolean' },
-          placeholder: { type: 'string', maxLength: 300 },
-          trueLabel: { type: 'string', minLength: 1, maxLength: 80 },
-          falseLabel: { type: 'string', minLength: 1, maxLength: 80 }
+          recommendedOptionId: { type: ['string', 'null'], maxLength: 80 },
+          allowCustom: { type: ['boolean', 'null'] },
+          placeholder: { type: ['string', 'null'], maxLength: 300 },
+          trueLabel: { type: ['string', 'null'], maxLength: 80 },
+          falseLabel: { type: ['string', 'null'], maxLength: 80 }
         },
-        required: ['id', 'label', 'kind', 'required']
+        required: [
+          'id',
+          'label',
+          'detail',
+          'kind',
+          'required',
+          'options',
+          'recommendedOptionId',
+          'allowCustom',
+          'placeholder',
+          'trueLabel',
+          'falseLabel'
+        ]
       }
     }
   },
-  required: ['outcome']
+  required: ['outcome', 'content', 'title', 'detail', 'questions']
 } as const
 
 export function parseAgentTurnOutcome(value: unknown): AgentTurnOutcome {
   const parsed = typeof value === 'string' ? parseJsonFromCliOutput(value) : value
-  return AgentTurnOutcomeSchema.parse(parsed)
+  return AgentTurnOutcomeSchema.parse(normalizeAgentTurnOutcome(parsed))
+}
+
+function normalizeAgentTurnOutcome(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value
+  }
+
+  if (value.outcome === 'final_response') {
+    return {
+      outcome: 'final_response',
+      content: typeof value.content === 'string' ? value.content : ''
+    }
+  }
+
+  if (value.outcome !== 'needs_input') {
+    return value
+  }
+
+  return {
+    outcome: 'needs_input',
+    title: typeof value.title === 'string' ? value.title : '',
+    ...optionalStringProperty('detail', value.detail),
+    questions: Array.isArray(value.questions) ? value.questions.map(normalizeQuestion) : []
+  }
+}
+
+function normalizeQuestion(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value
+  }
+
+  const base = {
+    id: value.id,
+    label: value.label,
+    ...optionalStringProperty('detail', value.detail),
+    kind: value.kind,
+    required: value.required
+  }
+
+  if (value.kind === 'choice') {
+    return {
+      ...base,
+      options: Array.isArray(value.options) ? value.options.map(normalizeChoiceOption) : [],
+      ...optionalStringProperty('recommendedOptionId', value.recommendedOptionId),
+      ...(typeof value.allowCustom === 'boolean' ? { allowCustom: value.allowCustom } : {})
+    }
+  }
+
+  if (value.kind === 'text') {
+    return {
+      ...base,
+      ...optionalStringProperty('placeholder', value.placeholder)
+    }
+  }
+
+  if (value.kind === 'boolean') {
+    return {
+      ...base,
+      ...optionalStringProperty('trueLabel', value.trueLabel),
+      ...optionalStringProperty('falseLabel', value.falseLabel)
+    }
+  }
+
+  return value
+}
+
+function normalizeChoiceOption(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value
+  }
+
+  return {
+    id: value.id,
+    label: value.label,
+    ...optionalStringProperty('description', value.description)
+  }
+}
+
+function optionalStringProperty(key: string, value: unknown): Record<string, string> {
+  return typeof value === 'string' && value.trim() ? { [key]: value } : {}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 export function buildConversationOutcomeInstructions(): string {

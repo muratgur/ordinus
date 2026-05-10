@@ -27,14 +27,21 @@ import {
   DbStatusSchema,
   WorkspaceConfigSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
+  WorkboardAnswerInputRequestInputSchema,
+  WorkboardDataSchema,
+  WorkboardDraftPlanSchema,
+  WorkboardStartRequestInputSchema,
   WorkRunActionInputSchema,
   WorkRunCompleteInputSchema,
   WorkRunCreateInputSchema,
   WorkRunDependencySchema,
   WorkRunEventSchema,
   WorkRunFailInputSchema,
+  WorkRunInputRequestSchema,
   WorkRunInputSummarySchema,
+  WorkRequestSchema,
   WorkRunSchema,
+  validateWorkboardDraftPlanDependencies,
   type Agent,
   type AgentCreateInput,
   type AgentDeleteInput,
@@ -55,13 +62,18 @@ import {
   type OrchestrationAssignment,
   type WorkRun,
   type WorkRunActionInput,
+  type WorkboardAnswerInputRequestInput,
+  type WorkboardData,
+  type WorkboardStartRequestInput,
   type WorkRunCompleteInput,
   type WorkRunCreateInput,
   type WorkRunDependency,
   type WorkRunEvent,
   type WorkRunEventKind,
   type WorkRunFailInput,
+  type WorkRunInputRequest,
   type WorkRunInputSummary,
+  type WorkRequest,
   type WorkspaceConfig,
   type WorkspaceSaveConfigInput,
   type WorkspaceUpdateSystemDefaultInput
@@ -75,8 +87,10 @@ import {
   conversationParticipants,
   conversations,
   conversationTurns,
+  workRequests,
   workRunDependencies,
   workRunEvents,
+  workRunInputRequests,
   workRuns,
   workspaceConfig
 } from './schema'
@@ -89,6 +103,7 @@ const activeWorkRunStatuses: WorkRun['status'][] = [
   'blocked',
   'waiting_for_user'
 ]
+const workRequestSourceType = 'work_request'
 
 export type PreparedConversationAgentTurn = {
   conversationId: string
@@ -102,6 +117,13 @@ export type PreparedConversationAgentTurn = {
 export type PreparedConversationTurn = {
   conversationId: string
   agentTurns: PreparedConversationAgentTurn[]
+}
+
+export type PreparedWorkRun = {
+  run: WorkRun
+  agent: Agent
+  message: string
+  providerSessionRef: string | null
 }
 
 type InitialWorkRunStatus = Extract<WorkRun['status'], 'queued' | 'blocked'>
@@ -460,6 +482,8 @@ export class OrdinusDatabase {
           rootRunId: parentRun?.rootRunId ?? runId,
           parentRunId: parentRun?.id ?? null,
           assignedAgentId: agent.id,
+          assignedAgentName: agent.name,
+          assignedAgentRole: agent.role,
           createdByType: parsed.createdByType,
           createdByAgentId: parsed.createdByAgentId ?? null,
           sourceType: parsed.source?.type ?? null,
@@ -474,6 +498,7 @@ export class OrdinusDatabase {
           providerSessionRef: null,
           workspaceRoot: agent.workspaceRoot,
           sandbox: agent.sandbox,
+          expectedOutput: parsed.expectedOutput,
           resultSummary: '',
           resultArtifactRef: '',
           error: '',
@@ -507,6 +532,209 @@ export class OrdinusDatabase {
     return this.getWorkRun(runId)
   }
 
+  createWorkRequest(input: WorkboardStartRequestInput): WorkRequest {
+    const parsed = WorkboardStartRequestInputSchema.parse(input)
+    const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
+    const agentsById = new Map(
+      this.listAgents()
+        .filter((agent) => agent.enabled)
+        .map((agent) => [agent.id, agent])
+    )
+    plan.items.forEach((item) => {
+      if (!agentsById.has(item.assignedAgentId)) {
+        throw new Error('One or more Work Items are assigned to an unavailable agent.')
+      }
+    })
+    validateWorkboardDraftPlanDependencies(plan.items)
+
+    const now = new Date().toISOString()
+    const requestId = createWorkRequestId()
+    const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
+
+    this.db.transaction((tx) => {
+      tx.insert(workRequests)
+        .values({
+          id: requestId,
+          title: plan.title,
+          originalRequest: parsed.originalRequest,
+          summary: plan.summary,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+          startedAt: null,
+          completedAt: null
+        })
+        .run()
+
+      plan.items.forEach((item) => {
+        const agent = agentsById.get(item.assignedAgentId)
+        const runId = runIdsByTempId.get(item.tempId)
+        if (!agent || !runId) {
+          throw new Error('Work Item could not be prepared.')
+        }
+
+        tx.insert(workRuns)
+          .values({
+            id: runId,
+            rootRunId: runId,
+            parentRunId: null,
+            assignedAgentId: agent.id,
+            assignedAgentName: agent.name,
+            assignedAgentRole: agent.role,
+            createdByType: 'user',
+            createdByAgentId: null,
+            sourceType: workRequestSourceType,
+            sourceId: requestId,
+            sourceItemId: item.tempId,
+            title: item.title,
+            instruction: item.instruction,
+            status: item.dependsOnTempIds.length > 0 ? 'blocked' : 'queued',
+            priority: item.priority,
+            providerId: agent.providerId,
+            model: agent.model,
+            providerSessionRef: null,
+            workspaceRoot: agent.workspaceRoot,
+            sandbox: agent.sandbox,
+            expectedOutput: item.expectedOutput,
+            resultSummary: '',
+            resultArtifactRef: '',
+            error: '',
+            createdAt: now,
+            updatedAt: now,
+            startedAt: null,
+            completedAt: null
+          })
+          .run()
+      })
+
+      plan.items.forEach((item) => {
+        const runId = runIdsByTempId.get(item.tempId)
+        if (!runId) return
+
+        item.dependsOnTempIds.forEach((dependsOnTempId) => {
+          const dependsOnRunId = runIdsByTempId.get(dependsOnTempId)
+          if (!dependsOnRunId) {
+            throw new Error('Work Item dependency could not be prepared.')
+          }
+
+          tx.insert(workRunDependencies)
+            .values({
+              id: createWorkRunDependencyId(),
+              runId,
+              dependsOnRunId,
+              status: 'pending',
+              createdAt: now,
+              resolvedAt: null
+            })
+            .run()
+        })
+      })
+
+      plan.items.forEach((item) => {
+        const runId = runIdsByTempId.get(item.tempId)
+        if (!runId) return
+
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId,
+            sequence: 1,
+            kind: 'created',
+            payload: JSON.stringify({
+              workRequestId: requestId,
+              assignedAgentId: item.assignedAgentId,
+              requiredTempIds: item.dependsOnTempIds
+            }),
+            createdAt: now
+          })
+          .run()
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId,
+            sequence: 2,
+            kind: item.dependsOnTempIds.length > 0 ? 'blocked' : 'queued',
+            payload: JSON.stringify({}),
+            createdAt: now
+          })
+          .run()
+      })
+    })
+
+    return this.getWorkRequest(requestId)
+  }
+
+  listWorkRequests(): WorkRequest[] {
+    return this.db
+      .select()
+      .from(workRequests)
+      .orderBy(desc(workRequests.updatedAt), desc(workRequests.createdAt))
+      .all()
+      .map((request) => WorkRequestSchema.parse(request))
+  }
+
+  getWorkRequest(requestId: string): WorkRequest {
+    const request = this.db.select().from(workRequests).where(eq(workRequests.id, requestId)).get()
+
+    if (!request) {
+      throw new Error('Work Request was not found.')
+    }
+
+    return WorkRequestSchema.parse(request)
+  }
+
+  getWorkboardData(): WorkboardData {
+    const requests = this.listWorkRequests()
+    const requestById = new Map(requests.map((request) => [request.id, request]))
+    const runs = this.db
+      .select()
+      .from(workRuns)
+      .where(eq(workRuns.sourceType, workRequestSourceType))
+      .orderBy(desc(workRuns.updatedAt), desc(workRuns.createdAt))
+      .all()
+      .map((run) => {
+        const parsedRun = parseWorkRun(run)
+        const requestId = parsedRun.source?.id ?? ''
+        const request = requestById.get(requestId)
+
+        return {
+          ...parsedRun,
+          agentName: parsedRun.assignedAgentName.trim() || 'Former agent',
+          agentRole: parsedRun.assignedAgentRole.trim() || 'Agent',
+          requestId,
+          requestTitle: request?.title ?? 'Work Request'
+        }
+      })
+    const runIds = runs.map((run) => run.id)
+    const dependencies =
+      runIds.length > 0
+        ? this.db
+            .select()
+            .from(workRunDependencies)
+            .where(inArray(workRunDependencies.runId, runIds))
+            .orderBy(asc(workRunDependencies.createdAt))
+            .all()
+            .map((dependency) => WorkRunDependencySchema.parse(dependency))
+        : []
+    const inputRequests =
+      runIds.length > 0
+        ? this.db
+            .select()
+            .from(workRunInputRequests)
+            .where(inArray(workRunInputRequests.runId, runIds))
+            .orderBy(asc(workRunInputRequests.createdAt))
+            .all()
+            .map(parseWorkRunInputRequest)
+        : []
+
+    return WorkboardDataSchema.parse({
+      requests,
+      runs,
+      dependencies,
+      inputRequests
+    })
+  }
+
   getWorkRun(runId: string): WorkRun {
     const parsed = WorkRunActionInputSchema.parse({ runId })
     const run = this.db.select().from(workRuns).where(eq(workRuns.id, parsed.runId)).get()
@@ -537,6 +765,41 @@ export class OrdinusDatabase {
       .map(parseWorkRun)
   }
 
+  listRunnableWorkRunsForRequest(requestId: string, limit: number): WorkRun[] {
+    this.getWorkRequest(requestId)
+
+    return this.db
+      .select()
+      .from(workRuns)
+      .where(
+        and(
+          eq(workRuns.sourceType, workRequestSourceType),
+          eq(workRuns.sourceId, requestId),
+          eq(workRuns.status, 'queued')
+        )
+      )
+      .orderBy(desc(workRuns.priority), asc(workRuns.createdAt))
+      .limit(limit)
+      .all()
+      .map(parseWorkRun)
+  }
+
+  countRunningWorkRunsForRequest(requestId: string): number {
+    this.getWorkRequest(requestId)
+
+    return this.db
+      .select({ id: workRuns.id })
+      .from(workRuns)
+      .where(
+        and(
+          eq(workRuns.sourceType, workRequestSourceType),
+          eq(workRuns.sourceId, requestId),
+          eq(workRuns.status, 'running')
+        )
+      )
+      .all().length
+  }
+
   startWorkRun(input: WorkRunActionInput): WorkRun {
     const parsed = WorkRunActionInputSchema.parse(input)
     const run = this.getWorkRun(parsed.runId)
@@ -556,6 +819,7 @@ export class OrdinusDatabase {
       .where(eq(workRuns.id, run.id))
       .run()
     this.appendWorkRunEvent(run.id, 'started', {})
+    this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
   }
@@ -669,8 +933,118 @@ export class OrdinusDatabase {
         })
       })
     })
+    this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
+  }
+
+  waitForWorkRunInput(input: {
+    runId: string
+    providerSessionRef: string
+    outcome: Extract<AgentTurnOutcome, { outcome: 'needs_input' }>
+  }): WorkRun {
+    const run = this.getWorkRun(input.runId)
+    if (run.status === 'cancelled') {
+      return run
+    }
+    if (run.status !== 'running') {
+      throw new Error('Only running work can request user input.')
+    }
+
+    const now = new Date().toISOString()
+    const requestId = createWorkRunInputRequestId()
+
+    this.db.transaction((tx) => {
+      tx.update(workRuns)
+        .set({
+          status: 'waiting_for_user',
+          providerSessionRef: input.providerSessionRef,
+          resultSummary: input.outcome.detail || input.outcome.title,
+          updatedAt: now
+        })
+        .where(eq(workRuns.id, run.id))
+        .run()
+      tx.insert(workRunInputRequests)
+        .values({
+          id: requestId,
+          runId: run.id,
+          status: 'pending',
+          title: input.outcome.title,
+          detail: input.outcome.detail ?? '',
+          questions: JSON.stringify(input.outcome.questions),
+          answers: null,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.insert(workRunEvents)
+        .values({
+          id: createWorkRunEventId(),
+          runId: run.id,
+          sequence: this.getNextWorkRunEventSequence(run.id),
+          kind: 'started',
+          payload: JSON.stringify({ waitingForUser: true }),
+          createdAt: now
+        })
+        .run()
+    })
+    this.refreshWorkRequestStatusForRun(run.id)
+
+    return this.getWorkRun(run.id)
+  }
+
+  answerWorkRunInputRequest(input: WorkboardAnswerInputRequestInput): PreparedWorkRun {
+    const parsed = WorkboardAnswerInputRequestInputSchema.parse(input)
+    const request = this.getWorkRunInputRequest(parsed.requestId)
+    if (request.status !== 'pending') {
+      throw new Error('This work input request is no longer waiting for an answer.')
+    }
+
+    const run = this.getWorkRun(request.runId)
+    if (run.status !== 'waiting_for_user') {
+      throw new Error('This Work Item is not waiting for user input.')
+    }
+
+    const answers = validateInputRequestAnswers(request.questions, parsed.answers)
+    const agent = this.requireActiveAgent(run.assignedAgentId)
+    const now = new Date().toISOString()
+    const message = buildWorkInputRequestContinuationMessage(request, answers)
+
+    this.db.transaction((tx) => {
+      tx.update(workRunInputRequests)
+        .set({
+          status: 'resolved',
+          answers: JSON.stringify(answers),
+          updatedAt: now
+        })
+        .where(eq(workRunInputRequests.id, request.id))
+        .run()
+      tx.update(workRuns)
+        .set({
+          status: 'running',
+          updatedAt: now
+        })
+        .where(eq(workRuns.id, run.id))
+        .run()
+      tx.insert(workRunEvents)
+        .values({
+          id: createWorkRunEventId(),
+          runId: run.id,
+          sequence: this.getNextWorkRunEventSequence(run.id),
+          kind: 'started',
+          payload: JSON.stringify({ resumedFromInputRequestId: request.id }),
+          createdAt: now
+        })
+        .run()
+    })
+    this.refreshWorkRequestStatusForRun(run.id)
+
+    return {
+      run: this.getWorkRun(run.id),
+      agent,
+      message,
+      providerSessionRef: run.providerSessionRef
+    }
   }
 
   failWorkRun(input: WorkRunFailInput): WorkRun {
@@ -693,6 +1067,8 @@ export class OrdinusDatabase {
       .where(eq(workRuns.id, run.id))
       .run()
     this.appendWorkRunEvent(run.id, 'failed', { error: parsed.error })
+    this.propagateBlockedDependentsToTerminalStatus(run.id, 'failed', 'upstream_failed')
+    this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
   }
@@ -706,16 +1082,29 @@ export class OrdinusDatabase {
     }
 
     const now = new Date().toISOString()
-    this.db
-      .update(workRuns)
-      .set({
-        status: 'cancelled',
-        completedAt: now,
-        updatedAt: now
-      })
-      .where(eq(workRuns.id, run.id))
-      .run()
+    this.db.transaction((tx) => {
+      tx.update(workRuns)
+        .set({
+          status: 'cancelled',
+          completedAt: now,
+          updatedAt: now
+        })
+        .where(eq(workRuns.id, run.id))
+        .run()
+
+      tx.update(workRunInputRequests)
+        .set({
+          status: 'cancelled',
+          updatedAt: now
+        })
+        .where(
+          and(eq(workRunInputRequests.runId, run.id), eq(workRunInputRequests.status, 'pending'))
+        )
+        .run()
+    })
     this.appendWorkRunEvent(run.id, 'cancelled', {})
+    this.propagateBlockedDependentsToTerminalStatus(run.id, 'cancelled', 'upstream_cancelled')
+    this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
   }
@@ -1520,6 +1909,20 @@ export class OrdinusDatabase {
       .map(parseConversationInputRequest)
   }
 
+  private getWorkRunInputRequest(id: string): WorkRunInputRequest {
+    const request = this.db
+      .select()
+      .from(workRunInputRequests)
+      .where(eq(workRunInputRequests.id, id))
+      .get()
+
+    if (!request) {
+      throw new Error('Work input request was not found.')
+    }
+
+    return parseWorkRunInputRequest(request)
+  }
+
   private getNextConversationTurnSequence(conversationId: string): number {
     const latestTurn = this.db
       .select({ sequence: conversationTurns.sequence })
@@ -1595,6 +1998,108 @@ export class OrdinusDatabase {
         createdAt: new Date().toISOString()
       })
       .run()
+  }
+
+  private getNextWorkRunEventSequence(runId: string): number {
+    return getNextWorkRunEventSequence(this.db, runId)
+  }
+
+  private refreshWorkRequestStatusForRun(runId: string): void {
+    const run = this.getWorkRun(runId)
+    const requestId = run.source?.type === workRequestSourceType ? run.source.id : ''
+    if (!requestId) {
+      return
+    }
+
+    const requestRuns = this.db
+      .select()
+      .from(workRuns)
+      .where(and(eq(workRuns.sourceType, workRequestSourceType), eq(workRuns.sourceId, requestId)))
+      .all()
+      .map(parseWorkRun)
+    if (requestRuns.length === 0) {
+      return
+    }
+
+    const now = new Date().toISOString()
+    const status = getWorkRequestStatus(requestRuns)
+    this.db
+      .update(workRequests)
+      .set({
+        status,
+        updatedAt: now,
+        startedAt: requestRuns.some((item) => item.startedAt)
+          ? (this.getWorkRequest(requestId).startedAt ?? now)
+          : null,
+        completedAt: isTerminalWorkRequestStatus(status) ? now : null
+      })
+      .where(eq(workRequests.id, requestId))
+      .run()
+  }
+
+  private propagateBlockedDependentsToTerminalStatus(
+    upstreamRunId: string,
+    status: Extract<WorkRun['status'], 'failed' | 'cancelled'>,
+    reason: 'upstream_failed' | 'upstream_cancelled'
+  ): void {
+    const now = new Date().toISOString()
+    const queue = [upstreamRunId]
+    const visited = new Set<string>()
+
+    this.db.transaction((tx) => {
+      while (queue.length > 0) {
+        const dependsOnRunId = queue.shift()
+        if (!dependsOnRunId || visited.has(dependsOnRunId)) {
+          continue
+        }
+        visited.add(dependsOnRunId)
+
+        const dependents = tx
+          .select()
+          .from(workRunDependencies)
+          .where(eq(workRunDependencies.dependsOnRunId, dependsOnRunId))
+          .all()
+
+        dependents.forEach((dependency) => {
+          const dependentRun = tx
+            .select({ id: workRuns.id, status: workRuns.status })
+            .from(workRuns)
+            .where(eq(workRuns.id, dependency.runId))
+            .get()
+
+          if (dependentRun?.status !== 'blocked') {
+            return
+          }
+
+          tx.update(workRuns)
+            .set({
+              status,
+              error:
+                status === 'failed'
+                  ? 'Required upstream Work Item failed.'
+                  : 'Required upstream Work Item was cancelled.',
+              completedAt: now,
+              updatedAt: now
+            })
+            .where(eq(workRuns.id, dependentRun.id))
+            .run()
+          tx.insert(workRunEvents)
+            .values({
+              id: createWorkRunEventId(),
+              runId: dependentRun.id,
+              sequence: getNextWorkRunEventSequence(tx, dependentRun.id),
+              kind: status,
+              payload: JSON.stringify({
+                reason,
+                dependsOnRunId
+              }),
+              createdAt: now
+            })
+            .run()
+          queue.push(dependentRun.id)
+        })
+      }
+    })
   }
 
   private resolveConversationTurnTargets(
@@ -1722,12 +2227,20 @@ function createWorkRunId(): string {
   return `wrk-${randomUUID()}`
 }
 
+function createWorkRequestId(): string {
+  return `wrq-${randomUUID()}`
+}
+
 function createWorkRunDependencyId(): string {
   return `wrd-${randomUUID()}`
 }
 
 function createWorkRunEventId(): string {
   return `wre-${randomUUID()}`
+}
+
+function createWorkRunInputRequestId(): string {
+  return `wir-${randomUUID()}`
 }
 
 function uniqueValues(values: string[]): string[] {
@@ -1777,6 +2290,25 @@ function parseWorkRunEvent(value: unknown): WorkRunEvent {
   })
 }
 
+function parseWorkRunInputRequest(value: unknown): WorkRunInputRequest {
+  if (!isDatabaseWorkRunInputRequest(value)) {
+    throw new Error('Work input request row was invalid.')
+  }
+
+  return WorkRunInputRequestSchema.parse({
+    ...value,
+    questions: parseJsonArray(value.questions),
+    answers: value.answers ? parseJsonArray(value.answers) : null
+  })
+}
+
+function isDatabaseWorkRunInputRequest(value: unknown): value is {
+  questions: string
+  answers: string | null
+} {
+  return typeof value === 'object' && value !== null && 'questions' in value && 'answers' in value
+}
+
 function isDatabaseWorkRunEvent(value: unknown): value is {
   payload: string
 } {
@@ -1808,6 +2340,47 @@ function getInitialWorkRunStatus(
   }
 
   return 'queued'
+}
+
+function getWorkRequestStatus(runs: WorkRun[]): WorkRequest['status'] {
+  if (runs.some((run) => run.status === 'running')) {
+    return 'running'
+  }
+  if (runs.some((run) => run.status === 'waiting_for_user')) {
+    return 'waiting_for_user'
+  }
+  if (runs.some((run) => run.status === 'failed')) {
+    return 'failed'
+  }
+  if (runs.some((run) => run.status === 'cancelled')) {
+    return 'cancelled'
+  }
+  if (runs.some((run) => run.status === 'queued' || run.status === 'blocked')) {
+    return 'active'
+  }
+  if (runs.every((run) => run.status === 'completed')) {
+    return 'completed'
+  }
+
+  return 'active'
+}
+
+function getNextWorkRunEventSequence(
+  db: Pick<ReturnType<typeof drizzle>, 'select'>,
+  runId: string
+): number {
+  const latestEvent = db
+    .select({ sequence: workRunEvents.sequence })
+    .from(workRunEvents)
+    .where(eq(workRunEvents.runId, runId))
+    .orderBy(desc(workRunEvents.sequence))
+    .get()
+
+  return (latestEvent?.sequence ?? 0) + 1
+}
+
+function isTerminalWorkRequestStatus(status: WorkRequest['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
 function parseConversationInputRequest(value: unknown): ConversationInputRequest {
@@ -1944,6 +2517,17 @@ function buildInputRequestContinuationMessage(
     buildInputRequestAnswerSummary(request.questions, answers),
     '',
     'Continue the task using these answers. If more information is required, ask another explicit input request.'
+  ].join('\n')
+}
+
+function buildWorkInputRequestContinuationMessage(
+  request: WorkRunInputRequest,
+  answers: InteractionAnswer[]
+): string {
+  return [
+    buildInputRequestAnswerSummary(request.questions, answers),
+    '',
+    'Continue this Work Item using these answers. If more information is required, ask another explicit input request.'
   ].join('\n')
 }
 
