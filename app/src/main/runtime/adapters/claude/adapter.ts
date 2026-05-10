@@ -29,6 +29,11 @@ import {
   parseOrchestrationPlan
 } from '../../prompts/orchestration'
 import {
+  agentTurnOutcomeJsonSchema,
+  buildConversationOutcomeInstructions,
+  parseAgentTurnOutcome
+} from '../../prompts/conversation-outcome'
+import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
@@ -94,7 +99,9 @@ async function sendClaudeConversationTurn(
   }
 
   const args = buildClaudeConversationArgs(input)
-  const prompt = input.providerSessionRef ? input.message : buildClaudeConversationPrompt(input)
+  const prompt = input.providerSessionRef
+    ? buildClaudeResumePrompt(input)
+    : buildClaudeConversationPrompt(input)
   const result = await runConversationProcess({
     executable,
     args,
@@ -129,7 +136,7 @@ async function sendClaudeConversationTurn(
 
   return {
     providerSessionRef,
-    responseText: readClaudeLastMessage(input.lastMessagePath),
+    outcome: parseAgentTurnOutcome(readClaudeLastMessage(input.lastMessagePath)),
     logRef: input.logRef
   }
 }
@@ -139,6 +146,8 @@ function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): strin
     '-p',
     '--output-format',
     'json',
+    '--json-schema',
+    JSON.stringify(agentTurnOutcomeJsonSchema),
     '--permission-mode',
     getClaudePermissionMode(input.sandbox),
     '--append-system-prompt-file',
@@ -178,7 +187,9 @@ function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
     `Role: ${input.agentRole}`,
     '',
     'Follow these agent instructions for this Ordinus conversation:',
-    input.instructions
+    input.instructions,
+    '',
+    buildConversationOutcomeInstructions()
   ].join('\n')
 }
 
@@ -191,6 +202,10 @@ function writeClaudeSystemPromptFile(input: RuntimeConversationTurnInput): strin
 
 function buildClaudeConversationPrompt(input: RuntimeConversationTurnInput): string {
   return ['User message:', input.message].join('\n')
+}
+
+function buildClaudeResumePrompt(input: RuntimeConversationTurnInput): string {
+  return [buildConversationOutcomeInstructions(), '', 'User message:', input.message].join('\n')
 }
 
 async function generateClaudeAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -534,11 +549,13 @@ function readClaudeConversationOutput(value: string): { sessionId: string; respo
   }
 
   const sessionId = getStringValue(parsed.session_id) || getStringValue(parsed.sessionId)
+  const structured = unwrapClaudeStructuredOutput(parsed)
   const responseText =
-    getStringValue(parsed.result) ||
-    getStringValue(parsed.response) ||
-    getStringValue(parsed.message) ||
-    ''
+    typeof structured === 'string'
+      ? structured
+      : getStringValue(parsed.response) ||
+        getStringValue(parsed.message) ||
+        JSON.stringify(structured)
   const isError = parsed.is_error === true
 
   if (isError) {

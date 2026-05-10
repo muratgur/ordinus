@@ -3,6 +3,7 @@ import type {
   AgentDraft,
   AgentDraftFromIntentInput,
   AgentSandbox,
+  AgentTurnOutcome,
   OrchestrationPlan,
   ProviderActionInput,
   ProviderConnectInput,
@@ -56,7 +57,7 @@ export type RuntimeConversationTurnInput = {
 
 export type RuntimeConversationTurnResult = {
   providerSessionRef: string
-  responseText: string
+  outcome: AgentTurnOutcome
   logRef: string
 }
 

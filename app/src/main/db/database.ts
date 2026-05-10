@@ -13,9 +13,12 @@ import {
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
   ConversationCancelTurnInputSchema,
+  ConversationAnswerInputRequestInputSchema,
+  ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
   ConversationDetailSchema,
+  ConversationInputRequestSchema,
   ConversationGetInputSchema,
   ConversationListItemSchema,
   ConversationSendTurnInputSchema,
@@ -30,13 +33,17 @@ import {
   type AgentDeleteResult,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
+  type AgentTurnOutcome,
   type ConversationCreateManualInput,
   type ConversationDetail,
+  type ConversationInputRequest,
   type ConversationListItem,
   type ConversationSendTurnInput,
   type ConversationTurn,
   type ConversationUpdateRoutingModeInput,
   type DbStatus,
+  type InteractionAnswer,
+  type InteractionQuestion,
   type OrchestrationAssignment,
   type WorkspaceConfig,
   type WorkspaceSaveConfigInput,
@@ -47,6 +54,7 @@ import { databaseSchemaVersion, getMigrationsFolder } from './migrations'
 import {
   agents,
   appMeta,
+  conversationInputRequests,
   conversationParticipants,
   conversations,
   conversationTurns,
@@ -85,6 +93,7 @@ export class OrdinusDatabase {
       schema: {
         agents,
         appMeta,
+        conversationInputRequests,
         conversationParticipants,
         conversations,
         conversationTurns,
@@ -266,7 +275,7 @@ export class OrdinusDatabase {
         .where(
           and(
             inArray(conversationTurns.participantId, participantIds),
-            eq(conversationTurns.status, 'running')
+            inArray(conversationTurns.status, ['running', 'waiting_for_user'])
           )
         )
         .get()
@@ -352,6 +361,9 @@ export class OrdinusDatabase {
       )
 
       if (participantIds.length > 0) {
+        tx.delete(conversationInputRequests)
+          .where(inArray(conversationInputRequests.participantId, participantIds))
+          .run()
         tx.delete(conversationTurns)
           .where(inArray(conversationTurns.participantId, participantIds))
           .run()
@@ -476,11 +488,13 @@ export class OrdinusDatabase {
       .orderBy(asc(conversationTurns.sequence), asc(conversationTurns.createdAt))
       .all()
       .map((turn) => ConversationTurnSchema.parse(turn))
+    const inputRequests = this.listConversationInputRequests(conversation.id)
 
     return ConversationDetailSchema.parse({
       ...conversation,
       participants,
-      turns
+      turns,
+      inputRequests
     })
   }
 
@@ -593,6 +607,9 @@ export class OrdinusDatabase {
     if (detail.turns.some((turn) => turn.status === 'running')) {
       throw new Error('Wait for the current turn to finish before sending another message.')
     }
+    if (detail.inputRequests.some((request) => request.status === 'pending')) {
+      throw new Error('Answer or cancel the pending input request before sending another message.')
+    }
 
     const targetParticipants = this.resolveConversationTurnTargets(
       detail,
@@ -622,6 +639,9 @@ export class OrdinusDatabase {
 
     if (detail.turns.some((turn) => turn.status === 'running')) {
       throw new Error('Wait for the current turn to finish before sending another message.')
+    }
+    if (detail.inputRequests.some((request) => request.status === 'pending')) {
+      throw new Error('Answer or cancel the pending input request before sending another message.')
     }
 
     const uniqueAssignments = mergeAssignmentsByParticipant(assignments)
@@ -747,7 +767,7 @@ export class OrdinusDatabase {
   completeConversationTurn(input: {
     turnId: string
     providerSessionRef: string
-    responseText: string
+    outcome: AgentTurnOutcome
     logRef: string
   }): ConversationDetail {
     const turn = this.getConversationTurn(input.turnId)
@@ -756,7 +776,62 @@ export class OrdinusDatabase {
     }
 
     const now = new Date().toISOString()
-    const output = createBoundedTurnContent(input.responseText)
+
+    if (input.outcome.outcome === 'needs_input') {
+      const outcome = input.outcome
+      const requestId = createConversationInputRequestId()
+      const preview = createBoundedTurnContent(outcome.title).preview
+
+      this.db.transaction((tx) => {
+        tx.update(conversationTurns)
+          .set({
+            content: outcome.detail || outcome.title,
+            preview,
+            status: 'waiting_for_user',
+            error: '',
+            logRef: input.logRef,
+            truncated: false,
+            updatedAt: now
+          })
+          .where(eq(conversationTurns.id, input.turnId))
+          .run()
+        tx.insert(conversationInputRequests)
+          .values({
+            id: requestId,
+            conversationId: turn.conversationId,
+            turnId: turn.id,
+            participantId: turn.participantId,
+            status: 'pending',
+            title: outcome.title,
+            detail: outcome.detail ?? '',
+            questions: JSON.stringify(outcome.questions),
+            answers: null,
+            createdAt: now,
+            updatedAt: now
+          })
+          .run()
+        tx.update(conversationParticipants)
+          .set({
+            providerSessionRef: input.providerSessionRef,
+            status: 'waiting_for_user',
+            updatedAt: now
+          })
+          .where(eq(conversationParticipants.id, turn.participantId))
+          .run()
+        tx.update(conversations)
+          .set({
+            status: 'waiting_for_user',
+            summary: preview,
+            updatedAt: now
+          })
+          .where(eq(conversations.id, turn.conversationId))
+          .run()
+      })
+
+      return this.getConversation({ conversationId: turn.conversationId })
+    }
+
+    const output = createBoundedTurnContent(input.outcome.content)
 
     this.db
       .update(conversationTurns)
@@ -791,6 +866,167 @@ export class OrdinusDatabase {
       .run()
 
     return this.getConversation({ conversationId: turn.conversationId })
+  }
+
+  answerConversationInputRequest(input: {
+    requestId: string
+    answers: InteractionAnswer[]
+  }): PreparedConversationTurn {
+    const parsed = ConversationAnswerInputRequestInputSchema.parse(input)
+    const request = this.getConversationInputRequest(parsed.requestId)
+    if (request.status !== 'pending') {
+      throw new Error('This input request is no longer waiting for an answer.')
+    }
+
+    const detail = this.getConversation({ conversationId: request.conversationId })
+    if (hasRunningTurnForParticipant(detail.turns, request.participantId)) {
+      throw new Error('Wait for this agent to finish before answering its next input request.')
+    }
+
+    const participant = detail.participants.find((item) => item.id === request.participantId)
+    if (!participant) {
+      throw new Error('The input request participant is no longer part of this conversation.')
+    }
+
+    const answers = validateInputRequestAnswers(request.questions, parsed.answers)
+    const agent = this.requireActiveAgent(participant.agentId)
+    const now = new Date().toISOString()
+    const userMessage = buildInputRequestAnswerSummary(request.questions, answers)
+    const userTurn = createBoundedTurnContent(userMessage)
+    const userTurnId = createConversationTurnId()
+    const agentTurnId = createConversationTurnId()
+    const nextSequence = this.getNextConversationTurnSequence(request.conversationId)
+    const agentMessage = buildInputRequestContinuationMessage(request, answers)
+
+    this.db.transaction((tx) => {
+      tx.update(conversationInputRequests)
+        .set({
+          status: 'resolved',
+          answers: JSON.stringify(answers),
+          updatedAt: now
+        })
+        .where(eq(conversationInputRequests.id, request.id))
+        .run()
+      tx.update(conversationTurns)
+        .set({
+          status: 'completed',
+          updatedAt: now
+        })
+        .where(eq(conversationTurns.id, request.turnId))
+        .run()
+      tx.insert(conversationTurns)
+        .values({
+          id: userTurnId,
+          conversationId: request.conversationId,
+          participantId: request.participantId,
+          sequence: nextSequence,
+          speaker: 'user',
+          content: userTurn.content,
+          preview: userTurn.preview,
+          status: 'completed',
+          error: '',
+          logRef: '',
+          truncated: userTurn.truncated,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.insert(conversationTurns)
+        .values({
+          id: agentTurnId,
+          conversationId: request.conversationId,
+          participantId: request.participantId,
+          sequence: nextSequence + 1,
+          speaker: 'agent',
+          content: '',
+          preview: 'Running',
+          status: 'running',
+          error: '',
+          logRef: '',
+          truncated: false,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.update(conversationParticipants)
+        .set({
+          status: 'running',
+          updatedAt: now
+        })
+        .where(eq(conversationParticipants.id, request.participantId))
+        .run()
+      tx.update(conversations)
+        .set({
+          status: 'running',
+          summary: userTurn.preview,
+          updatedAt: now
+        })
+        .where(eq(conversations.id, request.conversationId))
+        .run()
+    })
+
+    return {
+      conversationId: request.conversationId,
+      agentTurns: [
+        {
+          conversationId: request.conversationId,
+          participantId: request.participantId,
+          agentTurnId,
+          agent,
+          providerSessionRef: participant.providerSessionRef,
+          message: agentMessage
+        }
+      ]
+    }
+  }
+
+  cancelConversationInputRequest(input: { requestId: string }): ConversationDetail {
+    const parsed = ConversationCancelInputRequestInputSchema.parse(input)
+    const request = this.getConversationInputRequest(parsed.requestId)
+    if (request.status === 'cancelled') {
+      return this.getConversation({ conversationId: request.conversationId })
+    }
+    if (request.status !== 'pending') {
+      throw new Error('Only a pending input request can be cancelled.')
+    }
+
+    const now = new Date().toISOString()
+    const turn = this.getConversationTurn(request.turnId)
+
+    this.db.transaction((tx) => {
+      tx.update(conversationInputRequests)
+        .set({
+          status: 'cancelled',
+          updatedAt: now
+        })
+        .where(eq(conversationInputRequests.id, request.id))
+        .run()
+      tx.update(conversationTurns)
+        .set({
+          preview: 'Input request cancelled',
+          status: 'cancelled',
+          error: '',
+          updatedAt: now
+        })
+        .where(eq(conversationTurns.id, request.turnId))
+        .run()
+      tx.update(conversationParticipants)
+        .set({
+          status: 'cancelled',
+          updatedAt: now
+        })
+        .where(eq(conversationParticipants.id, request.participantId))
+        .run()
+      tx.update(conversations)
+        .set({
+          status: this.getConversationStatusAfterTurnUpdate(request.conversationId, turn.sequence),
+          updatedAt: now
+        })
+        .where(eq(conversations.id, request.conversationId))
+        .run()
+    })
+
+    return this.getConversation({ conversationId: request.conversationId })
   }
 
   failConversationTurn(input: {
@@ -911,6 +1147,30 @@ export class OrdinusDatabase {
     return ConversationTurnSchema.parse(turn)
   }
 
+  private getConversationInputRequest(id: string): ConversationInputRequest {
+    const request = this.db
+      .select()
+      .from(conversationInputRequests)
+      .where(eq(conversationInputRequests.id, id))
+      .get()
+
+    if (!request) {
+      throw new Error('Input request was not found.')
+    }
+
+    return parseConversationInputRequest(request)
+  }
+
+  private listConversationInputRequests(conversationId: string): ConversationInputRequest[] {
+    return this.db
+      .select()
+      .from(conversationInputRequests)
+      .where(eq(conversationInputRequests.conversationId, conversationId))
+      .orderBy(asc(conversationInputRequests.createdAt))
+      .all()
+      .map(parseConversationInputRequest)
+  }
+
   private getNextConversationTurnSequence(conversationId: string): number {
     const latestTurn = this.db
       .select({ sequence: conversationTurns.sequence })
@@ -949,7 +1209,17 @@ export class OrdinusDatabase {
   private getConversationStatusAfterTurnUpdate(
     conversationId: string,
     turnSequence: number
-  ): 'active' | 'running' | 'failed' | 'cancelled' {
+  ): 'active' | 'running' | 'waiting_for_user' | 'failed' | 'cancelled' {
+    const pendingInputRequest = this.db
+      .select({ id: conversationInputRequests.id })
+      .from(conversationInputRequests)
+      .where(
+        and(
+          eq(conversationInputRequests.conversationId, conversationId),
+          eq(conversationInputRequests.status, 'pending')
+        )
+      )
+      .get()
     const userTurn = this.db
       .select({ sequence: conversationTurns.sequence })
       .from(conversationTurns)
@@ -977,6 +1247,10 @@ export class OrdinusDatabase {
 
     if (agentTurns.some((turn) => turn.status === 'running')) {
       return 'running'
+    }
+
+    if (pendingInputRequest || agentTurns.some((turn) => turn.status === 'waiting_for_user')) {
+      return 'waiting_for_user'
     }
 
     if (agentTurns.some((turn) => turn.status === 'completed')) {
@@ -1025,8 +1299,162 @@ function createConversationTurnId(): string {
   return `trn-${randomUUID()}`
 }
 
+function createConversationInputRequestId(): string {
+  return `cir-${randomUUID()}`
+}
+
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
+}
+
+function parseConversationInputRequest(value: unknown): ConversationInputRequest {
+  if (!isDatabaseInputRequest(value)) {
+    throw new Error('Input request row was invalid.')
+  }
+
+  return ConversationInputRequestSchema.parse({
+    ...value,
+    questions: parseJsonArray(value.questions),
+    answers: value.answers ? parseJsonArray(value.answers) : null
+  })
+}
+
+function isDatabaseInputRequest(value: unknown): value is {
+  questions: string
+  answers: string | null
+} {
+  return typeof value === 'object' && value !== null && 'questions' in value && 'answers' in value
+}
+
+function parseJsonArray(value: string): unknown[] {
+  const parsed = JSON.parse(value)
+  if (!Array.isArray(parsed)) {
+    throw new Error('Expected a JSON array.')
+  }
+  return parsed
+}
+
+function validateInputRequestAnswers(
+  questions: InteractionQuestion[],
+  answers: InteractionAnswer[]
+): InteractionAnswer[] {
+  const questionById = new Map(questions.map((question) => [question.id, question]))
+  const answerByQuestionId = new Map<string, InteractionAnswer>()
+
+  answers.forEach((answer) => {
+    const question = questionById.get(answer.questionId)
+    if (!question) {
+      throw new Error('One or more answers do not match this input request.')
+    }
+    if (answerByQuestionId.has(answer.questionId)) {
+      throw new Error('Each question can only be answered once.')
+    }
+
+    validateAnswerForQuestion(question, answer)
+    answerByQuestionId.set(answer.questionId, answer)
+  })
+
+  const unansweredRequiredQuestion = questions.find(
+    (question) => question.required && !answerByQuestionId.has(question.id)
+  )
+  if (unansweredRequiredQuestion) {
+    throw new Error('Answer all required questions before continuing.')
+  }
+
+  return questions
+    .map((question) => answerByQuestionId.get(question.id))
+    .filter((answer): answer is InteractionAnswer => Boolean(answer))
+}
+
+function validateAnswerForQuestion(question: InteractionQuestion, answer: InteractionAnswer): void {
+  if (question.kind === 'choice') {
+    validateChoiceAnswer(question, answer)
+    return
+  }
+
+  if (question.kind === 'text' && answer.type !== 'text') {
+    throw new Error('Text questions require a text answer.')
+  }
+
+  if (question.kind === 'boolean' && answer.type !== 'boolean') {
+    throw new Error('Yes/no questions require a yes or no answer.')
+  }
+}
+
+function validateChoiceAnswer(
+  question: Extract<InteractionQuestion, { kind: 'choice' }>,
+  answer: InteractionAnswer
+): void {
+  if (answer.type === 'option') {
+    if (!question.options.some((option) => option.id === answer.optionId)) {
+      throw new Error('One or more selected options are not available for this request.')
+    }
+    return
+  }
+
+  if (answer.type === 'custom') {
+    if (question.allowCustom === false) {
+      throw new Error('This question does not accept a custom answer.')
+    }
+    return
+  }
+
+  throw new Error('Choice questions require an option or custom answer.')
+}
+
+function hasRunningTurnForParticipant(turns: ConversationTurn[], participantId: string): boolean {
+  return turns.some((turn) => turn.participantId === participantId && turn.status === 'running')
+}
+
+function buildInputRequestAnswerSummary(
+  questions: InteractionQuestion[],
+  answers: InteractionAnswer[]
+): string {
+  const answerByQuestionId = new Map(answers.map((answer) => [answer.questionId, answer]))
+  const lines = ['User answered the pending input request:']
+
+  questions.forEach((question, index) => {
+    const answer = answerByQuestionId.get(question.id)
+    if (!answer) {
+      return
+    }
+
+    lines.push('', `${index + 1}. ${question.label}`, `Answer: ${formatAnswer(question, answer)}`)
+  })
+
+  return lines.join('\n')
+}
+
+function buildInputRequestContinuationMessage(
+  request: ConversationInputRequest,
+  answers: InteractionAnswer[]
+): string {
+  return [
+    buildInputRequestAnswerSummary(request.questions, answers),
+    '',
+    'Continue the task using these answers. If more information is required, ask another explicit input request.'
+  ].join('\n')
+}
+
+function formatAnswer(question: InteractionQuestion, answer: InteractionAnswer): string {
+  if (answer.type === 'option' && question.kind === 'choice') {
+    const option = question.options.find((item) => item.id === answer.optionId)
+    return option?.label ?? answer.optionId
+  }
+
+  if (answer.type === 'custom') {
+    return `Custom - ${answer.text}`
+  }
+
+  if (answer.type === 'text') {
+    return answer.text
+  }
+
+  if (answer.type === 'boolean' && question.kind === 'boolean') {
+    return answer.value ? question.trueLabel : question.falseLabel
+  }
+
+  return ''
 }
 
 function buildAssignedConversationMessage(userMessage: string, instruction: string): string {

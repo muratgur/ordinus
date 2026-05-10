@@ -35,6 +35,11 @@ import {
   parseOrchestrationPlan
 } from '../../prompts/orchestration'
 import {
+  agentTurnOutcomeJsonSchema,
+  buildConversationOutcomeInstructions,
+  parseAgentTurnOutcome
+} from '../../prompts/conversation-outcome'
+import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
@@ -90,7 +95,9 @@ async function sendCodexConversationTurn(
   }
 
   const args = buildCodexConversationArgs(input)
-  const prompt = input.providerSessionRef ? input.message : buildCodexConversationPrompt(input)
+  const prompt = input.providerSessionRef
+    ? buildCodexResumePrompt(input)
+    : buildCodexConversationPrompt(input)
   const result = await runCodexConversationProcess(executable, args, input, context, prompt)
 
   if (result.cancelled) {
@@ -109,7 +116,7 @@ async function sendCodexConversationTurn(
 
   return {
     providerSessionRef,
-    responseText: readCodexLastMessage(input.lastMessagePath),
+    outcome: parseAgentTurnOutcome(readCodexLastMessage(input.lastMessagePath)),
     logRef: input.logRef
   }
 }
@@ -134,6 +141,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     return args
   }
 
+  const schemaPath = writeCodexConversationOutcomeSchema(input)
   const args = [
     'exec',
     '--json',
@@ -143,6 +151,8 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     input.sandbox,
     '-C',
     input.workspaceRoot,
+    '--output-schema',
+    schemaPath,
     '--output-last-message',
     input.lastMessagePath
   ]
@@ -162,9 +172,22 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
     'Follow these agent instructions for this Ordinus conversation:',
     input.instructions,
     '',
+    buildConversationOutcomeInstructions(),
+    '',
     'User message:',
     input.message
   ].join('\n')
+}
+
+function buildCodexResumePrompt(input: RuntimeConversationTurnInput): string {
+  return [buildConversationOutcomeInstructions(), '', 'User message:', input.message].join('\n')
+}
+
+function writeCodexConversationOutcomeSchema(input: RuntimeConversationTurnInput): string {
+  const schemaPath = join(dirname(input.eventLogPath), 'conversation-outcome.schema.json')
+  mkdirSync(dirname(schemaPath), { recursive: true })
+  writeFileSync(schemaPath, JSON.stringify(agentTurnOutcomeJsonSchema, null, 2), 'utf8')
+  return schemaPath
 }
 
 type CodexConversationProcessResult = {

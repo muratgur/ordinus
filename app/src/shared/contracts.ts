@@ -168,15 +168,121 @@ export const AgentSkillCreateInputSchema = z.object({
 
 export const ConversationModeSchema = z.enum(['direct', 'manual'])
 export const ConversationRoutingModeSchema = z.enum(['manual', 'orchestrated'])
-export const ConversationStatusSchema = z.enum(['active', 'running', 'failed', 'cancelled'])
+export const ConversationStatusSchema = z.enum([
+  'active',
+  'running',
+  'waiting_for_user',
+  'failed',
+  'cancelled'
+])
 export const ConversationParticipantStatusSchema = z.enum([
   'ready',
   'running',
+  'waiting_for_user',
   'failed',
   'cancelled'
 ])
 export const ConversationTurnSpeakerSchema = z.enum(['user', 'agent'])
-export const ConversationTurnStatusSchema = z.enum(['running', 'completed', 'failed', 'cancelled'])
+export const ConversationTurnStatusSchema = z.enum([
+  'running',
+  'waiting_for_user',
+  'completed',
+  'failed',
+  'cancelled'
+])
+
+export const InteractionChoiceOptionSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional()
+})
+
+export const InteractionChoiceQuestionSchema = z
+  .object({
+    id: z.string().trim().min(1).max(80),
+    label: z.string().trim().min(1).max(300),
+    detail: z.string().trim().max(1_000).optional(),
+    kind: z.literal('choice'),
+    required: z.boolean().default(true),
+    options: z.array(InteractionChoiceOptionSchema).min(1).max(4),
+    recommendedOptionId: z.string().trim().min(1).max(80).optional(),
+    allowCustom: z.boolean().default(true)
+  })
+  .superRefine((question, context) => {
+    if (
+      question.recommendedOptionId &&
+      !question.options.some((option) => option.id === question.recommendedOptionId)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Recommended option must reference one of the provided options.',
+        path: ['recommendedOptionId']
+      })
+    }
+  })
+
+export const InteractionTextQuestionSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(300),
+  detail: z.string().trim().max(1_000).optional(),
+  kind: z.literal('text'),
+  required: z.boolean().default(true),
+  placeholder: z.string().trim().max(300).optional()
+})
+
+export const InteractionBooleanQuestionSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(300),
+  detail: z.string().trim().max(1_000).optional(),
+  kind: z.literal('boolean'),
+  required: z.boolean().default(true),
+  trueLabel: z.string().trim().min(1).max(80).default('Yes'),
+  falseLabel: z.string().trim().min(1).max(80).default('No')
+})
+
+export const InteractionQuestionSchema = z.discriminatedUnion('kind', [
+  InteractionChoiceQuestionSchema,
+  InteractionTextQuestionSchema,
+  InteractionBooleanQuestionSchema
+])
+
+export const InteractionAnswerSchema = z.discriminatedUnion('type', [
+  z.object({
+    questionId: z.string().trim().min(1).max(80),
+    type: z.literal('option'),
+    optionId: z.string().trim().min(1).max(80)
+  }),
+  z.object({
+    questionId: z.string().trim().min(1).max(80),
+    type: z.literal('custom'),
+    text: z.string().trim().min(1).max(1_000)
+  }),
+  z.object({
+    questionId: z.string().trim().min(1).max(80),
+    type: z.literal('text'),
+    text: z.string().trim().min(1).max(1_000)
+  }),
+  z.object({
+    questionId: z.string().trim().min(1).max(80),
+    type: z.literal('boolean'),
+    value: z.boolean()
+  })
+])
+
+export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('final_response'),
+    content: z.string().trim().min(1).max(64_000)
+  }),
+  z.object({
+    outcome: z.literal('needs_input'),
+    title: z.string().trim().min(1).max(160),
+    detail: z.string().trim().max(1_000).optional(),
+    questions: z.array(InteractionQuestionSchema).min(1).max(3)
+  })
+])
+
+export const ConversationInputRequestStatusSchema = z.enum(['pending', 'resolved', 'cancelled'])
 
 export const ConversationParticipantSchema = z.object({
   id: z.string().min(1),
@@ -208,6 +314,20 @@ export const ConversationTurnSchema = z.object({
   updatedAt: z.string()
 })
 
+export const ConversationInputRequestSchema = z.object({
+  id: z.string().min(1),
+  conversationId: z.string().min(1),
+  turnId: z.string().min(1),
+  participantId: z.string().min(1),
+  status: ConversationInputRequestStatusSchema,
+  title: z.string().min(1),
+  detail: z.string(),
+  questions: z.array(InteractionQuestionSchema).min(1).max(3),
+  answers: z.array(InteractionAnswerSchema).nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
 export const ConversationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -227,7 +347,8 @@ export const ConversationListItemSchema = ConversationSchema.extend({
 
 export const ConversationDetailSchema = ConversationSchema.extend({
   participants: z.array(ConversationParticipantSchema),
-  turns: z.array(ConversationTurnSchema)
+  turns: z.array(ConversationTurnSchema),
+  inputRequests: z.array(ConversationInputRequestSchema)
 })
 
 export const ConversationGetInputSchema = z.object({
@@ -257,6 +378,15 @@ export const ConversationUpdateRoutingModeInputSchema = z.object({
 
 export const ConversationCancelTurnInputSchema = z.object({
   turnId: z.string().min(1)
+})
+
+export const ConversationAnswerInputRequestInputSchema = z.object({
+  requestId: z.string().min(1),
+  answers: z.array(InteractionAnswerSchema).max(3)
+})
+
+export const ConversationCancelInputRequestInputSchema = z.object({
+  requestId: z.string().min(1)
 })
 
 export const OrchestrationAssignmentSchema = z.object({
@@ -303,8 +433,14 @@ export type ConversationStatus = z.infer<typeof ConversationStatusSchema>
 export type ConversationParticipantStatus = z.infer<typeof ConversationParticipantStatusSchema>
 export type ConversationTurnSpeaker = z.infer<typeof ConversationTurnSpeakerSchema>
 export type ConversationTurnStatus = z.infer<typeof ConversationTurnStatusSchema>
+export type InteractionChoiceOption = z.infer<typeof InteractionChoiceOptionSchema>
+export type InteractionQuestion = z.infer<typeof InteractionQuestionSchema>
+export type InteractionAnswer = z.infer<typeof InteractionAnswerSchema>
+export type AgentTurnOutcome = z.infer<typeof AgentTurnOutcomeSchema>
+export type ConversationInputRequestStatus = z.infer<typeof ConversationInputRequestStatusSchema>
 export type ConversationParticipant = z.infer<typeof ConversationParticipantSchema>
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>
+export type ConversationInputRequest = z.infer<typeof ConversationInputRequestSchema>
 export type Conversation = z.infer<typeof ConversationSchema>
 export type ConversationListItem = z.infer<typeof ConversationListItemSchema>
 export type ConversationDetail = z.infer<typeof ConversationDetailSchema>
@@ -316,5 +452,11 @@ export type ConversationUpdateRoutingModeInput = z.infer<
   typeof ConversationUpdateRoutingModeInputSchema
 >
 export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>
+export type ConversationAnswerInputRequestInput = z.infer<
+  typeof ConversationAnswerInputRequestInputSchema
+>
+export type ConversationCancelInputRequestInput = z.infer<
+  typeof ConversationCancelInputRequestInputSchema
+>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

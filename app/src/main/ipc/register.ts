@@ -11,6 +11,8 @@ import {
   AgentCreateInputSchema,
   AppInfoSchema,
   ConversationCancelTurnInputSchema,
+  ConversationAnswerInputRequestInputSchema,
+  ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
   ConversationGetInputSchema,
@@ -198,6 +200,17 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     runtime.cancelConversationTurn(input.turnId)
     return database.cancelConversationTurn(input)
   })
+  ipcMain.handle(ipcChannels.conversationsAnswerInputRequest, async (_event, payload) => {
+    const input = ConversationAnswerInputRequestInputSchema.parse(payload)
+    const prepared = database.answerConversationInputRequest(input)
+    startPreparedConversationTurns(database, runtime, prepared)
+
+    return database.getConversation({ conversationId: prepared.conversationId })
+  })
+  ipcMain.handle(ipcChannels.conversationsCancelInputRequest, (_event, payload) => {
+    const input = ConversationCancelInputRequestInputSchema.parse(payload)
+    return database.cancelConversationInputRequest(input)
+  })
   ipcMain.handle(ipcChannels.runtimeGetProviders, () => runtime.getProviderStatuses())
   ipcMain.handle(ipcChannels.runtimeConnectProvider, (_event, payload) => {
     const input = ProviderConnectInputSchema.parse(payload)
@@ -299,13 +312,13 @@ async function getOrchestratorRuntimeConfig(
 function saveConversationTurnCompletion(
   database: OrdinusDatabase,
   turnId: string,
-  result: { providerSessionRef: string; responseText: string; logRef: string }
+  result: Awaited<ReturnType<RuntimeService['sendConversationTurn']>>
 ): void {
   try {
     database.completeConversationTurn({
       turnId,
       providerSessionRef: result.providerSessionRef,
-      responseText: result.responseText,
+      outcome: result.outcome,
       logRef: result.logRef
     })
   } catch (error) {

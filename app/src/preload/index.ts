@@ -13,6 +13,8 @@ import type {
   AgentUpdateSettingsInput,
   AppInfo,
   ConversationCancelTurnInput,
+  ConversationAnswerInputRequestInput,
+  ConversationCancelInputRequestInput,
   ConversationCreateDirectInput,
   ConversationCreateManualInput,
   ConversationDetail,
@@ -90,7 +92,15 @@ const ordinus = {
     sendTurn: async (input: ConversationSendTurnInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsSendTurn, input),
     cancelTurn: async (input: ConversationCancelTurnInput): Promise<ConversationDetail> =>
-      ipcRenderer.invoke(ipcChannels.conversationsCancelTurn, input)
+      ipcRenderer.invoke(ipcChannels.conversationsCancelTurn, input),
+    answerInputRequest: async (
+      input: ConversationAnswerInputRequestInput
+    ): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsAnswerInputRequest, input),
+    cancelInputRequest: async (
+      input: ConversationCancelInputRequestInput
+    ): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsCancelInputRequest, input)
   },
   runtime: {
     getProviders: async (): Promise<ProviderStatus[]> =>

@@ -24,6 +24,10 @@ import {
 } from '../../prompts/agent-draft'
 import { buildOrchestrationPrompt, parseOrchestrationPlan } from '../../prompts/orchestration'
 import {
+  buildConversationOutcomeInstructions,
+  parseAgentTurnOutcome
+} from '../../prompts/conversation-outcome'
+import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
@@ -96,7 +100,9 @@ async function sendGeminiConversationTurn(
   }
 
   const args = buildGeminiConversationArgs(input)
-  const prompt = input.providerSessionRef ? input.message : buildGeminiConversationPrompt(input)
+  const prompt = input.providerSessionRef
+    ? buildGeminiResumePrompt(input)
+    : buildGeminiConversationPrompt(input)
   const result = await runConversationProcess({
     executable,
     args: withCliBaseArgs(executable, args),
@@ -131,7 +137,7 @@ async function sendGeminiConversationTurn(
 
   return {
     providerSessionRef,
-    responseText: readGeminiLastMessage(input.lastMessagePath),
+    outcome: parseAgentTurnOutcome(readGeminiLastMessage(input.lastMessagePath)),
     logRef: input.logRef
   }
 }
@@ -178,9 +184,15 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
     'Follow these agent instructions for this Ordinus conversation:',
     input.instructions,
     '',
+    buildConversationOutcomeInstructions(),
+    '',
     'User message:',
     input.message
   ].join('\n')
+}
+
+function buildGeminiResumePrompt(input: RuntimeConversationTurnInput): string {
+  return [buildConversationOutcomeInstructions(), '', 'User message:', input.message].join('\n')
 }
 
 async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -638,11 +650,13 @@ function readGeminiConversationOutput(value: string): { sessionId: string; respo
   }
 
   const sessionId = getStringValue(parsed.session_id) || getStringValue(parsed.sessionId)
+  const responseValue = parsed.response ?? parsed.result ?? parsed.message
   const responseText =
-    getStringValue(parsed.response) ||
-    getStringValue(parsed.result) ||
-    getStringValue(parsed.message) ||
-    ''
+    typeof responseValue === 'string'
+      ? responseValue
+      : responseValue
+        ? JSON.stringify(responseValue)
+        : ''
 
   if (!responseText.trim()) {
     throw new Error('Gemini returned an empty conversation response.')
