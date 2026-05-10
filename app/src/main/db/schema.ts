@@ -84,3 +84,49 @@ export const conversationInputRequests = sqliteTable('conversation_input_request
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
+
+export const workRuns = sqliteTable('work_runs', {
+  id: text('id').primaryKey(),
+  rootRunId: text('root_run_id').notNull(),
+  parentRunId: text('parent_run_id'),
+  assignedAgentId: text('assigned_agent_id').notNull(),
+  createdByType: text('created_by_type').notNull(),
+  createdByAgentId: text('created_by_agent_id'),
+  sourceType: text('source_type'),
+  sourceId: text('source_id'),
+  sourceItemId: text('source_item_id'),
+  title: text('title').notNull(),
+  instruction: text('instruction').notNull(),
+  status: text('status').notNull(),
+  priority: integer('priority').notNull().default(0),
+  providerId: text('provider_id').notNull(),
+  model: text('model').notNull(),
+  providerSessionRef: text('provider_session_ref'),
+  workspaceRoot: text('workspace_root').notNull(),
+  sandbox: text('sandbox').notNull(),
+  resultSummary: text('result_summary').notNull().default(''),
+  resultArtifactRef: text('result_artifact_ref').notNull().default(''),
+  error: text('error').notNull().default(''),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  startedAt: text('started_at'),
+  completedAt: text('completed_at')
+})
+
+export const workRunDependencies = sqliteTable('work_run_dependencies', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  dependsOnRunId: text('depends_on_run_id').notNull(),
+  status: text('status').notNull(),
+  createdAt: text('created_at').notNull(),
+  resolvedAt: text('resolved_at')
+})
+
+export const workRunEvents = sqliteTable('work_run_events', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  sequence: integer('sequence').notNull(),
+  kind: text('kind').notNull(),
+  payload: text('payload').notNull(),
+  createdAt: text('created_at').notNull()
+})

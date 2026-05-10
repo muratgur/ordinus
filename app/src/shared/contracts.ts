@@ -389,6 +389,112 @@ export const ConversationCancelInputRequestInputSchema = z.object({
   requestId: z.string().min(1)
 })
 
+export const WorkRunStatusSchema = z.enum([
+  'queued',
+  'running',
+  'blocked',
+  'waiting_for_user',
+  'completed',
+  'failed',
+  'cancelled'
+])
+
+export const WorkRunCreatedByTypeSchema = z.enum(['user', 'agent', 'system'])
+export const WorkRunDependencyStatusSchema = z.enum(['pending', 'satisfied'])
+export const WorkRunEventKindSchema = z.enum([
+  'created',
+  'blocked',
+  'queued',
+  'started',
+  'completed',
+  'failed',
+  'cancelled',
+  'dependency_satisfied'
+])
+
+export const WorkRunSourceSchema = z.object({
+  type: z.string().trim().min(1).max(80),
+  id: z.string().trim().min(1).max(160),
+  itemId: z.string().trim().min(1).max(160).optional()
+})
+
+export const WorkRunSchema = z.object({
+  id: z.string().min(1),
+  rootRunId: z.string().min(1),
+  parentRunId: z.string().min(1).nullable(),
+  assignedAgentId: z.string().min(1),
+  createdByType: WorkRunCreatedByTypeSchema,
+  createdByAgentId: z.string().min(1).nullable(),
+  source: WorkRunSourceSchema.nullable(),
+  title: z.string().min(1),
+  instruction: z.string().min(1),
+  status: WorkRunStatusSchema,
+  priority: z.number().int(),
+  providerId: ProviderIdSchema,
+  model: z.string().min(1),
+  providerSessionRef: z.string().nullable(),
+  workspaceRoot: z.string().min(1),
+  sandbox: AgentSandboxSchema,
+  resultSummary: z.string(),
+  resultArtifactRef: z.string(),
+  error: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable()
+})
+
+export const WorkRunDependencySchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  dependsOnRunId: z.string().min(1),
+  status: WorkRunDependencyStatusSchema,
+  createdAt: z.string(),
+  resolvedAt: z.string().nullable()
+})
+
+export const WorkRunEventSchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  sequence: z.number().int().positive(),
+  kind: WorkRunEventKindSchema,
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: z.string()
+})
+
+export const WorkRunInputSummarySchema = z.object({
+  runId: z.string().min(1),
+  title: z.string().min(1),
+  resultSummary: z.string().min(1),
+  artifactRef: z.string()
+})
+
+export const WorkRunCreateInputSchema = z.object({
+  assignedAgentId: z.string().min(1),
+  title: z.string().trim().min(1, 'Title is required.').max(160),
+  instruction: z.string().trim().min(1, 'Instruction is required.').max(64_000),
+  parentRunId: z.string().min(1).optional(),
+  requiredRunIds: z.array(z.string().min(1)).max(16).default([]),
+  createdByType: WorkRunCreatedByTypeSchema.default('user'),
+  createdByAgentId: z.string().min(1).optional(),
+  source: WorkRunSourceSchema.optional(),
+  priority: z.number().int().min(-100).max(100).default(0)
+})
+
+export const WorkRunActionInputSchema = z.object({
+  runId: z.string().min(1)
+})
+
+export const WorkRunCompleteInputSchema = WorkRunActionInputSchema.extend({
+  resultSummary: z.string().trim().min(1, 'Result summary is required.').max(16_000),
+  artifactRef: z.string().trim().max(500).optional(),
+  providerSessionRef: z.string().trim().min(1).optional()
+})
+
+export const WorkRunFailInputSchema = WorkRunActionInputSchema.extend({
+  error: z.string().trim().min(1, 'Error is required.').max(2_000)
+})
+
 export const OrchestrationAssignmentSchema = z.object({
   participantId: z.string().min(1),
   instruction: z.string().trim().min(1).max(16_000)
@@ -458,5 +564,18 @@ export type ConversationAnswerInputRequestInput = z.infer<
 export type ConversationCancelInputRequestInput = z.infer<
   typeof ConversationCancelInputRequestInputSchema
 >
+export type WorkRunStatus = z.infer<typeof WorkRunStatusSchema>
+export type WorkRunCreatedByType = z.infer<typeof WorkRunCreatedByTypeSchema>
+export type WorkRunDependencyStatus = z.infer<typeof WorkRunDependencyStatusSchema>
+export type WorkRunEventKind = z.infer<typeof WorkRunEventKindSchema>
+export type WorkRunSource = z.infer<typeof WorkRunSourceSchema>
+export type WorkRun = z.infer<typeof WorkRunSchema>
+export type WorkRunDependency = z.infer<typeof WorkRunDependencySchema>
+export type WorkRunEvent = z.infer<typeof WorkRunEventSchema>
+export type WorkRunInputSummary = z.infer<typeof WorkRunInputSummarySchema>
+export type WorkRunCreateInput = z.input<typeof WorkRunCreateInputSchema>
+export type WorkRunActionInput = z.infer<typeof WorkRunActionInputSchema>
+export type WorkRunCompleteInput = z.infer<typeof WorkRunCompleteInputSchema>
+export type WorkRunFailInput = z.infer<typeof WorkRunFailInputSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>
