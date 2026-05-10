@@ -12,6 +12,8 @@ import type {
   AgentUpdateSettingsInput,
   AppInfo,
   ConversationCancelTurnInput,
+  ConversationAnswerInputRequestInput,
+  ConversationCancelInputRequestInput,
   ConversationCreateDirectInput,
   ConversationCreateManualInput,
   ConversationDetail,
@@ -68,6 +70,8 @@ export type OrdinusApi = {
     updateRoutingMode: (input: ConversationUpdateRoutingModeInput) => Promise<ConversationDetail>
     sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>
     cancelTurn: (input: ConversationCancelTurnInput) => Promise<ConversationDetail>
+    answerInputRequest: (input: ConversationAnswerInputRequestInput) => Promise<ConversationDetail>
+    cancelInputRequest: (input: ConversationCancelInputRequestInput) => Promise<ConversationDetail>
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>

@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
   Bot,
+  CheckCircle2,
   Clock3,
+  ClipboardList,
   Loader2,
   MessageSquareText,
   Plus,
@@ -14,6 +16,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
+import { Badge } from '@renderer/components/ui/badge'
 import {
   Card,
   CardContent,
@@ -35,9 +38,12 @@ import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
   ConversationDetail,
+  ConversationInputRequest,
   ConversationListItem,
   ConversationParticipant,
   ConversationStatus,
+  InteractionAnswer,
+  InteractionQuestion,
   ConversationTurn,
   ConversationTurnStatus
 } from '@shared/contracts'
@@ -63,6 +69,20 @@ type MentionPickerState = {
   query: string
 }
 
+type AnswerDraft =
+  | { type: 'option'; optionId: string }
+  | { type: 'custom'; text: string }
+  | { type: 'text'; text: string }
+  | { type: 'boolean'; value: boolean }
+
+type RequestDrafts = Record<string, Record<string, AnswerDraft>>
+
+type InputRequestProgress = {
+  answers: InteractionAnswer[]
+  answeredCount: number
+  canContinue: boolean
+}
+
 export function ConversationsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [conversations, setConversations] = useState<ConversationListItem[]>([])
@@ -74,16 +94,24 @@ export function ConversationsScreen(): React.JSX.Element {
   const [draftMentions, setDraftMentions] = useState<DraftMention[]>([])
   const [sending, setSending] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [answeringRequestId, setAnsweringRequestId] = useState('')
+  const [cancellingRequestId, setCancellingRequestId] = useState('')
+  const [activeInputRequestId, setActiveInputRequestId] = useState('')
+  const [inputDrafts, setInputDrafts] = useState<RequestDrafts>({})
   const [updatingRoutingMode, setUpdatingRoutingMode] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const runningTurns = detail?.turns.filter((turn) => turn.status === 'running') ?? []
   const runningTurn = runningTurns[0] ?? null
+  const pendingInputRequest = detail?.inputRequests.find((request) => request.status === 'pending')
+  const activeInputRequest =
+    detail?.inputRequests.find((request) => request.id === activeInputRequestId) ?? null
   const participant = detail?.participants[0] ?? null
   const composerBlocked =
     !detail ||
     Boolean(runningTurn) ||
+    Boolean(pendingInputRequest) ||
     sending ||
     !participant ||
     !message.trim() ||
@@ -92,6 +120,24 @@ export function ConversationsScreen(): React.JSX.Element {
   const latestTurnSignature = latestTurn
     ? `${detail?.id}:${latestTurn.id}:${latestTurn.status}:${latestTurn.content}`
     : detail?.id
+
+  function updateInputDraft(requestId: string, questionId: string, draft: AnswerDraft): void {
+    setInputDrafts((current) => ({
+      ...current,
+      [requestId]: {
+        ...(current[requestId] ?? {}),
+        [questionId]: draft
+      }
+    }))
+  }
+
+  function clearInputDraft(requestId: string): void {
+    setInputDrafts((current) => {
+      const remainingDrafts = { ...current }
+      delete remainingDrafts[requestId]
+      return remainingDrafts
+    })
+  }
 
   async function loadConversations(nextSelectedId = selectedConversationId): Promise<void> {
     const nextConversations = await window.ordinus.conversations.list()
@@ -260,6 +306,44 @@ export function ConversationsScreen(): React.JSX.Element {
     }
   }
 
+  async function handleAnswerInputRequest(
+    requestId: string,
+    answers: InteractionAnswer[]
+  ): Promise<void> {
+    try {
+      setAnsweringRequestId(requestId)
+      setError('')
+      const nextDetail = await window.ordinus.conversations.answerInputRequest({
+        requestId,
+        answers
+      })
+      setActiveInputRequestId('')
+      clearInputDraft(requestId)
+      setDetail(nextDetail)
+      await loadConversations(nextDetail.id)
+    } catch (answerError) {
+      setError(getErrorMessage(answerError, 'Input request could not be answered.'))
+    } finally {
+      setAnsweringRequestId('')
+    }
+  }
+
+  async function handleCancelInputRequest(requestId: string): Promise<void> {
+    try {
+      setCancellingRequestId(requestId)
+      setError('')
+      const nextDetail = await window.ordinus.conversations.cancelInputRequest({ requestId })
+      setActiveInputRequestId('')
+      clearInputDraft(requestId)
+      setDetail(nextDetail)
+      await loadConversations(nextDetail.id)
+    } catch (cancelError) {
+      setError(getErrorMessage(cancelError, 'Input request could not be cancelled.'))
+    } finally {
+      setCancellingRequestId('')
+    }
+  }
+
   async function handleRoutingModeChange(orchestrated: boolean): Promise<void> {
     if (!detail) {
       return
@@ -282,7 +366,7 @@ export function ConversationsScreen(): React.JSX.Element {
   }
 
   return (
-    <div className="grid h-[calc(100vh-7rem)] min-h-0 gap-4 overflow-hidden py-6 xl:grid-cols-[280px_minmax(0,1fr)_280px]">
+    <div className="grid h-[calc(100vh-7rem)] min-h-0 gap-4 overflow-hidden py-6 xl:grid-cols-[280px_minmax(0,1fr)]">
       <ConversationList
         conversations={conversations}
         loading={loading}
@@ -308,13 +392,39 @@ export function ConversationsScreen(): React.JSX.Element {
               <ScrollArea className="min-h-0 flex-1">
                 <CardContent className="grid gap-3 p-4">
                   {detail.turns.length > 0 ? (
-                    detail.turns.map((turn, index) => (
-                      <TurnCard
-                        key={turn.id}
-                        turn={turn}
-                        participantName={getTurnParticipantLabel(detail, turn, index)}
-                      />
-                    ))
+                    detail.turns.map((turn, index) => {
+                      const turnInputRequests = detail.inputRequests.filter(
+                        (request) => request.turnId === turn.id
+                      )
+
+                      return (
+                        <div key={turn.id} className="grid gap-3">
+                          <TurnCard
+                            turn={turn}
+                            participantName={getTurnParticipantLabel(detail, turn, index)}
+                          />
+                          {turnInputRequests.map((request) => (
+                            <InputRequestCard
+                              key={request.id}
+                              request={request}
+                              participantName={getParticipantName(
+                                detail.participants,
+                                request.participantId
+                              )}
+                              disabled={hasRunningTurnForParticipant(
+                                detail.turns,
+                                request.participantId
+                              )}
+                              drafts={inputDrafts[request.id] ?? {}}
+                              answering={answeringRequestId === request.id}
+                              cancelling={cancellingRequestId === request.id}
+                              onOpen={() => setActiveInputRequestId(request.id)}
+                              onCancel={() => void handleCancelInputRequest(request.id)}
+                            />
+                          ))}
+                        </div>
+                      )
+                    })
                   ) : (
                     <EmptyState
                       icon={<MessageSquareText />}
@@ -330,7 +440,13 @@ export function ConversationsScreen(): React.JSX.Element {
                 participants={detail.participants}
                 routingMode={detail.routingMode}
                 selectedMentions={draftMentions}
-                blockedReason={getBlockedReason(detail, participant, runningTurn, draftMentions)}
+                blockedReason={getBlockedReason(
+                  detail,
+                  participant,
+                  runningTurn,
+                  pendingInputRequest,
+                  draftMentions
+                )}
                 disabled={composerBlocked}
                 sending={sending}
                 onChange={handleMessageChange}
@@ -350,14 +466,35 @@ export function ConversationsScreen(): React.JSX.Element {
         </Card>
       </main>
 
-      <ParticipantsPanel detail={detail} agents={agents} />
-
       <CreateConversationDialog
         agents={agents}
         open={createOpen}
         onCreateConversation={handleCreateConversation}
         onOpenChange={setCreateOpen}
       />
+      {detail && activeInputRequest ? (
+        <InputRequestDialog
+          request={activeInputRequest}
+          participantName={getParticipantName(
+            detail.participants,
+            activeInputRequest.participantId
+          )}
+          drafts={inputDrafts[activeInputRequest.id] ?? {}}
+          disabled={hasRunningTurnForParticipant(detail.turns, activeInputRequest.participantId)}
+          answering={answeringRequestId === activeInputRequest.id}
+          cancelling={cancellingRequestId === activeInputRequest.id}
+          onDraftChange={(questionId, draft) =>
+            updateInputDraft(activeInputRequest.id, questionId, draft)
+          }
+          onAnswer={(answers) => void handleAnswerInputRequest(activeInputRequest.id, answers)}
+          onCancel={() => void handleCancelInputRequest(activeInputRequest.id)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setActiveInputRequestId('')
+            }
+          }}
+        />
+      ) : null}
     </div>
   )
 }
@@ -549,6 +686,322 @@ function TurnCard({
         <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
       ) : null}
     </article>
+  )
+}
+
+function InputRequestCard({
+  request,
+  participantName,
+  disabled,
+  drafts,
+  answering,
+  cancelling,
+  onOpen,
+  onCancel
+}: {
+  request: ConversationInputRequest
+  participantName: string
+  disabled: boolean
+  drafts: Record<string, AnswerDraft>
+  answering: boolean
+  cancelling: boolean
+  onOpen: () => void
+  onCancel: () => void
+}): React.JSX.Element {
+  const progress = getInputRequestProgress(request, drafts)
+  const actionDisabled = disabled || answering || cancelling
+
+  return (
+    <article className="mr-auto grid w-full max-w-[92%] gap-3 rounded-lg border border-status-blocked/30 bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="mt-0.5 rounded-md border border-status-blocked/20 bg-status-blocked/10 p-2 text-status-blocked">
+            <ClipboardList className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{participantName || 'Agent'} needs your input</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{request.title}</p>
+          </div>
+        </div>
+        <TurnStatus status={getTurnStatusForInputRequest(request.status)} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={progress.canContinue ? 'completed' : 'blocked'}>
+          {progress.answeredCount}/{request.questions.length} answered
+        </Badge>
+        {request.detail ? (
+          <span className="line-clamp-1 text-xs text-muted-foreground">{request.detail}</span>
+        ) : null}
+      </div>
+
+      {request.status === 'resolved' && request.answers && request.answers.length > 0 ? (
+        <AnsweredRequestSummary request={request} />
+      ) : null}
+
+      {request.status === 'pending' ? (
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="secondary" disabled={actionDisabled} onClick={onCancel}>
+            {cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}
+            Cancel
+          </Button>
+          <Button type="button" disabled={actionDisabled} onClick={onOpen}>
+            {answering ? <Loader2 className="animate-spin" /> : <ClipboardList />}
+            {progress.canContinue ? 'Review answers' : 'Answer'}
+          </Button>
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
+function InputRequestDialog({
+  request,
+  participantName,
+  drafts,
+  disabled,
+  answering,
+  cancelling,
+  onDraftChange,
+  onAnswer,
+  onCancel,
+  onOpenChange
+}: {
+  request: ConversationInputRequest
+  participantName: string
+  drafts: Record<string, AnswerDraft>
+  disabled: boolean
+  answering: boolean
+  cancelling: boolean
+  onDraftChange: (questionId: string, draft: AnswerDraft) => void
+  onAnswer: (answers: InteractionAnswer[]) => void
+  onCancel: () => void
+  onOpenChange: (open: boolean) => void
+}): React.JSX.Element {
+  const progress = getInputRequestProgress(request, drafts)
+  const formDisabled = disabled || request.status !== 'pending' || answering || cancelling
+  const actionDisabled = disabled || answering || cancelling
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl p-0">
+        <DialogHeader className="border-b px-6 py-5">
+          <div className="flex items-start justify-between gap-4 pr-8">
+            <div className="min-w-0">
+              <DialogTitle>{participantName || 'Agent'} needs your input</DialogTitle>
+              <DialogDescription className="mt-2">{request.title}</DialogDescription>
+            </div>
+            <Badge variant={progress.canContinue ? 'completed' : 'blocked'}>
+              {progress.answeredCount}/{request.questions.length} answered
+            </Badge>
+          </div>
+          {request.detail ? (
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">{request.detail}</p>
+          ) : null}
+        </DialogHeader>
+        <ScrollArea className="max-h-[min(680px,calc(100vh-14rem))]">
+          <div className="grid gap-5 px-6 py-5">
+            {request.questions.map((question, index) => (
+              <QuestionInput
+                key={question.id}
+                index={index}
+                question={question}
+                draft={drafts[question.id]}
+                disabled={formDisabled}
+                onChange={(draft) => onDraftChange(question.id, draft)}
+              />
+            ))}
+          </div>
+        </ScrollArea>
+        <DialogFooter className="border-t px-6 py-4">
+          <Button type="button" variant="secondary" disabled={actionDisabled} onClick={onCancel}>
+            {cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}
+            Cancel request
+          </Button>
+          <Button
+            type="button"
+            disabled={actionDisabled || !progress.canContinue}
+            onClick={() => onAnswer(progress.answers)}
+          >
+            {answering ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+            Continue
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AnsweredRequestSummary({
+  request
+}: {
+  request: ConversationInputRequest
+}): React.JSX.Element {
+  const summaries = getAnsweredRequestSummaries(request)
+
+  return (
+    <div className="grid gap-1 rounded-md border bg-accent/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
+      {summaries.map((summary) => (
+        <p key={summary.questionId} className="line-clamp-1">
+          <span className="font-medium text-foreground">{summary.label}:</span> {summary.answer}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+function QuestionInput({
+  index,
+  question,
+  draft,
+  disabled,
+  onChange
+}: {
+  index: number
+  question: InteractionQuestion
+  draft: AnswerDraft | undefined
+  disabled: boolean
+  onChange: (draft: AnswerDraft) => void
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-2">
+      <div>
+        <p className="text-sm font-medium">
+          {index + 1}. {question.label}
+        </p>
+        {question.detail ? (
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{question.detail}</p>
+        ) : null}
+      </div>
+
+      {question.kind === 'choice' ? (
+        <ChoiceQuestionInput
+          question={question}
+          draft={draft}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      ) : question.kind === 'boolean' ? (
+        <div className="flex flex-wrap gap-2">
+          <OptionButton
+            selected={draft?.type === 'boolean' && draft.value}
+            disabled={disabled}
+            onClick={() => onChange({ type: 'boolean', value: true })}
+          >
+            {question.trueLabel}
+          </OptionButton>
+          <OptionButton
+            selected={draft?.type === 'boolean' && !draft.value}
+            disabled={disabled}
+            onClick={() => onChange({ type: 'boolean', value: false })}
+          >
+            {question.falseLabel}
+          </OptionButton>
+        </div>
+      ) : (
+        <textarea
+          className="ordinus-scrollbar min-h-20 resize-y rounded-md border bg-card p-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          placeholder={question.placeholder || 'Type your answer'}
+          value={draft?.type === 'text' ? draft.text : ''}
+          disabled={disabled}
+          onChange={(event) => onChange({ type: 'text', text: event.target.value })}
+        />
+      )}
+    </div>
+  )
+}
+
+function ChoiceQuestionInput({
+  question,
+  draft,
+  disabled,
+  onChange
+}: {
+  question: Extract<InteractionQuestion, { kind: 'choice' }>
+  draft: AnswerDraft | undefined
+  disabled: boolean
+  onChange: (draft: AnswerDraft) => void
+}): React.JSX.Element {
+  const customSelected = draft?.type === 'custom'
+  const singleCustomEntry = question.options.length === 1 && question.allowCustom !== false
+
+  if (singleCustomEntry) {
+    return (
+      <textarea
+        className="ordinus-scrollbar min-h-20 resize-y rounded-md border bg-card p-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        placeholder="Type your answer"
+        value={draft?.type === 'custom' ? draft.text : ''}
+        disabled={disabled}
+        onChange={(event) => onChange({ type: 'custom', text: event.target.value })}
+      />
+    )
+  }
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        {question.options.map((option) => (
+          <OptionButton
+            key={option.id}
+            selected={draft?.type === 'option' && draft.optionId === option.id}
+            disabled={disabled}
+            onClick={() => onChange({ type: 'option', optionId: option.id })}
+          >
+            <span>{option.label}</span>
+            {question.options.length > 1 && question.recommendedOptionId === option.id ? (
+              <span className="text-[11px] text-status-completed">Recommended</span>
+            ) : null}
+          </OptionButton>
+        ))}
+        {question.allowCustom !== false ? (
+          <OptionButton
+            selected={customSelected}
+            disabled={disabled}
+            onClick={() => onChange({ type: 'custom', text: '' })}
+          >
+            Custom
+          </OptionButton>
+        ) : null}
+      </div>
+      {customSelected ? (
+        <textarea
+          className="ordinus-scrollbar min-h-20 resize-y rounded-md border bg-card p-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          placeholder="Type your own answer"
+          value={draft.text}
+          disabled={disabled}
+          onChange={(event) => onChange({ type: 'custom', text: event.target.value })}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function OptionButton({
+  selected,
+  disabled,
+  onClick,
+  children
+}: {
+  selected: boolean
+  disabled: boolean
+  onClick: () => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      className={cn(
+        'inline-flex min-h-9 items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
+        selected
+          ? 'border-primary/40 bg-primary-soft text-foreground'
+          : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground'
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -795,95 +1248,6 @@ function MentionPicker({
   )
 }
 
-function ParticipantsPanel({
-  detail,
-  agents
-}: {
-  detail: ConversationDetail | null
-  agents: Agent[]
-}): React.JSX.Element {
-  return (
-    <aside className="min-h-0 min-w-0">
-      <Card className="flex h-full min-h-0 flex-col overflow-hidden">
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2">
-            <Bot className="size-4 text-primary" />
-            Participants
-          </CardTitle>
-          <CardDescription>
-            {detail
-              ? `${detail.participants.length} agent${detail.participants.length === 1 ? '' : 's'}`
-              : 'No conversation selected'}
-          </CardDescription>
-        </CardHeader>
-        <ScrollArea className="min-h-0 flex-1">
-          <CardContent className="grid min-w-0 gap-3 p-4">
-            {detail && detail.participants.length > 0 ? (
-              <>
-                {detail.participants.map((participant) => {
-                  const agent = agents.find((item) => item.id === participant.agentId)
-                  return (
-                    <ParticipantRow
-                      key={participant.id}
-                      name={participant.agentName}
-                      role={participant.agentRole}
-                      enabled={agent?.enabled ?? true}
-                      status={participant.status}
-                    />
-                  )
-                })}
-                <Button asChild variant="outline" size="sm" className="mt-1">
-                  <Link to={appRoutePaths.agents}>Manage agents</Link>
-                </Button>
-              </>
-            ) : (
-              <p className="text-sm leading-6 text-muted-foreground">
-                Select a conversation to see the active agent and session state.
-              </p>
-            )}
-          </CardContent>
-        </ScrollArea>
-      </Card>
-    </aside>
-  )
-}
-
-function ParticipantRow({
-  name,
-  role,
-  enabled,
-  status
-}: {
-  name: string
-  role: string
-  enabled: boolean
-  status: string
-}): React.JSX.Element {
-  return (
-    <div className="grid min-w-0 gap-2 rounded-lg border bg-card p-3">
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{name}</p>
-          <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{role}</p>
-        </div>
-        <span
-          className={cn(
-            'mt-1 size-2.5 shrink-0 rounded-full',
-            !enabled && 'bg-muted-foreground',
-            enabled && status === 'ready' && 'bg-status-completed',
-            enabled && status === 'running' && 'bg-status-running',
-            enabled && status === 'failed' && 'bg-status-failed',
-            enabled && status === 'cancelled' && 'bg-status-planned'
-          )}
-        />
-      </div>
-      <span className="w-fit rounded-full border bg-accent px-2 py-0.5 text-xs font-medium capitalize text-muted-foreground">
-        {enabled ? status : 'disabled'}
-      </span>
-    </div>
-  )
-}
-
 function CreateConversationDialog({
   agents,
   open,
@@ -1085,6 +1449,7 @@ function StatusDot({ status }: { status: ConversationStatus }): React.JSX.Elemen
         'mt-1 size-2.5 shrink-0 rounded-full',
         status === 'active' && 'bg-status-completed',
         status === 'running' && 'bg-status-running',
+        status === 'waiting_for_user' && 'bg-status-blocked',
         status === 'failed' && 'bg-status-failed',
         status === 'cancelled' && 'bg-status-planned'
       )}
@@ -1095,25 +1460,36 @@ function StatusDot({ status }: { status: ConversationStatus }): React.JSX.Elemen
 function StatusPill({ status }: { status: ConversationStatus }): React.JSX.Element {
   return (
     <span className="rounded-full border bg-card px-2.5 py-1 text-xs font-medium capitalize text-muted-foreground">
-      {status}
+      {formatStatusLabel(status)}
     </span>
   )
 }
 
 function TurnStatus({ status }: { status: ConversationTurnStatus }): React.JSX.Element {
-  const Icon = status === 'running' ? Clock3 : status === 'cancelled' ? XCircle : AlertTriangle
+  const Icon =
+    status === 'running'
+      ? Clock3
+      : status === 'completed'
+        ? CheckCircle2
+        : status === 'cancelled'
+          ? XCircle
+          : status === 'waiting_for_user'
+            ? AlertTriangle
+            : AlertTriangle
 
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs font-medium capitalize',
         status === 'running' && 'text-status-running',
+        status === 'waiting_for_user' && 'text-status-blocked',
+        status === 'completed' && 'text-status-completed',
         status === 'failed' && 'text-status-failed',
         status === 'cancelled' && 'text-muted-foreground'
       )}
     >
       <Icon className="size-3.5" />
-      {status}
+      {formatStatusLabel(status)}
     </span>
   )
 }
@@ -1122,10 +1498,15 @@ function getBlockedReason(
   detail: ConversationDetail,
   participant: ConversationDetail['participants'][number] | null,
   runningTurn: ConversationTurn | null,
+  pendingInputRequest: ConversationInputRequest | undefined,
   draftMentions: DraftMention[]
 ): string {
   if (runningTurn) {
     return 'This conversation is running. Stop it or wait for the agent response.'
+  }
+
+  if (pendingInputRequest) {
+    return 'This conversation is waiting for your input. Answer or cancel the request to continue.'
   }
 
   if (!participant) {
@@ -1141,6 +1522,123 @@ function getBlockedReason(
   }
 
   return ''
+}
+
+function formatStatusLabel(status: string): string {
+  return status === 'waiting_for_user' ? 'waiting for user' : status
+}
+
+function hasRunningTurnForParticipant(turns: ConversationTurn[], participantId: string): boolean {
+  return turns.some((turn) => turn.participantId === participantId && turn.status === 'running')
+}
+
+function getTurnStatusForInputRequest(
+  status: ConversationInputRequest['status']
+): ConversationTurnStatus {
+  if (status === 'pending') {
+    return 'waiting_for_user'
+  }
+
+  return status === 'cancelled' ? 'cancelled' : 'completed'
+}
+
+function getInputRequestProgress(
+  request: ConversationInputRequest,
+  drafts: Record<string, AnswerDraft>
+): InputRequestProgress {
+  const answers = getInteractionAnswers(request.questions, drafts)
+
+  return {
+    answers,
+    answeredCount: answers.length,
+    canContinue:
+      request.status === 'pending' &&
+      request.questions.every((question) => hasAnswer(question, drafts))
+  }
+}
+
+function getInteractionAnswers(
+  questions: InteractionQuestion[],
+  drafts: Record<string, AnswerDraft>
+): InteractionAnswer[] {
+  return questions
+    .map((question) => {
+      const draft = drafts[question.id]
+      if (!draft) return null
+
+      if (draft.type === 'option') {
+        return { questionId: question.id, type: 'option', optionId: draft.optionId } as const
+      }
+
+      if (draft.type === 'custom' && draft.text.trim()) {
+        return { questionId: question.id, type: 'custom', text: draft.text.trim() } as const
+      }
+
+      if (draft.type === 'text' && draft.text.trim()) {
+        return { questionId: question.id, type: 'text', text: draft.text.trim() } as const
+      }
+
+      if (draft.type === 'boolean') {
+        return { questionId: question.id, type: 'boolean', value: draft.value } as const
+      }
+
+      return null
+    })
+    .filter((answer): answer is InteractionAnswer => Boolean(answer))
+}
+
+function hasAnswer(question: InteractionQuestion, drafts: Record<string, AnswerDraft>): boolean {
+  if (!question.required) {
+    return true
+  }
+
+  const draft = drafts[question.id]
+  if (!draft) {
+    return false
+  }
+
+  if (draft.type === 'custom' || draft.type === 'text') {
+    return Boolean(draft.text.trim())
+  }
+
+  return true
+}
+
+function formatInteractionAnswer(question: InteractionQuestion, answer: InteractionAnswer): string {
+  if (answer.type === 'option' && question.kind === 'choice') {
+    return (
+      question.options.find((option) => option.id === answer.optionId)?.label ?? answer.optionId
+    )
+  }
+
+  if (answer.type === 'custom' || answer.type === 'text') {
+    return answer.text
+  }
+
+  if (answer.type === 'boolean' && question.kind === 'boolean') {
+    return answer.value ? question.trueLabel : question.falseLabel
+  }
+
+  return ''
+}
+
+function getAnsweredRequestSummaries(
+  request: ConversationInputRequest
+): Array<{ questionId: string; label: string; answer: string }> {
+  return (request.answers ?? []).slice(0, 3).flatMap((answer) => {
+    const question = request.questions.find((item) => item.id === answer.questionId)
+    if (!question) {
+      return []
+    }
+
+    return [
+      {
+        questionId: answer.questionId,
+        label: question.label,
+        answer: formatInteractionAnswer(question, answer)
+      }
+    ]
+  })
 }
 
 function usesOrchestrator(detail: ConversationDetail): boolean {

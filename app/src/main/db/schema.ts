@@ -70,3 +70,17 @@ export const conversationTurns = sqliteTable('conversation_turns', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
+
+export const conversationInputRequests = sqliteTable('conversation_input_requests', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull(),
+  turnId: text('turn_id').notNull(),
+  participantId: text('participant_id').notNull(),
+  status: text('status').notNull(),
+  title: text('title').notNull(),
+  detail: text('detail').notNull(),
+  questions: text('questions').notNull(),
+  answers: text('answers'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})

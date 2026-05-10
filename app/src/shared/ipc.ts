@@ -21,6 +21,8 @@ export const ipcChannels = {
   conversationsUpdateRoutingMode: 'conversations:update-routing-mode',
   conversationsSendTurn: 'conversations:send-turn',
   conversationsCancelTurn: 'conversations:cancel-turn',
+  conversationsAnswerInputRequest: 'conversations:answer-input-request',
+  conversationsCancelInputRequest: 'conversations:cancel-input-request',
   runtimeGetProviders: 'runtime:get-providers',
   runtimeConnectProvider: 'runtime:connect-provider',
   runtimeRefreshProvider: 'runtime:refresh-provider'
