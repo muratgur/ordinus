@@ -26,7 +26,6 @@ export const agents = sqliteTable('agents', {
   providerId: text('provider_id').notNull(),
   model: text('model').notNull(),
   sandbox: text('sandbox').notNull(),
-  workspaceRoot: text('workspace_root').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
@@ -35,6 +34,7 @@ export const agents = sqliteTable('agents', {
 export const conversations = sqliteTable('conversations', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
+  workingRoot: text('working_root').notNull().default(''),
   mode: text('mode').notNull(),
   routingMode: text('routing_mode').notNull().default('manual'),
   status: text('status').notNull(),
@@ -66,6 +66,8 @@ export const conversationTurns = sqliteTable('conversation_turns', {
   status: text('status').notNull(),
   error: text('error').notNull(),
   logRef: text('log_ref').notNull(),
+  artifactRefs: text('artifact_refs').notNull().default('[]'),
+  changedFiles: text('changed_files').notNull().default('[]'),
   truncated: integer('truncated', { mode: 'boolean' }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
@@ -104,7 +106,7 @@ export const workRuns = sqliteTable('work_runs', {
   providerId: text('provider_id').notNull(),
   model: text('model').notNull(),
   providerSessionRef: text('provider_session_ref'),
-  workspaceRoot: text('workspace_root').notNull(),
+  workingRoot: text('working_root').notNull().default(''),
   sandbox: text('sandbox').notNull(),
   expectedOutput: text('expected_output').notNull().default(''),
   resultSummary: text('result_summary').notNull().default(''),
@@ -123,8 +125,7 @@ export const workRequests = sqliteTable('work_requests', {
   title: text('title').notNull(),
   originalRequest: text('original_request').notNull(),
   summary: text('summary').notNull(),
-  workspaceRoot: text('workspace_root').notNull().default(''),
-  artifactRoot: text('artifact_root').notNull().default(''),
+  workingRoot: text('working_root').notNull().default(''),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),

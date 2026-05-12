@@ -47,7 +47,6 @@ type SettingsDraft = {
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox
-  workspaceRoot: string
   enabled: boolean
 }
 
@@ -487,12 +486,6 @@ function CreateAgentDialog({
                         <option value="full-access">Full access</option>
                       </SelectControl>
                     </FormField>
-                    <FormField label="Workspace">
-                      <Input
-                        value={draft.workspaceRoot}
-                        onChange={(event) => updateDraft({ workspaceRoot: event.target.value })}
-                      />
-                    </FormField>
                   </div>
                 </section>
                 {error ? <InlineError message={error} /> : null}
@@ -925,13 +918,6 @@ function SettingsPanel({
               <option value="full-access">Full access</option>
             </SelectControl>
           </FormField>
-
-          <FormField label="Workspace">
-            <Input
-              value={draft.workspaceRoot}
-              onChange={(event) => updateDraft({ workspaceRoot: event.target.value })}
-            />
-          </FormField>
         </div>
         {draft.sandbox === 'full-access' ? (
           <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
@@ -1158,7 +1144,6 @@ function getSettingsDraft(agent: Agent): SettingsDraft {
     providerId: agent.providerId,
     model: agent.model,
     sandbox: agent.sandbox,
-    workspaceRoot: agent.workspaceRoot,
     enabled: agent.enabled
   }
 }
@@ -1168,7 +1153,6 @@ function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): bo
     draft.providerId !== savedSettings.providerId ||
     draft.model !== savedSettings.model ||
     draft.sandbox !== savedSettings.sandbox ||
-    draft.workspaceRoot !== savedSettings.workspaceRoot ||
     draft.enabled !== savedSettings.enabled
   )
 }

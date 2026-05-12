@@ -98,7 +98,6 @@ export const AgentSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
-  workspaceRoot: z.string().min(1),
   enabled: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -106,8 +105,7 @@ export const AgentSchema = z.object({
 
 export const AgentDraftFromIntentInputSchema = z.object({
   requestedWork: z.string().trim().min(12, 'Describe what the agent should help with.'),
-  sandbox: AgentSandboxSchema.default('workspace-write'),
-  workspaceRoot: z.string().trim().min(1).optional()
+  sandbox: AgentSandboxSchema.default('workspace-write')
 })
 
 export const AgentDraftSchema = z.object({
@@ -117,8 +115,7 @@ export const AgentDraftSchema = z.object({
   instructions: z.string().min(1),
   providerId: ProviderIdSchema,
   model: z.string().min(1),
-  sandbox: AgentSandboxSchema,
-  workspaceRoot: z.string().min(1)
+  sandbox: AgentSandboxSchema
 })
 
 export const AgentCreateInputSchema = AgentDraftSchema
@@ -133,7 +130,6 @@ export const AgentUpdateSettingsInputSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
-  workspaceRoot: z.string().min(1),
   enabled: z.boolean()
 })
 
@@ -323,6 +319,8 @@ export const ConversationTurnSchema = z.object({
   status: ConversationTurnStatusSchema,
   error: z.string(),
   logRef: z.string(),
+  artifactRefs: z.array(WorkspaceRelativePathSchema),
+  changedFiles: z.array(WorkspaceRelativePathSchema),
   truncated: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -345,6 +343,7 @@ export const ConversationInputRequestSchema = z.object({
 export const ConversationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
+  workingRoot: WorkspaceRelativePathSchema,
   mode: ConversationModeSchema,
   routingMode: ConversationRoutingModeSchema.default('manual'),
   status: ConversationStatusSchema,
@@ -392,6 +391,10 @@ export const ConversationUpdateRoutingModeInputSchema = z.object({
 
 export const ConversationCancelTurnInputSchema = z.object({
   turnId: z.string().min(1)
+})
+
+export const ConversationRevealPathInputSchema = ConversationCancelTurnInputSchema.extend({
+  relativePath: WorkspaceRelativePathSchema
 })
 
 export const ConversationAnswerInputRequestInputSchema = z.object({
@@ -446,8 +449,7 @@ export const WorkRequestSchema = z.object({
   title: z.string().min(1),
   originalRequest: z.string().min(1),
   summary: z.string(),
-  workspaceRoot: z.string(),
-  artifactRoot: z.string(),
+  workingRoot: WorkspaceRelativePathSchema,
   status: WorkRequestStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -472,7 +474,7 @@ export const WorkRunSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   providerSessionRef: z.string().nullable(),
-  workspaceRoot: z.string().min(1),
+  workingRoot: WorkspaceRelativePathSchema,
   sandbox: AgentSandboxSchema,
   expectedOutput: z.string(),
   resultSummary: z.string(),
@@ -722,6 +724,7 @@ export type ConversationUpdateRoutingModeInput = z.infer<
   typeof ConversationUpdateRoutingModeInputSchema
 >
 export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>
+export type ConversationRevealPathInput = z.infer<typeof ConversationRevealPathInputSchema>
 export type ConversationAnswerInputRequestInput = z.infer<
   typeof ConversationAnswerInputRequestInputSchema
 >

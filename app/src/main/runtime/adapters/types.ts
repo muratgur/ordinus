@@ -49,6 +49,7 @@ export type RuntimeConversationTurnInput = {
   model: string
   sandbox: AgentSandbox
   workspaceRoot: string
+  workingRoot: string
   agentName: string
   agentRole: string
   instructions: string
@@ -72,6 +73,7 @@ export type RuntimeWorkRunInput = {
   model: string
   sandbox: AgentSandbox
   workspaceRoot: string
+  workingRoot: string
   agentName: string
   agentRole: string
   instructions: string
@@ -80,8 +82,6 @@ export type RuntimeWorkRunInput = {
   instruction: string
   expectedOutput: string
   requiredInputs: WorkRunInputSummary[]
-  workRequestArtifactRoot: string
-  agentArtifactDir: string
   resumeMessage?: string
   logRef: string
   eventLogPath: string

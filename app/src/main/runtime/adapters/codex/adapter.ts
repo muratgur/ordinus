@@ -45,6 +45,7 @@ import {
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
+import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
 import {
   connectCliProvider,
   createProviderLoginResult,
@@ -199,6 +200,8 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
     'Follow these agent instructions for this Ordinus conversation:',
     input.instructions,
     '',
+    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
     buildConversationOutcomeInstructions(),
     '',
     'User message:',
@@ -207,7 +210,14 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
 }
 
 function buildCodexResumePrompt(input: RuntimeConversationTurnInput): string {
-  return [buildConversationOutcomeInstructions(), '', 'User message:', input.message].join('\n')
+  return [
+    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
+    buildConversationOutcomeInstructions(),
+    '',
+    'User message:',
+    input.message
+  ].join('\n')
 }
 
 function writeCodexConversationOutcomeSchema(input: RuntimeConversationTurnInput): string {

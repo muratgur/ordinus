@@ -53,6 +53,12 @@ Agents may read or modify other files inside the workspace when the task require
 project files should be changed in their natural locations. New supporting files should usually be
 placed under the suggested module working folder when that fits the work.
 
+Workspace-relative module folders are not the only directories a provider runtime may need. When an
+agent needs an app-owned support directory outside the workspace, such as an agent-specific skill,
+reference, template, script, or private working folder, the main process must grant that directory to
+the provider through the provider's native extra-directory mechanism. Ordinus should not rely on a
+prompted absolute path to grant filesystem access outside `WorkspaceRoot`.
+
 ## Module Working Folders
 
 Module folder names should be lowercase and simple:
@@ -118,6 +124,39 @@ Do not return absolute paths.
 The provider CLI should not normally be executed with the suggested module folder as `cwd`, because
 agents need the workspace root to discover project files, package manifests, git state, and other
 project-level context.
+
+### Agent-Owned Support Directories
+
+Agent-owned support directories are app-owned directories outside the workspace that belong to a
+specific agent. Examples include:
+
+- Agent-specific skills.
+- Agent-specific reference materials.
+- Agent-specific templates or reusable scripts.
+- Future agent-private working files that should not be workspace artifacts.
+
+These directories may live under Electron `userData`, for example:
+
+```text
+userData/agents/<agent-id>/skills/
+```
+
+Because these paths are outside `WorkspaceRoot`, they must not be given to the agent merely as
+absolute paths in the prompt. Prompt text can describe why the support directory exists, but
+filesystem access must be granted by the provider adapter through a provider-specific mechanism.
+
+Current provider mechanisms include:
+
+- Codex: pass the directory with `--add-dir`.
+- Claude: pass the directory with `--add-dir`.
+- Gemini: pass the directory with `--include-directories`; when sandboxing requires explicit
+  mounts, use the provider-supported sandbox mount mechanism.
+
+The support directory may be readable or writable according to the provider's permissions model. That
+is acceptable when the directory is owned by the same agent: if the agent modifies or damages files
+there, the blast radius is limited to that agent-owned app state. These files are not workspace
+artifacts, are not reported as `artifactRefs` or `changedFiles`, and should not be shown as
+user-created workspace output.
 
 ### Internal Provider Paths
 
@@ -187,6 +226,15 @@ exception, not the default.
 - Rejected: conversation files should be grouped by conversation unless a later module-specific
   workflow needs finer structure.
 
+### Prompt Absolute Paths For Agent-Owned Support Directories
+
+- Pros: Simple to implement and provider-neutral on the surface.
+- Cons: Prompt text does not grant filesystem access. Provider sandboxes and permission systems may
+  refuse reads or writes outside `WorkspaceRoot`, and behavior would differ across Codex, Claude, and
+  Gemini.
+- Rejected: workspace-external support directories must be granted through provider-specific
+  extra-directory mechanisms.
+
 ## Consequences
 
 - The user has one understandable workspace boundary.
@@ -194,21 +242,25 @@ exception, not the default.
 - User-visible agent files are inspectable under module folders in the workspace.
 - Existing project files can still be changed in their natural locations.
 - App-owned state stays in `userData` and remains separate from user-visible workspace artifacts.
+- Agent-owned support directories can stay outside the workspace without losing provider access,
+  because adapters grant them explicitly.
 - Future modules can add their own suggested working folders through the centralized path policy.
 - Runtime prompts and completion contracts must consistently require workspace-relative file
   references.
 
 ## Implementation Notes
 
-- This ADR records the target product and architecture policy. It does not require this commit to
-  change code, migrations, or runtime behavior.
-- Future implementation should simplify or replace agent-level and run-level absolute workspace
-  fields such as `agents.workspaceRoot`, `work_requests.workspaceRoot`, and `work_runs.workspaceRoot`
-  where they conflict with the single-root model.
-- Workspace path generation should move into a central main-process policy/helper before more
-  modules add their own folder layouts.
+- The current implementation removes agent-level and run-level absolute workspace fields such as
+  `agents.workspaceRoot`, `work_requests.workspaceRoot`, and `work_runs.workspaceRoot` from the
+  active contract/schema.
+- Workspace path generation lives in a central main-process policy/helper before more modules add
+  their own folder layouts.
 - Renderer code should not create module working folders directly.
 - Main process should validate workspace-relative paths before revealing or trusting provider
   reported files.
+- Conversation turns and Workboard runs should persist reported artifacts and changed files as
+  workspace-relative references.
+- Provider adapters should centralize extra-directory grants for agent-owned support directories
+  instead of spreading provider-specific path arguments through module code.
 - Provider logs and internal transport files may stay in AppData, but user-facing artifacts and
   changed-file references should point only to workspace-relative paths.
