@@ -1,4 +1,4 @@
-# ADR-008: Store Workboard Artifacts In The Selected Workspace
+# ADR-008: Use One Workspace Root With Module Working Folders
 
 ## Status
 
@@ -6,129 +6,144 @@ Accepted
 
 ## Date
 
-2026-05-10
+2026-05-12
 
 ## Context
 
-Workboard work can produce more than short text summaries. Agents may create reports, research
-notes, spreadsheets, PDFs, images, patches, or other project files. Some outputs are intermediate
-agent-owned materials, while others are shared or final deliverables for the whole Work Request.
+Ordinus coordinates agents around user-visible software work. The workspace folder exists so agent
+work, generated files, handoffs, and future module outputs have one clear project boundary.
 
-The generic work runtime already records status, dependencies, summaries, and provider session
-references. It also keeps internal logs and database state under the application's user data
-directory. That is appropriate for Ordinus-owned runtime state, but it is not the right place for
-user work artifacts. User-visible work should live in the workspace the user selected for the work.
+The earlier Workboard artifact decision placed Workboard outputs under the selected workspace. That
+was directionally correct, but the product model still had too many workspace-like concepts:
 
-Agent-to-agent handoff also needs a bounded context strategy. Passing full upstream outputs into
-every dependent prompt does not scale when prior work produced long reports or files. It increases
-token use, hides the useful signal, and makes later agents depend on copied context instead of the
-workspace as the shared source of truth.
+- The selected workspace root in app setup.
+- Agent-level workspace roots.
+- Work Request and Work Run workspace snapshots.
+- App-owned provider paths under Electron `userData`.
+- User-visible artifact paths inside the workspace.
+
+Those concepts are easy to confuse. If each agent or module owns a separate absolute working folder,
+Ordinus becomes harder to explain and harder to control. If the user moves the whole workspace
+folder and selects its new location later, internal references should not break. That requires all
+workspace-owned file references to be relative to one root.
+
+At the same time, agents should not create files randomly across the root. Each product module needs
+a natural place for its own work. That place should organize files, not restrict what the agent can
+read or modify when the task legitimately needs other workspace files.
 
 ## Decision
 
-Store Workboard artifacts under the selected workspace, grouped by Work Request.
+Use one workspace root and module-specific workspace-relative working folders.
 
-When a Work Request starts, Ordinus should define a workspace-relative artifact root:
+`WorkspaceRoot` is the single absolute filesystem path selected by the user and stored by Ordinus as
+application configuration. It is the project boundary for user-visible agent work. Provider runtime
+execution receives this absolute path from the Electron main process as the CLI working directory or
+provider-specific workspace argument.
 
-```text
-workboard/<work-request-slug-id>/
-```
+Every durable user-visible file reference produced by agents or modules must be stored and reported
+as a path relative to `WorkspaceRoot`. Ordinus should not persist absolute artifact paths for
+workspace-owned files.
 
-The slug should be readable but collision-resistant, such as a short request slug plus a short
-stable id:
+Modules define a `SuggestedModuleWorkingFolder`: a workspace-relative folder that gives the agent a
+good default place for new notes, reports, handoff files, generated artifacts, and other supporting
+files for that module context. This folder is included in the agent prompt. It is not an access
+restriction.
 
-```text
-workboard/bulgarian-sme-strategy-wr8f3a/
-```
+Agents may read or modify other files inside the workspace when the task requires it. Existing
+project files should be changed in their natural locations. New supporting files should usually be
+placed under the suggested module working folder when that fits the work.
 
-Ordinus should pass this artifact root to every Work Item prompt for that Work Request. Agents may
-organize files inside that root according to the shape of the work.
+## Module Working Folders
 
-### Artifact Organization
-
-Use the Work Request artifact root for shared or final deliverables:
-
-```text
-workboard/bulgarian-sme-strategy-wr8f3a/final-report.md
-workboard/bulgarian-sme-strategy-wr8f3a/strategy-deck.pdf
-```
-
-Use agent-specific subdirectories for role-specific or intermediate materials:
+Module folder names should be lowercase and simple:
 
 ```text
-workboard/bulgarian-sme-strategy-wr8f3a/ceo/go-to-market-notes.md
-workboard/bulgarian-sme-strategy-wr8f3a/researcher/competitor-table.xlsx
+conversations/<conversation-slug-id>/
+workboard/<request-slug-id>/
+schedules/<scheduled-job-slug-id>/
 ```
 
-If the task naturally requires changing existing project files, agents may write those files in
-their normal project locations rather than forcing everything into `workboard/`. For example, a
-code implementation should modify source files in the project tree, while a research report should
-usually be saved under the Work Request artifact root.
+The module path policy should be centralized behind one main-process helper or service. Callers
+should ask that policy for a module working folder instead of assembling these paths inline. If a
+future product decision changes `conversations/` to another folder name, implementation should
+change in one path policy location rather than across runtime prompts, directory creation, database
+records, and UI reveal behavior.
 
-Ordinus should not store user-facing artifacts in AppData. AppData remains for Ordinus-owned data:
+Conversation work should be grouped by conversation, not by every turn. A conversation may have many
+turns, but it should still have one natural working folder:
+
+```text
+conversations/<conversation-slug-id>/
+```
+
+Workboard work should be grouped by Work Request:
+
+```text
+workboard/<request-slug-id>/
+```
+
+Agents may create subfolders inside the suggested folder when that is useful, but Ordinus should not
+force a fixed agent-specific subfolder for every run.
+
+## Provider Runtime Contract
+
+Provider runtime has three different path categories:
+
+### Workspace Root
+
+The Electron main process passes the absolute `WorkspaceRoot` to the provider CLI as the execution
+workspace. Depending on the provider, this may be process `cwd`, a workspace flag such as `-C`, or
+both. Renderer code must not pass arbitrary shell commands or unchecked absolute paths.
+
+### Suggested Module Working Folder
+
+The suggested folder is passed in the prompt as a workspace-relative path:
+
+```text
+Suggested working folder:
+workboard/add-login-flow-a1b2c3/
+```
+
+Prompt guidance should say:
+
+```text
+You are running from the workspace root.
+Use the suggested working folder for new notes, reports, drafts, handoff files, or generated
+artifacts when it fits the task.
+If the task requires changing existing project files, edit them in their natural locations.
+Report every created or modified file using workspace-relative paths only.
+Do not return absolute paths.
+```
+
+The provider CLI should not normally be executed with the suggested module folder as `cwd`, because
+agents need the workspace root to discover project files, package manifests, git state, and other
+project-level context.
+
+### Internal Provider Paths
+
+Internal provider paths may remain under Electron `userData`. These include:
 
 - SQLite database state.
-- Runtime metadata.
-- Provider session references.
-- Internal event logs and diagnostic logs.
+- Provider auth and config directories.
+- Runtime cache directories.
+- Event logs and diagnostic logs.
+- Transport files such as output schemas, system prompt files, or last-message output files.
 
-### Agent Prompt Contract
+Provider adapters may pass these internal paths to CLIs when the provider requires them. These paths
+are not workspace artifacts and must not be reported as `artifactRefs` or `changedFiles`.
 
-Every Work Item execution prompt should include:
+## Handoffs Between Work Items
 
-- The workspace root.
-- The Work Request artifact root.
-- A suggested agent-specific artifact directory.
-- Guidance that shared or final deliverables belong in the Work Request root.
-- Guidance that intermediate role-owned files belong in the agent directory.
-- Guidance that project files should be changed in their natural project locations when the task
-  requires it.
-- A requirement to report created or changed files using workspace-relative paths.
+Dependent work should receive upstream context as compact summaries plus workspace-relative file
+references. The dependent agent can read referenced files from the workspace when it needs full
+detail.
 
-Example prompt guidance:
+The default handoff should include:
 
-```text
-Artifacts for this Work Request should be saved under:
-workboard/bulgarian-sme-strategy-wr8f3a/
-
-Use your agent folder for role-specific or intermediate files:
-workboard/bulgarian-sme-strategy-wr8f3a/ceo/
-
-Use the Work Request root for shared or final deliverables. If the task requires changing existing
-project files, write them in their natural project locations. At completion, list every file you
-created or modified using paths relative to the workspace root.
-```
-
-### Handoffs Between Work Items
-
-Dependent Work Items should receive upstream context as a compact handoff, not as full copied
-outputs by default.
-
-The default handoff from an upstream Work Item should include:
-
-- The upstream Work Item title and assigned agent.
+- The upstream work title and assigned agent.
 - A concise result summary.
 - Workspace-relative artifact references.
 - Workspace-relative changed file references.
-- A short critical excerpt only when needed for the dependent item.
-
-The dependent agent should be told to read referenced files from the workspace when it needs the
-full detail:
-
-```text
-Upstream work available:
-
-Researcher completed "Market scan".
-Summary:
-The Bulgarian micro-SME accounting market appears fragmented, with opportunity in compliance-led
-onboarding and vertical templates.
-
-Files:
-- workboard/bulgarian-sme-strategy-wr8f3a/researcher/market-scan.md
-- workboard/bulgarian-sme-strategy-wr8f3a/researcher/competitors.xlsx
-
-Read these files if you need the full detail. Do not assume the summary contains everything.
-```
 
 Full upstream text may still be included when the output is short, when the dependent task cannot
 reasonably read files, or when a provider limitation requires inline context. That should be the
@@ -136,53 +151,64 @@ exception, not the default.
 
 ## Alternatives Considered
 
-### Store Artifacts In AppData
+### Multiple Workspace Profiles
 
-- Pros: Easy for Ordinus to manage and clean up.
-- Cons: Hides user work outside the selected workspace, mixes product runtime state with user
-  deliverables, and makes artifacts harder to inspect, version, or share.
-- Rejected: User-facing outputs should belong to the selected workspace.
+- Pros: Clear separation between projects.
+- Cons: Users and agents would need to reason about which agent belongs to which workspace profile.
+- Rejected: Ordinus should present one current workspace boundary, not a profile manager.
 
-### Force Every File Under The Agent Subdirectory
+### Per-Agent Absolute Folders
 
-- Pros: Simple ownership model.
-- Cons: Final deliverables and shared request-level outputs become buried under whichever agent
-  happened to create them.
-- Rejected: Agents need a request-level root for shared outputs and agent folders for intermediate
-  materials.
+- Pros: Gives each agent a clear private location.
+- Cons: Turns agents into separate filesystem configuration units and makes shared work harder to
+  explain.
+- Rejected: Agents are roles working inside the current workspace, not owners of separate absolute
+  roots.
 
-### Pass Full Upstream Outputs Into Every Dependent Prompt
+### Hidden `.ordinus/` Workspace Folder
 
-- Pros: Dependent agents can work without reading files.
-- Cons: Bloats prompts, duplicates large documents, raises cost, and can bury the actual decision
-  signal.
-- Rejected as the default: handoffs should use summaries plus file references.
+- Pros: Keeps Ordinus files grouped under one hidden directory.
+- Cons: The selected workspace already exists for agent-visible work, and hiding user-visible
+  artifacts makes them harder to inspect.
+- Rejected: Module folders such as `conversations/` and `workboard/` should live directly under the
+  workspace root.
 
-### Persist Draft Artifacts Before Approval
+### Execute Provider CLIs From Module Subfolders
 
-- Pros: Draft plans could pre-create folder structure.
-- Cons: Leaves filesystem clutter for discarded plans.
-- Rejected for now: create artifact roots only for approved or direct-start Work Requests.
+- Pros: New files naturally appear under the module folder.
+- Cons: Agents lose the project root as their natural context and may need fragile `../..` paths to
+  inspect or modify the project.
+- Rejected as the default: execute from the workspace root and give the module folder in the prompt.
+
+### Create A Folder For Every Conversation Turn
+
+- Pros: Very granular file ownership.
+- Cons: Long conversations would create many low-value folders.
+- Rejected: conversation files should be grouped by conversation unless a later module-specific
+  workflow needs finer structure.
 
 ## Consequences
 
-- The selected workspace becomes the source of truth for user-visible Workboard outputs.
-- Work Request artifacts remain grouped and inspectable as one unit.
-- Agents can organize files intelligently without losing the Work Request boundary.
-- AppData stays focused on Ordinus internal state.
-- Dependent Work Items avoid prompt bloat by receiving summaries and file references.
-- Runtime completion contracts should evolve toward explicit `artifactRefs` and `changedFiles`
-  fields, using workspace-relative paths.
-- The Workboard UI can later show artifact links from the Work Request root and each Work Item
-  without exposing AppData internals.
+- The user has one understandable workspace boundary.
+- The workspace can be moved as a folder and reselected later without breaking relative references.
+- User-visible agent files are inspectable under module folders in the workspace.
+- Existing project files can still be changed in their natural locations.
+- App-owned state stays in `userData` and remains separate from user-visible workspace artifacts.
+- Future modules can add their own suggested working folders through the centralized path policy.
+- Runtime prompts and completion contracts must consistently require workspace-relative file
+  references.
 
 ## Implementation Notes
 
-- Main process should create or ensure the Work Request artifact root after a Work Request is
-  approved or direct-started.
-- Renderer should never create artifact directories directly.
-- Artifact refs stored in database records should be workspace-relative paths.
-- Provider logs may remain in AppData, but `artifactRef` must not point to provider logs unless the
-  product is explicitly showing diagnostics.
-- Slug generation should sanitize path segments and include a short stable id to avoid collisions.
-- Work execution prompts should be updated before relying on agents to create organized files.
+- This ADR records the target product and architecture policy. It does not require this commit to
+  change code, migrations, or runtime behavior.
+- Future implementation should simplify or replace agent-level and run-level absolute workspace
+  fields such as `agents.workspaceRoot`, `work_requests.workspaceRoot`, and `work_runs.workspaceRoot`
+  where they conflict with the single-root model.
+- Workspace path generation should move into a central main-process policy/helper before more
+  modules add their own folder layouts.
+- Renderer code should not create module working folders directly.
+- Main process should validate workspace-relative paths before revealing or trusting provider
+  reported files.
+- Provider logs and internal transport files may stay in AppData, but user-facing artifacts and
+  changed-file references should point only to workspace-relative paths.
