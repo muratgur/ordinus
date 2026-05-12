@@ -6,6 +6,7 @@ import {
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
   ProviderIdSchema,
+  WorkspaceRelativePathSchema,
   type OrchestrationPlan,
   type AgentDraft,
   type ProviderActionInput,
@@ -16,6 +17,7 @@ import {
 } from '@shared/contracts'
 import { providerIds, type RuntimeEventListener, type RuntimeProviderCapabilities } from './types'
 import { getProviderAdapter, listProviderAdapters } from './adapters/registry'
+import { buildWorkspaceWorkingFolderInstructions } from './prompts/workspace'
 import type {
   ProviderRuntimeContext,
   RuntimeAgentDraftInput,
@@ -147,6 +149,7 @@ export function createRuntimeService(): RuntimeService {
       return adapter.generateWorkboardPlan(parsed, context)
     },
     async sendConversationTurn(input) {
+      WorkspaceRelativePathSchema.parse(input.workingRoot)
       const adapter = getProviderAdapter(input.providerId)
 
       if (!adapter.sendConversationTurn) {
@@ -156,6 +159,7 @@ export function createRuntimeService(): RuntimeService {
       return adapter.sendConversationTurn(input, context)
     },
     async sendWorkRun(input) {
+      WorkspaceRelativePathSchema.parse(input.workingRoot)
       const adapter = getProviderAdapter(input.providerId)
 
       if (!adapter.sendConversationTurn) {
@@ -170,6 +174,7 @@ export function createRuntimeService(): RuntimeService {
           model: input.model,
           sandbox: input.sandbox,
           workspaceRoot: input.workspaceRoot,
+          workingRoot: input.workingRoot,
           agentName: input.agentName,
           agentRole: input.agentRole,
           instructions: input.instructions,
@@ -213,21 +218,7 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
   return [
     `Work Item: ${input.title}`,
     '',
-    'Workspace:',
-    input.workspaceRoot,
-    '',
-    'Work Request artifact root:',
-    input.workRequestArtifactRoot,
-    '',
-    'Suggested agent artifact folder:',
-    input.agentArtifactDir,
-    '',
-    'Artifact rules:',
-    '- Save shared or final deliverables in the Work Request artifact root.',
-    '- Save role-specific or intermediate files in your suggested agent artifact folder.',
-    '- If this Work Item naturally changes existing project files, write them in their normal project locations.',
-    '- Report every user-facing artifact in artifactRefs and every created or modified file in changedFiles using workspace-relative paths.',
-    '- Do not report a file path unless you actually created or modified that file in the workspace.',
+    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
     'Instruction:',
     input.instruction,

@@ -99,6 +99,13 @@
       "when": 1778344800000,
       "tag": "0013_workboard_artifact_roots",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1778573705805,
+      "tag": "0014_workspace_working_roots",
+      "breakpoints": true
     }
   ]
 }

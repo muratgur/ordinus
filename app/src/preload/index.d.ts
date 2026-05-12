@@ -19,6 +19,7 @@ import type {
   ConversationDetail,
   ConversationGetInput,
   ConversationListItem,
+  ConversationRevealPathInput,
   ConversationSendTurnInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
@@ -78,6 +79,7 @@ export type OrdinusApi = {
     updateRoutingMode: (input: ConversationUpdateRoutingModeInput) => Promise<ConversationDetail>
     sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>
     cancelTurn: (input: ConversationCancelTurnInput) => Promise<ConversationDetail>
+    revealPath: (input: ConversationRevealPathInput) => Promise<void>
     answerInputRequest: (input: ConversationAnswerInputRequestInput) => Promise<ConversationDetail>
     cancelInputRequest: (input: ConversationCancelInputRequestInput) => Promise<ConversationDetail>
   }

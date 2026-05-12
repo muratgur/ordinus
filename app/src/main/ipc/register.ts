@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
   AgentDeleteInputSchema,
   AgentDraftFromIntentInputSchema,
@@ -16,6 +16,7 @@ import {
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
   ConversationGetInputSchema,
+  ConversationRevealPathInputSchema,
   ConversationSendTurnInputSchema,
   ConversationUpdateRoutingModeInputSchema,
   OrchestrationPlanSchema,
@@ -34,6 +35,7 @@ import {
   WorkspaceUpdateSystemDefaultInputSchema,
   validateWorkboardDraftPlanDependencies,
   type Agent,
+  type AgentTurnOutcome,
   type ConversationDetail,
   type ConversationSendTurnInput,
   type ProviderId,
@@ -50,23 +52,18 @@ import {
   ensureAgentHome,
   listAgentSkills
 } from '../agents/filesystem'
+import {
+  ensureWorkspaceRelativeDirectory,
+  resolveReportedWorkspaceFileRefs,
+  resolveWorkspaceRelativePath,
+  type WorkspaceWorkingFolderContext
+} from '../workspace/path-policy'
 
 const workRequestConcurrencyLimit = 3
 
-type WorkRunArtifactContext = {
-  workspaceRoot: string
-  workRequestArtifactRoot: string
-  agentArtifactDir: string
-}
-
-type WorkRunReportedFileRefs = WorkRunArtifactContext & {
+type ReportedWorkspaceFileRefs = WorkspaceWorkingFolderContext & {
   artifactRefs: string[]
   changedFiles: string[]
-}
-
-type ResolvedWorkspaceRefs = {
-  existingRefs: string[]
-  missingRefs: string[]
 }
 
 export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeService): void {
@@ -145,17 +142,15 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.agentsDraftFromIntent, async (_event, payload) => {
     const input = AgentDraftFromIntentInputSchema.parse(payload)
     const workspace = database.getWorkspaceConfig()
-    const workspaceRoot = input.workspaceRoot ?? workspace?.workspaceRoot
 
-    if (!workspaceRoot) {
+    if (!workspace) {
       throw new Error('Choose a workspace before creating an agent.')
     }
 
     return runtime.generateAgentDraft({
       ...input,
-      providerId: workspace?.defaultProviderId ?? 'codex',
-      model: workspace?.defaultModel ?? 'default',
-      workspaceRoot
+      providerId: workspace.defaultProviderId,
+      model: workspace.defaultModel
     })
   })
   ipcMain.handle(ipcChannels.agentsCreate, (_event, payload) => {
@@ -229,6 +224,16 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     runtime.cancelConversationTurn(input.turnId)
     return database.cancelConversationTurn(input)
   })
+  ipcMain.handle(ipcChannels.conversationsRevealPath, (_event, payload) => {
+    const input = ConversationRevealPathInputSchema.parse(payload)
+    const turn = database.getConversationTurn(input.turnId)
+    const allowedPaths = new Set([...turn.artifactRefs, ...turn.changedFiles])
+    if (!allowedPaths.has(input.relativePath)) {
+      throw new Error('This file is not registered on the selected conversation turn.')
+    }
+
+    revealWorkspacePath(database, input.relativePath)
+  })
   ipcMain.handle(ipcChannels.conversationsAnswerInputRequest, async (_event, payload) => {
     const input = ConversationAnswerInputRequestInputSchema.parse(payload)
     const prepared = database.answerConversationInputRequest(input)
@@ -288,12 +293,7 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
       throw new Error('This file is not registered on the selected Work Item.')
     }
 
-    const absolutePath = resolveWorkspaceRelativePath(run.workspaceRoot, input.relativePath)
-    if (!existsSync(absolutePath)) {
-      throw new Error('This file does not exist in the workspace.')
-    }
-
-    shell.showItemInFolder(absolutePath)
+    revealWorkspacePath(database, input.relativePath)
   })
   ipcMain.handle(ipcChannels.runtimeGetProviders, () => runtime.getProviderStatuses())
   ipcMain.handle(ipcChannels.runtimeConnectProvider, (_event, payload) => {
@@ -316,6 +316,20 @@ function requireAgent(database: OrdinusDatabase, agentId: string): void {
   }
 }
 
+function revealWorkspacePath(database: OrdinusDatabase, relativePath: string): void {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before opening files.')
+  }
+
+  const absolutePath = resolveWorkspaceRelativePath(workspace.workspaceRoot, relativePath)
+  if (!existsSync(absolutePath)) {
+    throw new Error('This file does not exist in the workspace.')
+  }
+
+  shell.showItemInFolder(absolutePath)
+}
+
 async function generateWorkboardPlan(
   database: OrdinusDatabase,
   runtime: RuntimeService,
@@ -332,13 +346,9 @@ async function generateWorkboardPlan(
     throw new Error('Connect the default provider before creating a Work Request.')
   }
 
-  const agents = database
-    .listAgents()
-    .filter((agent) => agent.enabled && agent.workspaceRoot === workspace.workspaceRoot)
+  const agents = database.listAgents().filter((agent) => agent.enabled)
   if (agents.length === 0) {
-    throw new Error(
-      'Create and enable at least one agent in this workspace before creating a Work Request.'
-    )
+    throw new Error('Create and enable at least one agent before creating a Work Request.')
   }
 
   const plan = WorkboardDraftPlanSchema.parse(
@@ -406,16 +416,11 @@ function startPreparedWorkRun(
   requiredInputs = database.getRequiredInputSummaries(prepared.run.id)
 ): void {
   const requestId = getWorkRequestId(prepared.run)
-  const artifactContext = getWorkRunArtifactContext(database, prepared.run, prepared.agent)
+  const workspaceContext = getWorkRunWorkspaceContext(database, prepared.run)
   const logRef = join('work-requests', requestId, prepared.run.id)
   const logDir = join(getSystemPaths().logs, logRef)
   mkdirSync(logDir, { recursive: true })
-  mkdirSync(join(artifactContext.workspaceRoot, artifactContext.workRequestArtifactRoot), {
-    recursive: true
-  })
-  mkdirSync(join(artifactContext.workspaceRoot, artifactContext.agentArtifactDir), {
-    recursive: true
-  })
+  ensureWorkspaceRelativeDirectory(workspaceContext.workspaceRoot, workspaceContext.workingRoot)
 
   void runtime
     .sendWorkRun({
@@ -424,7 +429,8 @@ function startPreparedWorkRun(
       providerId: prepared.run.providerId,
       model: prepared.run.model,
       sandbox: prepared.run.sandbox,
-      workspaceRoot: artifactContext.workspaceRoot,
+      workspaceRoot: workspaceContext.workspaceRoot,
+      workingRoot: workspaceContext.workingRoot,
       agentName: prepared.agent.name,
       agentRole: prepared.agent.role,
       instructions: prepared.agent.instructions,
@@ -433,8 +439,6 @@ function startPreparedWorkRun(
       instruction: prepared.run.instruction,
       expectedOutput: prepared.run.expectedOutput,
       requiredInputs,
-      workRequestArtifactRoot: artifactContext.workRequestArtifactRoot,
-      agentArtifactDir: artifactContext.agentArtifactDir,
       resumeMessage: prepared.message || undefined,
       logRef,
       eventLogPath: join(logDir, 'events.jsonl'),
@@ -455,10 +459,9 @@ function startPreparedWorkRun(
           return
         }
 
-        const fileRefs = resolveReportedWorkRunFileRefs({
-          workspaceRoot: artifactContext.workspaceRoot,
-          workRequestArtifactRoot: artifactContext.workRequestArtifactRoot,
-          agentArtifactDir: artifactContext.agentArtifactDir,
+        const fileRefs = resolveReportedFileRefs({
+          workspaceRoot: workspaceContext.workspaceRoot,
+          workingRoot: workspaceContext.workingRoot,
           artifactRefs: result.outcome.artifactRefs,
           changedFiles: result.outcome.changedFiles
         })
@@ -504,118 +507,52 @@ function getOptionalWorkRequestId(run: WorkRun): string {
   return run.source?.type === 'work_request' ? run.source.id : ''
 }
 
-function getWorkRunArtifactContext(
+function getWorkRunWorkspaceContext(
   database: OrdinusDatabase,
-  run: WorkRun,
-  agent: Agent
-): WorkRunArtifactContext {
+  run: WorkRun
+): WorkspaceWorkingFolderContext {
   const requestId = getWorkRequestId(run)
   const request = database.getWorkRequest(requestId)
-  const workspaceRoot = request.workspaceRoot || run.workspaceRoot
-  const workRequestArtifactRoot =
-    request.artifactRoot || createFallbackWorkRequestArtifactRoot(request.title, request.id)
-  const agentLabel = run.assignedAgentName || agent.name || run.assignedAgentRole || agent.role
-  const agentArtifactDir = `${workRequestArtifactRoot}/${slugifyPathSegment(agentLabel) || 'agent'}`
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before running Work Items.')
+  }
 
   return {
-    workspaceRoot,
-    workRequestArtifactRoot,
-    agentArtifactDir
+    workspaceRoot: workspace.workspaceRoot,
+    workingRoot: request.workingRoot || run.workingRoot
   }
 }
 
-function resolveReportedWorkRunFileRefs(input: WorkRunReportedFileRefs): {
+function getConversationWorkspaceContext(
+  database: OrdinusDatabase,
+  conversationId: string
+): WorkspaceWorkingFolderContext {
+  const conversation = database.getConversation({ conversationId })
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before running conversations.')
+  }
+
+  return {
+    workspaceRoot: workspace.workspaceRoot,
+    workingRoot: conversation.workingRoot
+  }
+}
+
+function resolveReportedFileRefs(input: ReportedWorkspaceFileRefs): {
   artifactRefs: string[]
   changedFiles: string[]
   missingRefs: string[]
 } {
-  const artifactRefs = resolveExistingWorkspaceRefs(input.artifactRefs, input)
-  const changedFiles = resolveExistingWorkspaceRefs(input.changedFiles, input)
+  const artifactRefs = resolveReportedWorkspaceFileRefs(input.artifactRefs, input)
+  const changedFiles = resolveReportedWorkspaceFileRefs(input.changedFiles, input)
 
   return {
     artifactRefs: artifactRefs.existingRefs,
     changedFiles: changedFiles.existingRefs,
     missingRefs: Array.from(new Set([...artifactRefs.missingRefs, ...changedFiles.missingRefs]))
   }
-}
-
-function resolveExistingWorkspaceRefs(
-  refs: string[],
-  context: WorkRunArtifactContext
-): ResolvedWorkspaceRefs {
-  const existingRefs: string[] = []
-  const missingRefs: string[] = []
-
-  refs.forEach((ref) => {
-    const existingRef = findExistingWorkspaceRef(ref, context)
-    if (existingRef) {
-      existingRefs.push(existingRef)
-      return
-    }
-
-    missingRefs.push(ref)
-  })
-
-  return {
-    existingRefs: Array.from(new Set(existingRefs)),
-    missingRefs: Array.from(new Set(missingRefs))
-  }
-}
-
-function findExistingWorkspaceRef(relativePath: string, context: WorkRunArtifactContext): string {
-  const candidates = [
-    relativePath,
-    `${context.workRequestArtifactRoot}/${relativePath}`,
-    `${context.agentArtifactDir}/${relativePath}`
-  ]
-
-  return (
-    candidates.find((candidate) => {
-      try {
-        return existsSync(resolveWorkspaceRelativePath(context.workspaceRoot, candidate))
-      } catch {
-        return false
-      }
-    }) ?? ''
-  )
-}
-
-function createFallbackWorkRequestArtifactRoot(title: string, requestId: string): string {
-  return `workboard/${slugifyPathSegment(title) || 'work-request'}-${shortStableId(requestId)}`
-}
-
-function resolveWorkspaceRelativePath(workspaceRoot: string, relativePath: string): string {
-  const absolutePath = resolve(workspaceRoot, relativePath)
-  const relativeToWorkspace = relative(workspaceRoot, absolutePath)
-  if (
-    !relativeToWorkspace ||
-    relativeToWorkspace.startsWith('..') ||
-    isAbsolute(relativeToWorkspace)
-  ) {
-    throw new Error('File path must stay inside the workspace.')
-  }
-
-  return absolutePath
-}
-
-function slugifyPathSegment(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/-+$/g, '')
-}
-
-function shortStableId(value: string): string {
-  return (
-    value
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .slice(-6)
-      .toLowerCase() || '000000'
-  )
 }
 
 function saveWorkRunFailure(database: OrdinusDatabase, runId: string, error: unknown): void {
@@ -672,6 +609,13 @@ function startPreparedConversationTurns(
   runtime: RuntimeService,
   prepared: PreparedConversationTurn
 ): void {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before running conversations.')
+  }
+  const conversation = database.getConversation({ conversationId: prepared.conversationId })
+  ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, conversation.workingRoot)
+
   prepared.agentTurns.forEach((agentTurn) => {
     const logRef = join('conversations', prepared.conversationId, agentTurn.agentTurnId)
     const logDir = join(getSystemPaths().logs, logRef)
@@ -684,7 +628,8 @@ function startPreparedConversationTurns(
         providerId: agentTurn.agent.providerId,
         model: agentTurn.agent.model,
         sandbox: agentTurn.agent.sandbox,
-        workspaceRoot: agentTurn.agent.workspaceRoot,
+        workspaceRoot: workspace.workspaceRoot,
+        workingRoot: conversation.workingRoot,
         agentName: agentTurn.agent.name,
         agentRole: agentTurn.agent.role,
         instructions: agentTurn.agent.instructions,
@@ -732,14 +677,39 @@ function saveConversationTurnCompletion(
   result: Awaited<ReturnType<RuntimeService['sendConversationTurn']>>
 ): void {
   try {
+    const outcome = resolveConversationTurnOutcome(database, turnId, result.outcome)
     database.completeConversationTurn({
       turnId,
       providerSessionRef: result.providerSessionRef,
-      outcome: result.outcome,
+      outcome,
       logRef: result.logRef
     })
   } catch (error) {
-    console.warn('Conversation turn completion could not be saved.', error)
+    saveConversationTurnFailure(database, turnId, error, result.logRef)
+  }
+}
+
+function resolveConversationTurnOutcome(
+  database: OrdinusDatabase,
+  turnId: string,
+  outcome: AgentTurnOutcome
+): AgentTurnOutcome {
+  if (outcome.outcome !== 'final_response') {
+    return outcome
+  }
+
+  const turn = database.getConversationTurn(turnId)
+  const fileRefs = resolveReportedFileRefs({
+    ...getConversationWorkspaceContext(database, turn.conversationId),
+    artifactRefs: outcome.artifactRefs,
+    changedFiles: outcome.changedFiles
+  })
+  assertReportedFileRefsExist(fileRefs.missingRefs)
+
+  return {
+    ...outcome,
+    artifactRefs: fileRefs.artifactRefs,
+    changedFiles: fileRefs.changedFiles
   }
 }
 

@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative } from 'node:path'
+import { dirname } from 'node:path'
 import {
   AgentCreateInputSchema,
   AgentDeleteInputSchema,
@@ -94,6 +94,12 @@ import {
   workRuns,
   workspaceConfig
 } from './schema'
+import {
+  createConversationWorkingRoot,
+  createWorkboardWorkingRoot,
+  ensureWorkspaceRelativeDirectory,
+  filterExistingWorkspacePaths
+} from '../workspace/path-policy'
 
 const turnContentLimit = 16_000
 const turnPreviewLimit = 240
@@ -228,6 +234,10 @@ export class OrdinusDatabase {
     const existing = this.db.select().from(workspaceConfig).where(eq(workspaceConfig.id, 1)).get()
 
     if (existing) {
+      if (existing.workspaceRoot !== workspaceRoot && this.hasRunningWorkspaceWork()) {
+        throw new Error('Stop running work before changing the workspace folder.')
+      }
+
       this.db
         .update(workspaceConfig)
         .set({
@@ -314,6 +324,26 @@ export class OrdinusDatabase {
 
     return (
       this.hasRunningConversationWorkForAgent(agent.id) || this.hasActiveWorkRunsForAgent(agent.id)
+    )
+  }
+
+  hasRunningWorkspaceWork(): boolean {
+    const activeStatuses = ['running', 'waiting_for_user'] as const
+    const activeConversationTurn = this.db
+      .select({ id: conversationTurns.id })
+      .from(conversationTurns)
+      .where(inArray(conversationTurns.status, activeStatuses))
+      .get()
+    if (activeConversationTurn) {
+      return true
+    }
+
+    return Boolean(
+      this.db
+        .select({ id: workRuns.id })
+        .from(workRuns)
+        .where(inArray(workRuns.status, activeStatuses))
+        .get()
     )
   }
 
@@ -447,7 +477,6 @@ export class OrdinusDatabase {
         providerId: parsed.providerId,
         model: parsed.model,
         sandbox: parsed.sandbox,
-        workspaceRoot: parsed.workspaceRoot,
         enabled: parsed.enabled,
         updatedAt: now
       })
@@ -473,8 +502,17 @@ export class OrdinusDatabase {
 
     const now = new Date().toISOString()
     const runId = createWorkRunId()
+    const workingRoot =
+      parentRun?.workingRoot ??
+      (parsed.source?.type === workRequestSourceType && parsed.source.id
+        ? this.getWorkRequest(parsed.source.id).workingRoot
+        : createWorkboardWorkingRoot(parsed.title, runId))
     const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds(requiredRuns)
     const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
+    const workspace = this.getWorkspaceConfig()
+    if (workspace) {
+      ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
+    }
 
     this.db.transaction((tx) => {
       tx.insert(workRuns)
@@ -497,7 +535,7 @@ export class OrdinusDatabase {
           providerId: agent.providerId,
           model: agent.model,
           providerSessionRef: null,
-          workspaceRoot: agent.workspaceRoot,
+          workingRoot,
           sandbox: agent.sandbox,
           expectedOutput: parsed.expectedOutput,
           resultSummary: '',
@@ -545,26 +583,21 @@ export class OrdinusDatabase {
 
     const agentsById = new Map(
       this.listAgents()
-        .filter((agent) => agent.enabled && agent.workspaceRoot === workspace.workspaceRoot)
+        .filter((agent) => agent.enabled)
         .map((agent) => [agent.id, agent])
     )
     plan.items.forEach((item) => {
       if (!agentsById.has(item.assignedAgentId)) {
-        throw new Error(
-          'One or more Work Items are assigned to an unavailable agent in this workspace.'
-        )
+        throw new Error('One or more Work Items are assigned to an unavailable agent.')
       }
     })
     validateWorkboardDraftPlanDependencies(plan.items)
 
     const now = new Date().toISOString()
     const requestId = createWorkRequestId()
-    const artifactRoot = createWorkRequestArtifactRoot(
-      plan.title || parsed.originalRequest,
-      requestId
-    )
+    const workingRoot = createWorkboardWorkingRoot(plan.title || parsed.originalRequest, requestId)
     const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
-    mkdirSync(join(workspace.workspaceRoot, artifactRoot), { recursive: true })
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db.transaction((tx) => {
       tx.insert(workRequests)
@@ -573,8 +606,7 @@ export class OrdinusDatabase {
           title: plan.title,
           originalRequest: parsed.originalRequest,
           summary: plan.summary,
-          workspaceRoot: workspace.workspaceRoot,
-          artifactRoot,
+          workingRoot,
           status: 'active',
           createdAt: now,
           updatedAt: now,
@@ -610,7 +642,7 @@ export class OrdinusDatabase {
             providerId: agent.providerId,
             model: agent.model,
             providerSessionRef: null,
-            workspaceRoot: workspace.workspaceRoot,
+            workingRoot,
             sandbox: agent.sandbox,
             expectedOutput: item.expectedOutput,
             resultSummary: '',
@@ -705,6 +737,7 @@ export class OrdinusDatabase {
   getWorkboardData(): WorkboardData {
     const requests = this.listWorkRequests()
     const requestById = new Map(requests.map((request) => [request.id, request]))
+    const workspace = this.getWorkspaceConfig()
     const runs = this.db
       .select()
       .from(workRuns)
@@ -713,7 +746,9 @@ export class OrdinusDatabase {
       .all()
       .map((run) => {
         const parsedRun = parseWorkRun(run)
-        const displayRun = withExistingWorkspaceFileRefs(parsedRun)
+        const displayRun = workspace
+          ? withExistingWorkspaceFileRefs(parsedRun, workspace.workspaceRoot)
+          : parsedRun
         const requestId = parsedRun.source?.id ?? ''
         const request = requestById.get(requestId)
 
@@ -1254,7 +1289,7 @@ export class OrdinusDatabase {
       .where(eq(conversationTurns.conversationId, conversation.id))
       .orderBy(asc(conversationTurns.sequence), asc(conversationTurns.createdAt))
       .all()
-      .map((turn) => ConversationTurnSchema.parse(turn))
+      .map(parseConversationTurn)
     const inputRequests = this.listConversationInputRequests(conversation.id)
 
     return ConversationDetailSchema.parse({
@@ -1268,16 +1303,24 @@ export class OrdinusDatabase {
   createDirectConversation(input: { agentId: string; title?: string }): ConversationDetail {
     const parsed = ConversationCreateDirectInputSchema.parse(input)
     const agent = this.requireActiveAgent(parsed.agentId)
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before creating a conversation.')
+    }
 
     const now = new Date().toISOString()
     const conversationId = createConversationId()
     const participantId = createConversationParticipantId()
+    const title = parsed.title?.trim() || agent.name
+    const workingRoot = createConversationWorkingRoot(title, conversationId)
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db
       .insert(conversations)
       .values({
         id: conversationId,
-        title: parsed.title?.trim() || agent.name,
+        title,
+        workingRoot,
         mode: 'direct',
         status: 'active',
         summary: '',
@@ -1306,6 +1349,10 @@ export class OrdinusDatabase {
   createManualConversation(input: ConversationCreateManualInput): ConversationDetail {
     const parsed = ConversationCreateManualInputSchema.parse(input)
     const agentIds = uniqueValues(parsed.agentIds)
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before creating a conversation.')
+    }
 
     if (agentIds.length < 2) {
       throw new Error('Choose at least two agents for a multi-agent conversation.')
@@ -1317,12 +1364,15 @@ export class OrdinusDatabase {
     const title =
       parsed.title?.trim() ||
       formatConversationAgentNames(selectedAgents.map((agent) => agent.name))
+    const workingRoot = createConversationWorkingRoot(title, conversationId)
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db.transaction((tx) => {
       tx.insert(conversations)
         .values({
           id: conversationId,
           title,
+          workingRoot,
           mode: 'manual',
           status: 'active',
           summary: '',
@@ -1599,6 +1649,8 @@ export class OrdinusDatabase {
     }
 
     const output = createBoundedTurnContent(input.outcome.content)
+    const artifactRefs = uniqueValues(input.outcome.artifactRefs)
+    const changedFiles = uniqueValues(input.outcome.changedFiles)
 
     this.db
       .update(conversationTurns)
@@ -1608,6 +1660,8 @@ export class OrdinusDatabase {
         status: 'completed',
         error: '',
         logRef: input.logRef,
+        artifactRefs: JSON.stringify(artifactRefs),
+        changedFiles: JSON.stringify(changedFiles),
         truncated: output.truncated,
         updatedAt: now
       })
@@ -1904,14 +1958,14 @@ export class OrdinusDatabase {
     return agent
   }
 
-  private getConversationTurn(id: string): ConversationTurn {
+  getConversationTurn(id: string): ConversationTurn {
     const turn = this.db.select().from(conversationTurns).where(eq(conversationTurns.id, id)).get()
 
     if (!turn) {
       throw new Error('Conversation turn was not found.')
     }
 
-    return ConversationTurnSchema.parse(turn)
+    return parseConversationTurn(turn)
   }
 
   private getConversationInputRequest(id: string): ConversationInputRequest {
@@ -2272,33 +2326,32 @@ function createWorkRunInputRequestId(): string {
   return `wir-${randomUUID()}`
 }
 
-function createWorkRequestArtifactRoot(title: string, requestId: string): string {
-  const slug = slugifyPathSegment(title) || 'work-request'
-  return `workboard/${slug}-${shortStableId(requestId)}`
-}
-
-function slugifyPathSegment(value: string): string {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/-+$/g, '')
-}
-
-function shortStableId(value: string): string {
-  return (
-    value
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .slice(-6)
-      .toLowerCase() || '000000'
-  )
-}
-
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
+}
+
+function parseConversationTurn(value: unknown): ConversationTurn {
+  if (!isDatabaseConversationTurn(value)) {
+    throw new Error('Conversation turn row was invalid.')
+  }
+
+  return ConversationTurnSchema.parse({
+    ...value,
+    artifactRefs: parseJsonStringArray(value.artifactRefs),
+    changedFiles: parseJsonStringArray(value.changedFiles)
+  })
+}
+
+function isDatabaseConversationTurn(value: unknown): value is {
+  artifactRefs: string
+  changedFiles: string
+} {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'artifactRefs' in value &&
+    'changedFiles' in value
+  )
 }
 
 function parseWorkRun(value: unknown): WorkRun {
@@ -2391,34 +2444,12 @@ function hasCompletedWorkRunOutput(run: WorkRun): boolean {
   return run.status === 'completed' && Boolean(run.resultSummary.trim())
 }
 
-function withExistingWorkspaceFileRefs(run: WorkRun): WorkRun {
+function withExistingWorkspaceFileRefs(run: WorkRun, workspaceRoot: string): WorkRun {
   return {
     ...run,
-    artifactRefs: filterExistingWorkspacePaths(run.workspaceRoot, run.artifactRefs),
-    changedFiles: filterExistingWorkspacePaths(run.workspaceRoot, run.changedFiles)
+    artifactRefs: filterExistingWorkspacePaths(workspaceRoot, run.artifactRefs),
+    changedFiles: filterExistingWorkspacePaths(workspaceRoot, run.changedFiles)
   }
-}
-
-function filterExistingWorkspacePaths(workspaceRoot: string, relativePaths: string[]): string[] {
-  return relativePaths.filter((path) => workspaceRelativePathExists(workspaceRoot, path))
-}
-
-function workspaceRelativePathExists(workspaceRoot: string, relativePath: string): boolean {
-  try {
-    const absolutePath = join(workspaceRoot, relativePath)
-    const relativeToWorkspace = relativePathFromWorkspace(workspaceRoot, absolutePath)
-    return Boolean(relativeToWorkspace) && existsSync(absolutePath)
-  } catch {
-    return false
-  }
-}
-
-function relativePathFromWorkspace(workspaceRoot: string, absolutePath: string): string {
-  const relativePath = relative(workspaceRoot, absolutePath)
-  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    return ''
-  }
-  return relativePath
 }
 
 function getInitialWorkRunStatus(

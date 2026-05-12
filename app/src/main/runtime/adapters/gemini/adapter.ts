@@ -29,6 +29,7 @@ import {
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
+import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
 import {
   connectCliProvider,
   createProviderLoginResult,
@@ -209,6 +210,8 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
     'Follow these agent instructions for this Ordinus conversation:',
     input.instructions,
     '',
+    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
     buildConversationOutcomeInstructions(),
     '',
     'User message:',
@@ -217,7 +220,14 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
 }
 
 function buildGeminiResumePrompt(input: RuntimeConversationTurnInput): string {
-  return [buildConversationOutcomeInstructions(), '', 'User message:', input.message].join('\n')
+  return [
+    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
+    buildConversationOutcomeInstructions(),
+    '',
+    'User message:',
+    input.message
+  ].join('\n')
 }
 
 async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {

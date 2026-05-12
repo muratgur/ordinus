@@ -1,5 +1,4 @@
 import { AgentDraftSchema, type AgentDraft } from '@shared/contracts'
-import { getSystemPaths } from '../../paths'
 import type { RuntimeAgentDraftInput } from '../adapters/types'
 
 export const agentDraftOutputJsonSchema = {
@@ -41,8 +40,7 @@ export function buildAgentDraft(
     instructions: draftJson.instructions,
     providerId: input.providerId,
     model: input.model,
-    sandbox: input.sandbox,
-    workspaceRoot: input.workspaceRoot ?? getSystemPaths().userData
+    sandbox: input.sandbox
   })
 }
 

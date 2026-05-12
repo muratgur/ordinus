@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock3,
   ClipboardList,
+  FolderOpen,
   Loader2,
   MessageSquareText,
   Plus,
@@ -306,6 +307,15 @@ export function ConversationsScreen(): React.JSX.Element {
     }
   }
 
+  async function handleRevealPath(turnId: string, relativePath: string): Promise<void> {
+    try {
+      setError('')
+      await window.ordinus.conversations.revealPath({ turnId, relativePath })
+    } catch (revealError) {
+      setError(getErrorMessage(revealError, 'File could not be shown.'))
+    }
+  }
+
   async function handleAnswerInputRequest(
     requestId: string,
     answers: InteractionAnswer[]
@@ -402,6 +412,7 @@ export function ConversationsScreen(): React.JSX.Element {
                           <TurnCard
                             turn={turn}
                             participantName={getTurnParticipantLabel(detail, turn, index)}
+                            onRevealPath={(path) => void handleRevealPath(turn.id, path)}
                           />
                           {turnInputRequests.map((request) => (
                             <InputRequestCard
@@ -642,10 +653,12 @@ function ConversationHeader({
 
 function TurnCard({
   turn,
-  participantName
+  participantName,
+  onRevealPath
 }: {
   turn: ConversationTurn
   participantName: string
+  onRevealPath: (path: string) => void
 }): React.JSX.Element {
   const isUser = turn.speaker === 'user'
   const Icon = isUser ? UserRound : Bot
@@ -685,7 +698,84 @@ function TurnCard({
       {turn.truncated ? (
         <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
       ) : null}
+      {!isUser && turn.status === 'completed' ? (
+        <TurnFiles turn={turn} onRevealPath={onRevealPath} />
+      ) : null}
     </article>
+  )
+}
+
+function TurnFiles({
+  turn,
+  onRevealPath
+}: {
+  turn: ConversationTurn
+  onRevealPath: (path: string) => void
+}): React.JSX.Element | null {
+  const hasFiles = turn.artifactRefs.length > 0 || turn.changedFiles.length > 0
+
+  if (!hasFiles) {
+    return null
+  }
+
+  return (
+    <div className="grid gap-2 border-t pt-2">
+      {turn.artifactRefs.length > 0 ? (
+        <TurnFileSection label="Artifacts" paths={turn.artifactRefs} onReveal={onRevealPath} />
+      ) : null}
+      {turn.changedFiles.length > 0 ? (
+        <TurnFileSection label="Changed files" paths={turn.changedFiles} onReveal={onRevealPath} />
+      ) : null}
+    </div>
+  )
+}
+
+function TurnFileSection({
+  label,
+  paths,
+  onReveal
+}: {
+  label: string
+  paths: string[]
+  onReveal: (path: string) => void
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-1.5">
+      <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
+      <PathList paths={paths} onReveal={onReveal} />
+    </div>
+  )
+}
+
+function PathList({
+  paths,
+  onReveal
+}: {
+  paths: string[]
+  onReveal: (path: string) => void
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-2">
+      {paths.map((path) => (
+        <div
+          key={path}
+          className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5"
+        >
+          <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground">
+            {path}
+          </code>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={() => onReveal(path)}
+          >
+            <FolderOpen />
+            <span className="sr-only">Show in Finder</span>
+          </Button>
+        </div>
+      ))}
+    </div>
   )
 }
 
