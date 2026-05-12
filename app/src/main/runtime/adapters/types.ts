@@ -102,6 +102,10 @@ export type ProviderAdapter = {
     input: ProviderConnectInput,
     context: ProviderRuntimeContext
   ): Promise<ProviderConnectResult>
+  disconnectProvider?(
+    input: ProviderActionInput,
+    context: ProviderRuntimeContext
+  ): Promise<ProviderStatus> | ProviderStatus
   generateAgentDraft?(
     input: RuntimeAgentDraftInput,
     context: ProviderRuntimeContext

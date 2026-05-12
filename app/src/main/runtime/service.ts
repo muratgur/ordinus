@@ -55,6 +55,7 @@ export type RuntimeService = {
   getProviderStatuses(): Promise<ProviderStatus[]>
   refreshProvider(input: ProviderActionInput): Promise<ProviderStatus>
   connectProvider(input: ProviderConnectInput): Promise<ProviderConnectResult>
+  disconnectProvider(input: ProviderActionInput): Promise<ProviderStatus>
   generateAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft>
   generateOrchestrationPlan(input: RuntimeOrchestrationPlanInput): Promise<OrchestrationPlan>
   generateWorkboardPlan(input: RuntimeWorkboardPlanInput): Promise<WorkboardDraftPlan>
@@ -102,6 +103,16 @@ export function createRuntimeService(): RuntimeService {
       }
 
       return adapter.connectProvider(parsed, context)
+    },
+    async disconnectProvider(input) {
+      const parsed = ProviderActionInputSchema.parse(input)
+      const adapter = getProviderAdapter(parsed.providerId)
+
+      if (!adapter.disconnectProvider) {
+        throw new Error(`Disconnect is not available for ${adapter.label} yet.`)
+      }
+
+      return adapter.disconnectProvider(parsed, context)
     },
     async generateAgentDraft(input) {
       const parsed = RuntimeAgentDraftInputSchema.parse(input)

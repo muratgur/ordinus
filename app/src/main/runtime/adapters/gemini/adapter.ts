@@ -33,6 +33,7 @@ import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
+  disconnectCliProvider,
   getStringValue,
   getCliVersion,
   readCliJsonErrorMessage,
@@ -77,6 +78,9 @@ export const geminiProviderAdapter: ProviderAdapter = {
       startLogin: startGeminiLogin
     })
   },
+  disconnectProvider(_input, context) {
+    return disconnectGeminiProvider(context)
+  },
   generateAgentDraft(input) {
     return generateGeminiAgentDraft(input)
   },
@@ -89,6 +93,21 @@ export const geminiProviderAdapter: ProviderAdapter = {
   sendConversationTurn(input, context) {
     return sendGeminiConversationTurn(input, context)
   }
+}
+
+async function disconnectGeminiProvider(context: ProviderRuntimeContext): Promise<ProviderStatus> {
+  return disconnectCliProvider({
+    providerId: 'gemini',
+    context,
+    getAuthPaths: getGeminiAuthPaths,
+    getStatus: getGeminiStatus
+  })
+}
+
+function getGeminiAuthPaths(): string[] {
+  const configDir = getGeminiConfigDir()
+
+  return [join(configDir, 'oauth_creds.json'), join(configDir, 'google_accounts.json')]
 }
 
 async function sendGeminiConversationTurn(

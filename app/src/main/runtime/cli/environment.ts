@@ -5,6 +5,8 @@ const runtimeEnvAllowlist = [
   'SystemRoot',
   'WINDIR',
   'HOME',
+  'USER',
+  'LOGNAME',
   'USERPROFILE',
   'APPDATA',
   'LOCALAPPDATA',

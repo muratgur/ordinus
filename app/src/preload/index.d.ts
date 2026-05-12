@@ -93,6 +93,7 @@ export type OrdinusApi = {
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>
     connectProvider: (input: ProviderConnectInput) => Promise<ProviderConnectResult>
+    disconnectProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
     refreshProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
   }
 }

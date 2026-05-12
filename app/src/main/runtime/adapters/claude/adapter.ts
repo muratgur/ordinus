@@ -43,6 +43,7 @@ import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
+  disconnectCliProvider,
   getStringValue,
   getCliVersion,
   readCliJsonErrorMessage,
@@ -80,6 +81,9 @@ export const claudeProviderAdapter: ProviderAdapter = {
         startClaudeLogin(executable, input.loginMethod, setProcess)
     })
   },
+  disconnectProvider(_input, context) {
+    return disconnectClaudeProvider(context)
+  },
   generateAgentDraft(input) {
     return generateClaudeAgentDraft(input)
   },
@@ -92,6 +96,39 @@ export const claudeProviderAdapter: ProviderAdapter = {
   sendConversationTurn(input, context) {
     return sendClaudeConversationTurn(input, context)
   }
+}
+
+async function disconnectClaudeProvider(context: ProviderRuntimeContext): Promise<ProviderStatus> {
+  return disconnectCliProvider({
+    providerId: 'claude',
+    context,
+    beforeRemoveAuth: logoutClaudeProvider,
+    getAuthPaths: getClaudeAuthPaths,
+    getStatus: getClaudeStatus
+  })
+}
+
+async function logoutClaudeProvider(): Promise<void> {
+  const executable = await findClaudeExecutable()
+  if (!executable) {
+    return
+  }
+
+  const result = await runCapture(executable.command, ['auth', 'logout'], {
+    env: getClaudeEnvironment(),
+    shell: executable.shell,
+    timeoutMs: 10_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(firstLine(result.stderr || result.stdout) || 'Claude logout failed.')
+  }
+}
+
+function getClaudeAuthPaths(): string[] {
+  const configDir = getClaudeConfigDir()
+
+  return [join(configDir, '.claude.json'), join(configDir, 'backups')]
 }
 
 async function sendClaudeConversationTurn(

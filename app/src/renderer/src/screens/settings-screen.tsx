@@ -1,12 +1,19 @@
 import { useMemo, useState } from 'react'
 import {
+  Bot,
   CheckCircle2,
+  ChevronDown,
+  Code2,
   Database,
+  Diamond,
   FolderOpen,
   FolderLock,
   Loader2,
   MonitorCog,
   PlugZap,
+  RefreshCcw,
+  Terminal,
+  Unplug,
   ShieldCheck
 } from 'lucide-react'
 import type {
@@ -25,8 +32,8 @@ import {
   getProviderModelOptions,
   isKnownProviderModel
 } from '@shared/provider-models'
+import { getProviderDisplayName } from '@shared/provider-labels'
 import { DetailRow } from '@renderer/components/detail-row'
-import { ProviderCard } from '@renderer/components/provider-card'
 import { ReadinessBadge } from '@renderer/components/readiness-badge'
 import { SelectControl } from '@renderer/components/select-control'
 import { StatusCard } from '@renderer/components/status-card'
@@ -53,6 +60,7 @@ type SettingsScreenProps = {
   onSelectFolder: () => Promise<WorkspaceSelectFolderResult>
   onSaveWorkspace: (input: WorkspaceSaveConfigInput) => Promise<void>
   onConnectProvider: (providerId: ProviderId) => Promise<void>
+  onDisconnectProvider: (providerId: ProviderId) => Promise<void>
   onRefreshProvider: (providerId: ProviderId) => Promise<void>
   onUpdateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
 }
@@ -95,6 +103,7 @@ export function SettingsScreen({
   onSelectFolder,
   onSaveWorkspace,
   onConnectProvider,
+  onDisconnectProvider,
   onRefreshProvider,
   onUpdateSystemDefault
 }: SettingsScreenProps): React.JSX.Element {
@@ -159,6 +168,7 @@ export function SettingsScreen({
               codex={codex}
               busyAction={busyAction}
               onConnectProvider={onConnectProvider}
+              onDisconnectProvider={onDisconnectProvider}
               onRefreshProvider={onRefreshProvider}
               onUpdateSystemDefault={onUpdateSystemDefault}
             />
@@ -290,6 +300,7 @@ function ProvidersSettingsSection({
   codex,
   busyAction,
   onConnectProvider,
+  onDisconnectProvider,
   onRefreshProvider,
   onUpdateSystemDefault
 }: {
@@ -297,6 +308,7 @@ function ProvidersSettingsSection({
   codex: ProviderStatus | undefined
   busyAction: string
   onConnectProvider: (providerId: ProviderId) => Promise<void>
+  onDisconnectProvider: (providerId: ProviderId) => Promise<void>
   onRefreshProvider: (providerId: ProviderId) => Promise<void>
   onUpdateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
 }): React.JSX.Element {
@@ -317,19 +329,272 @@ function ProvidersSettingsSection({
         onSave={onUpdateSystemDefault}
       />
 
-      <section className="grid gap-4">
+      <section className="grid gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold leading-6">Provider connections</h2>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Connect local CLIs for Ordinus-managed agent work.
+            </p>
+          </div>
+          <Badge variant="secondary">
+            {providers.filter((provider) => provider.connected).length} ready
+          </Badge>
+        </div>
+
         {providers.map((provider) => (
-          <ProviderCard
+          <ProviderConnectionRow
             key={provider.id}
             provider={provider}
             defaultProviderId={defaultProviderId}
             busyAction={busyAction}
             onConnect={() => onConnectProvider(provider.id)}
+            onDisconnect={() => onDisconnectProvider(provider.id)}
             onRefresh={() => onRefreshProvider(provider.id)}
           />
         ))}
       </section>
     </div>
+  )
+}
+
+function ProviderConnectionRow({
+  provider,
+  defaultProviderId,
+  busyAction,
+  onConnect,
+  onDisconnect,
+  onRefresh
+}: {
+  provider: ProviderStatus
+  defaultProviderId: ProviderId
+  busyAction: string
+  onConnect: () => Promise<void>
+  onDisconnect: () => Promise<void>
+  onRefresh: () => Promise<void>
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const providerName = getProviderDisplayName(provider.id)
+  const isDefault = provider.id === defaultProviderId
+  const status = getProviderConnectionStatus(provider)
+
+  async function disconnect(): Promise<void> {
+    if (!confirmProviderDisconnect(providerName)) return
+
+    await onDisconnect()
+  }
+
+  return (
+    <article className="overflow-hidden rounded-lg border bg-card">
+      <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="flex min-w-0 items-start gap-3">
+          <div
+            className={cn(
+              'flex size-10 shrink-0 items-center justify-center rounded-md border',
+              provider.connected
+                ? 'border-status-completed/20 bg-status-completed/10 text-status-completed'
+                : provider.installed
+                  ? 'border-border bg-accent text-muted-foreground'
+                  : 'border-status-attention/20 bg-status-attention/10 text-status-attention'
+            )}
+          >
+            <ProviderGlyph providerId={provider.id} />
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold leading-6">{provider.label}</h3>
+              {isDefault ? (
+                <Badge variant="secondary" className="gap-1">
+                  <CheckCircle2 className="size-3" />
+                  Default
+                </Badge>
+              ) : null}
+              <Badge variant={status.variant} className="gap-1">
+                <ConnectionStatusGlyph provider={provider} />
+                {status.label}
+              </Badge>
+            </div>
+            <p className="mt-1 truncate text-sm leading-6 text-muted-foreground">
+              {getProviderSummary(provider)}
+            </p>
+          </div>
+        </div>
+
+        <ProviderConnectionActions
+          provider={provider}
+          providerName={providerName}
+          busyAction={busyAction}
+          expanded={expanded}
+          onConnect={onConnect}
+          onDisconnect={disconnect}
+          onRefresh={onRefresh}
+          onToggleDetails={() => setExpanded((current) => !current)}
+        />
+      </div>
+
+      {expanded ? <ProviderConnectionDetails provider={provider} /> : null}
+    </article>
+  )
+}
+
+function ProviderConnectionActions({
+  provider,
+  providerName,
+  busyAction,
+  expanded,
+  onConnect,
+  onDisconnect,
+  onRefresh,
+  onToggleDetails
+}: {
+  provider: ProviderStatus
+  providerName: string
+  busyAction: string
+  expanded: boolean
+  onConnect: () => Promise<void>
+  onDisconnect: () => Promise<void>
+  onRefresh: () => Promise<void>
+  onToggleDetails: () => void
+}): React.JSX.Element {
+  const isRefreshing = busyAction === `refresh-${provider.id}`
+  const isConnecting = busyAction === `connect-${provider.id}`
+  const isDisconnecting = busyAction === `disconnect-${provider.id}`
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        onClick={() => void onRefresh()}
+        disabled={Boolean(busyAction)}
+        title={`Check ${providerName}`}
+        aria-label={`Check ${providerName}`}
+      >
+        {isRefreshing ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
+      </Button>
+
+      {provider.connected ? (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void onDisconnect()}
+          disabled={Boolean(busyAction)}
+        >
+          {isDisconnecting ? <Loader2 className="animate-spin" /> : <Unplug />}
+          Disconnect
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          onClick={() => void onConnect()}
+          disabled={!provider.installed || Boolean(busyAction)}
+        >
+          {isConnecting ? <Loader2 className="animate-spin" /> : <PlugZap />}
+          Connect
+        </Button>
+      )}
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onToggleDetails}
+        title={expanded ? 'Hide details' : 'Show details'}
+        aria-expanded={expanded}
+        aria-label={expanded ? 'Hide provider details' : 'Show provider details'}
+      >
+        <ChevronDown className={cn('transition-transform', expanded ? 'rotate-180' : 'rotate-0')} />
+      </Button>
+    </div>
+  )
+}
+
+function ProviderConnectionDetails({ provider }: { provider: ProviderStatus }): React.JSX.Element {
+  return (
+    <dl className="grid gap-3 border-t bg-accent/40 p-4 md:grid-cols-2 xl:grid-cols-4">
+      <CompactProviderDetail label="CLI" value={provider.installed ? 'Detected' : 'Not detected'} />
+      <CompactProviderDetail label="Version" value={provider.version ?? '-'} />
+      <CompactProviderDetail label="Account" value={provider.accountLabel || '-'} />
+      <CompactProviderDetail
+        label="Status"
+        value={provider.connected ? 'Connected' : provider.note || '-'}
+      />
+      {provider.lastError ? (
+        <p className="rounded-md border border-status-failed/20 bg-status-failed/10 px-3 py-2 text-xs leading-5 text-status-failed md:col-span-2 xl:col-span-4">
+          {provider.lastError}
+        </p>
+      ) : null}
+      <p className="text-xs leading-5 text-muted-foreground md:col-span-2 xl:col-span-4">
+        Disconnect removes only the provider credentials managed by Ordinus.
+      </p>
+    </dl>
+  )
+}
+
+function CompactProviderDetail({
+  label,
+  value
+}: {
+  label: string
+  value: string
+}): React.JSX.Element {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-1 truncate font-mono text-xs leading-5 text-foreground">{value}</dd>
+    </div>
+  )
+}
+
+function ProviderGlyph({ providerId }: { providerId: ProviderId }): React.JSX.Element {
+  if (providerId === 'codex') return <Terminal className="size-5" />
+  if (providerId === 'claude') return <Bot className="size-5" />
+  if (providerId === 'gemini') return <Diamond className="size-5" />
+  return <Code2 className="size-5" />
+}
+
+function ConnectionStatusGlyph({ provider }: { provider: ProviderStatus }): React.JSX.Element {
+  if (provider.connected) return <CheckCircle2 className="size-3" />
+  if (provider.installed) return <PlugZap className="size-3" />
+  return <Terminal className="size-3" />
+}
+
+function getProviderConnectionStatus(provider: ProviderStatus): {
+  label: string
+  variant: 'completed' | 'attention' | 'outline'
+} {
+  if (provider.connected) {
+    return { label: 'Ready', variant: 'completed' }
+  }
+
+  if (provider.installed) {
+    return { label: 'Needs login', variant: 'attention' }
+  }
+
+  return { label: 'CLI missing', variant: 'outline' }
+}
+
+function getProviderSummary(provider: ProviderStatus): string {
+  if (!provider.installed) {
+    return 'CLI not found.'
+  }
+
+  if (provider.connected) {
+    return [provider.accountLabel || 'Connected account', provider.version]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  return ['CLI detected', provider.version, provider.note].filter(Boolean).join(' · ')
+}
+
+function confirmProviderDisconnect(providerName: string): boolean {
+  return window.confirm(
+    `Disconnect ${providerName} from Ordinus? This only removes Ordinus-managed provider credentials.`
   )
 }
 

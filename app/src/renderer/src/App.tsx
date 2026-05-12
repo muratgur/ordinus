@@ -133,6 +133,13 @@ function App(): React.JSX.Element {
     })
   }
 
+  async function disconnectProvider(providerId: ProviderId): Promise<void> {
+    await runSetupAction(`disconnect-${providerId}`, async () => {
+      await window.ordinus.runtime.disconnectProvider({ providerId })
+      await loadStatus({ stayOnSetup: true })
+    })
+  }
+
   async function updateSystemDefault(input: WorkspaceUpdateSystemDefaultInput): Promise<void> {
     await runSetupAction('system-default', async () => {
       await window.ordinus.workspace.updateSystemDefault(input)
@@ -192,6 +199,7 @@ function App(): React.JSX.Element {
                 onSelectFolder={selectWorkspaceFolder}
                 onSaveWorkspace={saveWorkspace}
                 onConnectProvider={connectProvider}
+                onDisconnectProvider={disconnectProvider}
                 onRefreshProvider={refreshProvider}
                 onUpdateSystemDefault={updateSystemDefault}
               />

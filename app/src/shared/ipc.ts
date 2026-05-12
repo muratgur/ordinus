@@ -32,5 +32,6 @@ export const ipcChannels = {
   workboardRevealPath: 'workboard:reveal-path',
   runtimeGetProviders: 'runtime:get-providers',
   runtimeConnectProvider: 'runtime:connect-provider',
+  runtimeDisconnectProvider: 'runtime:disconnect-provider',
   runtimeRefreshProvider: 'runtime:refresh-provider'
 } as const
