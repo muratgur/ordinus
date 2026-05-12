@@ -300,6 +300,10 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = ProviderConnectInputSchema.parse(payload)
     return runtime.connectProvider(input)
   })
+  ipcMain.handle(ipcChannels.runtimeDisconnectProvider, (_event, payload) => {
+    const input = ProviderActionInputSchema.parse(payload)
+    return runtime.disconnectProvider(input)
+  })
   ipcMain.handle(ipcChannels.runtimeRefreshProvider, (_event, payload) => {
     const input = ProviderActionInputSchema.parse(payload)
     return runtime.refreshProvider(input)

@@ -130,6 +130,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.runtimeGetProviders),
     connectProvider: async (input: ProviderConnectInput): Promise<ProviderConnectResult> =>
       ipcRenderer.invoke(ipcChannels.runtimeConnectProvider, input),
+    disconnectProvider: async (input: ProviderActionInput): Promise<ProviderStatus> =>
+      ipcRenderer.invoke(ipcChannels.runtimeDisconnectProvider, input),
     refreshProvider: async (input: ProviderActionInput): Promise<ProviderStatus> =>
       ipcRenderer.invoke(ipcChannels.runtimeRefreshProvider, input)
   }

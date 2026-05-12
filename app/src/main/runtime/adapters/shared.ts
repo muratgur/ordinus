@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { createWriteStream, mkdirSync } from 'node:fs'
+import { createWriteStream, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { withCliBaseArgs, type CliExecutable } from '../cli/executable'
 import { firstLine, isRecord, parseJsonFromCliOutput } from '../cli/output'
@@ -23,6 +23,14 @@ export type ConnectProviderOptions = {
     executable: CliExecutable,
     setProcess: (process: ProviderLoginProcess) => void
   ) => Promise<ProviderConnectResult>
+}
+
+export type DisconnectProviderOptions = {
+  providerId: ProviderId
+  context: ProviderRuntimeContext
+  beforeRemoveAuth?: () => Promise<void>
+  getAuthPaths: () => string[]
+  getStatus: (loginProcess: ProviderLoginProcess | null) => Promise<ProviderStatus>
 }
 
 export type ConversationProcessResult = {
@@ -205,6 +213,28 @@ export async function connectCliProvider({
   }
 
   return ProviderConnectResultSchema.parse(await startLogin(executable, setLoginProcess))
+}
+
+export async function disconnectCliProvider({
+  providerId,
+  context,
+  beforeRemoveAuth,
+  getAuthPaths,
+  getStatus
+}: DisconnectProviderOptions): Promise<ProviderStatus> {
+  const loginProcess = context.loginProcesses.get(providerId)
+  if (loginProcess) {
+    stopProviderLoginProcess(loginProcess)
+    context.loginProcesses.delete(providerId)
+  }
+
+  await beforeRemoveAuth?.()
+
+  for (const authPath of getAuthPaths()) {
+    rmSync(authPath, { force: true, recursive: true })
+  }
+
+  return getStatus(null)
 }
 
 export function createProviderStatusBase<TProviderId extends ProviderId>({

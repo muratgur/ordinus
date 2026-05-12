@@ -49,6 +49,7 @@ import {
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
+  disconnectCliProvider,
   getCliVersion,
   scheduleLoginCleanup,
   stopProviderLoginProcess
@@ -81,6 +82,9 @@ export const codexProviderAdapter: ProviderAdapter = {
       startLogin: startCodexLogin
     })
   },
+  disconnectProvider(_input, context) {
+    return disconnectCodexProvider(context)
+  },
   generateAgentDraft(input) {
     return generateCodexAgentDraft(input)
   },
@@ -93,6 +97,19 @@ export const codexProviderAdapter: ProviderAdapter = {
   sendConversationTurn(input, context) {
     return sendCodexConversationTurn(input, context)
   }
+}
+
+async function disconnectCodexProvider(context: ProviderRuntimeContext): Promise<ProviderStatus> {
+  return disconnectCliProvider({
+    providerId: 'codex',
+    context,
+    getAuthPaths: getCodexAuthPaths,
+    getStatus: getCodexStatus
+  })
+}
+
+function getCodexAuthPaths(): string[] {
+  return [join(getCodexHome(), 'auth.json')]
 }
 
 async function sendCodexConversationTurn(
