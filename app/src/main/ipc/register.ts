@@ -31,8 +31,10 @@ import {
   WorkboardAnswerInputRequestInputSchema,
   WorkboardDirectStartInputSchema,
   WorkboardDraftPlanSchema,
+  WorkboardGenerateFollowUpPlanInputSchema,
   WorkboardGeneratePlanInputSchema,
   WorkboardRevealPathInputSchema,
+  WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestInputSchema,
   WorkRunActionInputSchema,
   WorkspaceSaveConfigInputSchema,
@@ -46,6 +48,7 @@ import {
   type ConversationSendTurnInput,
   type ProviderId,
   type WorkboardDraftPlan,
+  type WorkboardGenerateFollowUpPlanInput,
   type WorkRun
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
@@ -321,6 +324,16 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     startWorkRequestRuns(database, runtime, request.id)
     return database.getWorkboardData()
   })
+  ipcMain.handle(ipcChannels.workboardGenerateFollowUpPlan, async (_event, payload) => {
+    const input = WorkboardGenerateFollowUpPlanInputSchema.parse(payload)
+    return generateWorkboardPlan(database, runtime, buildFollowUpPlanningRequest(database, input))
+  })
+  ipcMain.handle(ipcChannels.workboardStartFollowUp, (_event, payload) => {
+    const input = WorkboardStartFollowUpInputSchema.parse(payload)
+    const request = database.createWorkRequestFollowUp(input)
+    startWorkRequestRuns(database, runtime, request.id)
+    return database.getWorkboardData()
+  })
   ipcMain.handle(ipcChannels.workboardCancelRun, (_event, payload) => {
     const input = WorkRunActionInputSchema.parse(payload)
     runtime.cancelConversationTurn(input.runId)
@@ -518,6 +531,54 @@ async function generateWorkboardPlan(
   validateWorkboardDraftPlanDependencies(plan.items)
 
   return plan
+}
+
+function buildFollowUpPlanningRequest(
+  database: OrdinusDatabase,
+  input: WorkboardGenerateFollowUpPlanInput
+): string {
+  const request = database.getWorkRequest(input.requestId)
+  const anchorRun = input.anchorRunId ? database.getWorkRun(input.anchorRunId) : null
+  if (anchorRun && getOptionalWorkRequestId(anchorRun) !== request.id) {
+    throw new Error('Follow-up work must stay inside the selected Work Request.')
+  }
+
+  return [
+    'Plan follow-up Work Items for an existing Ordinus Work Request.',
+    'Do not restart the original request. Add only the smallest useful next Work Items.',
+    '',
+    'Existing Work Request:',
+    `Title: ${request.title}`,
+    `Summary: ${request.summary || 'No summary recorded.'}`,
+    'Original request:',
+    request.originalRequest,
+    '',
+    anchorRun
+      ? [
+          'Continue from this Work Item:',
+          `Title: ${anchorRun.title}`,
+          `Agent: ${anchorRun.assignedAgentName} (${anchorRun.assignedAgentRole || 'Agent'})`,
+          `Status: ${anchorRun.status}`,
+          'Instruction:',
+          anchorRun.instruction,
+          'Latest output:',
+          anchorRun.resultSummary || anchorRun.error || 'No output recorded.',
+          formatFileRefsForPrompt('Artifacts', anchorRun.artifactRefs),
+          formatFileRefsForPrompt('Changed files', anchorRun.changedFiles),
+          '',
+          'Prefer the same agent when the follow-up is a direct continuation of this Work Item. Use another agent only when the follow-up clearly belongs to another role.'
+        ].join('\n')
+      : 'No specific Work Item is selected; continue the Work Request as a whole.',
+    '',
+    'User follow-up request:',
+    input.request
+  ].join('\n')
+}
+
+function formatFileRefsForPrompt(label: string, refs: string[]): string {
+  return refs.length > 0
+    ? [label + ':', ...refs.map((ref) => `- ${ref}`)].join('\n')
+    : `${label}: none`
 }
 
 function validateWorkboardPlanAgents(
