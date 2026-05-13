@@ -32,6 +32,8 @@ export const ipcChannels = {
   workboardGeneratePlan: 'workboard:generate-plan',
   workboardStartRequest: 'workboard:start-request',
   workboardDirectStart: 'workboard:direct-start',
+  workboardGenerateFollowUpPlan: 'workboard:generate-follow-up-plan',
+  workboardStartFollowUp: 'workboard:start-follow-up',
   workboardCancelRun: 'workboard:cancel-run',
   workboardAnswerInputRequest: 'workboard:answer-input-request',
   workboardRevealPath: 'workboard:reveal-path',

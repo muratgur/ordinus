@@ -53,6 +53,23 @@ const columns: Array<{
   { id: 'cancelled', label: 'Cancel', fullLabel: 'Cancelled', icon: XCircle }
 ]
 
+type WorkComposerTarget =
+  | { mode: 'new' }
+  | {
+      mode: 'follow-up'
+      requestId: string
+      requestTitle: string
+      anchorRunId: string
+      anchorRunTitle: string
+    }
+
+type DraftPlanContext = {
+  target: WorkComposerTarget
+  request: string
+}
+
+const newWorkComposerTarget: WorkComposerTarget = { mode: 'new' }
+
 export function WorkboardScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [data, setData] = useState<WorkboardData>({
@@ -62,8 +79,10 @@ export function WorkboardScreen(): React.JSX.Element {
     inputRequests: []
   })
   const [request, setRequest] = useState('')
+  const [composerTarget, setComposerTarget] = useState<WorkComposerTarget>(newWorkComposerTarget)
   const [reviewBeforeStart, setReviewBeforeStart] = useState(true)
   const [draftPlan, setDraftPlan] = useState<WorkboardDraftPlan | null>(null)
+  const [draftContext, setDraftContext] = useState<DraftPlanContext | null>(null)
   const [selectedDraftId, setSelectedDraftId] = useState('')
   const [selectedRunId, setSelectedRunId] = useState('')
   const [requestFilter, setRequestFilter] = useState('all')
@@ -113,53 +132,56 @@ export function WorkboardScreen(): React.JSX.Element {
 
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
   const canSubmit = request.trim().length >= 12 && enabledAgents.length > 0 && !busy
+  const composerIsFollowUp = composerTarget.mode === 'follow-up'
 
   async function handleSubmit(): Promise<void> {
     if (!canSubmit) return
     setBusy('submit')
     setError('')
+    const submittedRequest = request.trim()
 
     try {
-      const plan = await window.ordinus.workboard.generatePlan({ request })
+      const plan = await generateDraftPlan(composerTarget, submittedRequest)
       if (reviewBeforeStart) {
-        openDraftPlan(plan)
+        openDraftPlan(plan, composerTarget, submittedRequest)
         return
       }
 
       if (plan.items.length > 8) {
-        openDraftPlan(plan)
-        setError('Review this Work Request before starting because it has many Work Items.')
+        openDraftPlan(plan, composerTarget, submittedRequest)
+        setError(getLargePlanReviewMessage(composerTarget))
         return
       }
 
-      await startDraftPlan(plan)
+      await startDraftPlan(plan, composerTarget, submittedRequest)
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Work Request could not start.')
+      setError(getStartErrorMessage(submitError, composerTarget))
     } finally {
       setBusy('')
     }
   }
 
   async function handleStartDraft(): Promise<void> {
-    if (!draftPlan) return
+    if (!draftPlan || !draftContext) return
     setBusy('start-draft')
     setError('')
 
     try {
-      await startDraftPlan(draftPlan)
+      await startDraftPlan(draftPlan, draftContext.target, draftContext.request)
     } catch (startError) {
-      setError(startError instanceof Error ? startError.message : 'Work Request could not start.')
+      setError(getStartErrorMessage(startError, draftContext.target))
     } finally {
       setBusy('')
     }
   }
 
   async function handleRegenerateDraft(): Promise<void> {
+    if (!draftContext) return
     setBusy('regenerate')
     setError('')
     try {
-      const plan = await window.ordinus.workboard.generatePlan({ request })
-      openDraftPlan(plan)
+      const plan = await generateDraftPlan(draftContext.target, draftContext.request)
+      openDraftPlan(plan, draftContext.target, draftContext.request)
     } catch (regenerateError) {
       setError(
         regenerateError instanceof Error
@@ -182,26 +204,44 @@ export function WorkboardScreen(): React.JSX.Element {
     })
   }
 
-  function openDraftPlan(plan: WorkboardDraftPlan): void {
+  function openDraftPlan(
+    plan: WorkboardDraftPlan,
+    target: WorkComposerTarget,
+    originalRequest: string
+  ): void {
     setDraftPlan(plan)
+    setDraftContext({ target, request: originalRequest })
     setSelectedDraftId(plan.items[0]?.tempId ?? '')
   }
 
-  async function startDraftPlan(plan: WorkboardDraftPlan): Promise<void> {
-    const nextData = await window.ordinus.workboard.startRequest({
-      originalRequest: request,
-      plan
-    })
-    const startedRequest = nextData.requests.find(
-      (item) => item.originalRequest === request && item.title === plan.title
-    )
+  async function startDraftPlan(
+    plan: WorkboardDraftPlan,
+    target: WorkComposerTarget,
+    originalRequest: string
+  ): Promise<void> {
+    const nextData = await startPlan(target, originalRequest, plan)
+    const startedRequest = findStartedRequest(nextData, target, originalRequest, plan)
 
     setData(nextData)
     setRequestFilter(startedRequest?.id ?? 'all')
     setSelectedRunId('')
     setDraftPlan(null)
+    setDraftContext(null)
     setSelectedDraftId('')
     setRequest('')
+    setComposerTarget(newWorkComposerTarget)
+  }
+
+  function handleContinueRun(run: WorkboardRun): void {
+    setComposerTarget({
+      mode: 'follow-up',
+      requestId: run.requestId,
+      requestTitle: run.requestTitle,
+      anchorRunId: run.id,
+      anchorRunTitle: run.title
+    })
+    setRequest('')
+    setSelectedRunId('')
   }
 
   async function handleCancelRun(runId: string): Promise<void> {
@@ -222,10 +262,41 @@ export function WorkboardScreen(): React.JSX.Element {
   return (
     <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col gap-3 overflow-hidden py-4">
       <section className="shrink-0 rounded-lg border bg-card shadow-sm">
+        {composerTarget.mode === 'follow-up' ? (
+          <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="attention">Follow-up</Badge>
+                <p className="truncate text-sm font-medium text-foreground">
+                  {composerTarget.anchorRunTitle}
+                </p>
+              </div>
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                Adds work to {composerTarget.requestTitle}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setComposerTarget(newWorkComposerTarget)}
+            >
+              New request
+            </Button>
+          </div>
+        ) : null}
         <textarea
-          aria-label="Work Request"
-          className="max-h-40 min-h-24 w-full resize-none rounded-t-lg bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-          placeholder="Give agents a Work Request..."
+          aria-label={composerIsFollowUp ? 'Follow-up Work Request' : 'Work Request'}
+          className={cn(
+            'max-h-40 min-h-24 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0',
+            composerIsFollowUp ? '' : 'rounded-t-lg'
+          )}
+          placeholder={
+            composerIsFollowUp
+              ? 'Add follow-up work for the selected Work Item...'
+              : 'Give agents a Work Request...'
+          }
           value={request}
           onChange={(event) => setRequest(event.target.value)}
         />
@@ -265,7 +336,7 @@ export function WorkboardScreen(): React.JSX.Element {
             ) : (
               <Play />
             )}
-            {reviewBeforeStart ? 'Review plan' : 'Start work'}
+            {getSubmitButtonLabel(composerTarget, reviewBeforeStart)}
           </Button>
         </div>
         {enabledAgents.length === 0 ? (
@@ -299,7 +370,8 @@ export function WorkboardScreen(): React.JSX.Element {
 
       <PlanReviewDialog
         open={Boolean(draftPlan)}
-        request={request}
+        request={draftContext?.request ?? request}
+        target={draftContext?.target ?? newWorkComposerTarget}
         plan={draftPlan}
         agents={enabledAgents}
         selectedItem={selectedDraftItem}
@@ -312,6 +384,7 @@ export function WorkboardScreen(): React.JSX.Element {
         onRegenerate={() => void handleRegenerateDraft()}
         onDiscard={() => {
           setDraftPlan(null)
+          setDraftContext(null)
           setSelectedDraftId('')
         }}
       />
@@ -326,6 +399,7 @@ export function WorkboardScreen(): React.JSX.Element {
         busy={busy}
         onClose={() => setSelectedRunId('')}
         onCancel={(runId) => void handleCancelRun(runId)}
+        onContinue={handleContinueRun}
         onAnswered={(nextData) => setData(nextData)}
         onError={setError}
       />
@@ -581,13 +655,14 @@ function WorkColumns({
                       >
                         <div className="flex items-start justify-between gap-2">
                           <h3 className="text-sm font-semibold leading-5">{run.title}</h3>
-                          {inputRequests.some(
-                            (request) => request.runId === run.id && request.status === 'pending'
-                          ) ? (
-                            <Badge className="shrink-0" variant="attention">
-                              Input
-                            </Badge>
-                          ) : null}
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
+                            {inputRequests.some(
+                              (request) => request.runId === run.id && request.status === 'pending'
+                            ) ? (
+                              <Badge variant="attention">Input</Badge>
+                            ) : null}
+                          </div>
                         </div>
                         <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
                         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
@@ -612,6 +687,7 @@ function WorkColumns({
 function PlanReviewDialog({
   open,
   request,
+  target,
   plan,
   agents,
   selectedItem,
@@ -626,6 +702,7 @@ function PlanReviewDialog({
 }: {
   open: boolean
   request: string
+  target: WorkComposerTarget
   plan: WorkboardDraftPlan | null
   agents: Agent[]
   selectedItem: WorkboardDraftItem | null
@@ -639,14 +716,18 @@ function PlanReviewDialog({
   onDiscard: () => void
 }): React.JSX.Element {
   const levels = useMemo(() => (plan ? buildDraftLevels(plan.items) : []), [plan])
+  const isFollowUp = target.mode === 'follow-up'
+  const targetRequestTitle = target.mode === 'follow-up' ? target.requestTitle : ''
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onDiscard() : undefined)}>
       <DialogContent className="max-w-6xl p-0">
         <DialogHeader className="border-b px-6 py-4">
-          <DialogTitle>Review Work Request</DialogTitle>
+          <DialogTitle>{isFollowUp ? 'Review Follow-up' : 'Review Work Request'}</DialogTitle>
           <DialogDescription>
-            Review assignments and dependencies before agents start.
+            {isFollowUp
+              ? `Add these Work Items to ${targetRequestTitle}.`
+              : 'Review assignments and dependencies before agents start.'}
           </DialogDescription>
         </DialogHeader>
         {plan ? (
@@ -708,7 +789,9 @@ function PlanReviewDialog({
               </div>
 
               <div className="rounded-lg border bg-background p-4">
-                <h3 className="text-sm font-semibold">Original request</h3>
+                <h3 className="text-sm font-semibold">
+                  {isFollowUp ? 'Follow-up request' : 'Original request'}
+                </h3>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {request}
                 </p>
@@ -739,7 +822,7 @@ function PlanReviewDialog({
           </Button>
           <Button onClick={onStart} disabled={busy === 'start-draft'}>
             {busy === 'start-draft' ? <Loader2 className="animate-spin" /> : <Play />}
-            Start work
+            {isFollowUp ? 'Add follow-up' : 'Start work'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -840,6 +923,7 @@ function RunDetailDrawer({
   busy,
   onClose,
   onCancel,
+  onContinue,
   onAnswered,
   onError
 }: {
@@ -850,6 +934,7 @@ function RunDetailDrawer({
   busy: string
   onClose: () => void
   onCancel: (runId: string) => void
+  onContinue: (run: WorkboardRun) => void
   onAnswered: (data: WorkboardData) => void
   onError: (message: string) => void
 }): React.JSX.Element | null {
@@ -939,8 +1024,12 @@ function RunDetailDrawer({
           />
         </div>
 
-        {!isTerminalRunStatus(run.status) ? (
-          <footer className="border-t p-4">
+        <footer className="flex flex-col gap-2 border-t p-4 sm:flex-row">
+          <Button variant="outline" className="w-full" onClick={() => onContinue(run)}>
+            <GitBranch />
+            Continue from this item
+          </Button>
+          {!isTerminalRunStatus(run.status) ? (
             <Button
               variant="outline"
               className="w-full"
@@ -949,8 +1038,8 @@ function RunDetailDrawer({
             >
               Cancel Work Item
             </Button>
-          </footer>
-        ) : null}
+          ) : null}
+        </footer>
       </aside>
     </div>
   )
@@ -982,6 +1071,7 @@ function RunDetailHeader({
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Badge variant={statusBadgeVariant(run.status)}>{formatRunStatus(run.status)}</Badge>
+        {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
         <Badge variant="outline">{run.agentName}</Badge>
         <Badge variant="outline">{run.providerId}</Badge>
       </div>
@@ -1198,6 +1288,79 @@ function RunRuntimeTab({ run }: { run: WorkboardRun }): React.JSX.Element {
 
 function isTerminalRunStatus(status: WorkboardRun['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function generateDraftPlan(
+  target: WorkComposerTarget,
+  request: string
+): Promise<WorkboardDraftPlan> {
+  if (target.mode === 'follow-up') {
+    return window.ordinus.workboard.generateFollowUpPlan({
+      requestId: target.requestId,
+      anchorRunId: target.anchorRunId,
+      request
+    })
+  }
+
+  return window.ordinus.workboard.generatePlan({ request })
+}
+
+function startPlan(
+  target: WorkComposerTarget,
+  originalRequest: string,
+  plan: WorkboardDraftPlan
+): Promise<WorkboardData> {
+  if (target.mode === 'follow-up') {
+    return window.ordinus.workboard.startFollowUp({
+      requestId: target.requestId,
+      anchorRunId: target.anchorRunId,
+      plan
+    })
+  }
+
+  return window.ordinus.workboard.startRequest({
+    originalRequest,
+    plan
+  })
+}
+
+function findStartedRequest(
+  data: WorkboardData,
+  target: WorkComposerTarget,
+  originalRequest: string,
+  plan: WorkboardDraftPlan
+): WorkboardData['requests'][number] | undefined {
+  if (target.mode === 'follow-up') {
+    return data.requests.find((item) => item.id === target.requestId)
+  }
+
+  return data.requests.find(
+    (item) => item.originalRequest === originalRequest && item.title === plan.title
+  )
+}
+
+function getLargePlanReviewMessage(target: WorkComposerTarget): string {
+  return target.mode === 'follow-up'
+    ? 'Review this follow-up before starting because it has many Work Items.'
+    : 'Review this Work Request before starting because it has many Work Items.'
+}
+
+function getStartErrorMessage(error: unknown, target: WorkComposerTarget): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return target.mode === 'follow-up'
+    ? 'Follow-up work could not start.'
+    : 'Work Request could not start.'
+}
+
+function getSubmitButtonLabel(target: WorkComposerTarget, reviewBeforeStart: boolean): string {
+  if (target.mode === 'follow-up') {
+    return reviewBeforeStart ? 'Review follow-up' : 'Add follow-up'
+  }
+
+  return reviewBeforeStart ? 'Review plan' : 'Start work'
 }
 
 function defaultRunDetailTab(run: WorkboardRun): RunDetailTab {

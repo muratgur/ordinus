@@ -33,6 +33,7 @@ import {
   WorkboardAnswerInputRequestInputSchema,
   WorkboardDataSchema,
   WorkboardDraftPlanSchema,
+  WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestInputSchema,
   WorkRunActionInputSchema,
   WorkRunCompleteInputSchema,
@@ -70,6 +71,7 @@ import {
   type WorkRunActionInput,
   type WorkboardAnswerInputRequestInput,
   type WorkboardData,
+  type WorkboardStartFollowUpInput,
   type WorkboardStartRequestInput,
   type WorkRunCompleteInput,
   type WorkRunCreateInput,
@@ -727,6 +729,154 @@ export class OrdinusDatabase {
     })
 
     return this.getWorkRequest(requestId)
+  }
+
+  createWorkRequestFollowUp(input: WorkboardStartFollowUpInput): WorkRequest {
+    const parsed = WorkboardStartFollowUpInputSchema.parse(input)
+    const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
+    const request = this.getWorkRequest(parsed.requestId)
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before adding follow-up work.')
+    }
+
+    const anchorRun = parsed.anchorRunId ? this.getWorkRun(parsed.anchorRunId) : null
+    if (anchorRun && !isWorkRunInRequest(anchorRun, request.id)) {
+      throw new Error('Follow-up work must stay inside the selected Work Request.')
+    }
+
+    const agentsById = new Map(
+      this.listAgents()
+        .filter((agent) => agent.enabled)
+        .map((agent) => [agent.id, agent])
+    )
+    plan.items.forEach((item) => {
+      if (!agentsById.has(item.assignedAgentId)) {
+        throw new Error('One or more follow-up Work Items are assigned to an unavailable agent.')
+      }
+    })
+    validateWorkboardDraftPlanDependencies(plan.items)
+
+    const now = new Date().toISOString()
+    const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, request.workingRoot)
+
+    this.db.transaction((tx) => {
+      plan.items.forEach((item) => {
+        const agent = agentsById.get(item.assignedAgentId)
+        const runId = runIdsByTempId.get(item.tempId)
+        if (!agent || !runId) {
+          throw new Error('Follow-up Work Item could not be prepared.')
+        }
+
+        const dependentRunIds = item.dependsOnTempIds.map((tempId) => {
+          const dependsOnRunId = runIdsByTempId.get(tempId)
+          if (!dependsOnRunId) {
+            throw new Error('Follow-up Work Item dependency could not be prepared.')
+          }
+
+          return dependsOnRunId
+        })
+        const shouldDependOnAnchor = shouldUseAnchorDependency(anchorRun, item.dependsOnTempIds)
+        const requiredRunIds = uniqueValues([
+          ...(shouldDependOnAnchor && anchorRun ? [anchorRun.id] : []),
+          ...dependentRunIds
+        ])
+        const satisfiedRequiredRunIds = anchorRun
+          ? getSatisfiedRequiredRunIds([anchorRun])
+          : new Set<string>()
+        const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
+        const providerSessionRef =
+          anchorRun &&
+          anchorRun.assignedAgentId === agent.id &&
+          requiredRunIds.includes(anchorRun.id)
+            ? anchorRun.providerSessionRef
+            : null
+
+        tx.insert(workRuns)
+          .values({
+            id: runId,
+            rootRunId: anchorRun?.rootRunId ?? runId,
+            parentRunId: anchorRun?.id ?? null,
+            assignedAgentId: agent.id,
+            assignedAgentName: agent.name,
+            assignedAgentRole: agent.role,
+            createdByType: 'user',
+            createdByAgentId: null,
+            sourceType: workRequestSourceType,
+            sourceId: request.id,
+            sourceItemId: item.tempId,
+            title: item.title,
+            instruction: item.instruction,
+            status,
+            priority: item.priority,
+            providerId: agent.providerId,
+            model: agent.model,
+            providerSessionRef,
+            workingRoot: request.workingRoot,
+            sandbox: agent.sandbox,
+            expectedOutput: item.expectedOutput,
+            resultSummary: '',
+            resultArtifactRef: '',
+            artifactRefs: JSON.stringify([]),
+            changedFiles: JSON.stringify([]),
+            error: '',
+            createdAt: now,
+            updatedAt: now,
+            startedAt: null,
+            completedAt: null
+          })
+          .run()
+
+        requiredRunIds.forEach((dependsOnRunId) => {
+          tx.insert(workRunDependencies)
+            .values({
+              id: createWorkRunDependencyId(),
+              runId,
+              dependsOnRunId,
+              status: satisfiedRequiredRunIds.has(dependsOnRunId) ? 'satisfied' : 'pending',
+              createdAt: now,
+              resolvedAt: satisfiedRequiredRunIds.has(dependsOnRunId) ? now : null
+            })
+            .run()
+        })
+
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId,
+            sequence: 1,
+            kind: 'created',
+            payload: JSON.stringify({
+              workRequestId: request.id,
+              assignedAgentId: item.assignedAgentId,
+              followUpToRunId: anchorRun?.id ?? null,
+              requiredRunIds
+            }),
+            createdAt: now
+          })
+          .run()
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId,
+            sequence: 2,
+            kind: status,
+            payload: JSON.stringify({}),
+            createdAt: now
+          })
+          .run()
+      })
+    })
+
+    const firstRunId = plan.items
+      .map((item) => runIdsByTempId.get(item.tempId))
+      .find((runId): runId is string => Boolean(runId))
+    if (firstRunId) {
+      this.refreshWorkRequestStatusForRun(firstRunId)
+    }
+
+    return this.getWorkRequest(request.id)
   }
 
   listWorkRequests(): WorkRequest[] {
@@ -2523,6 +2673,18 @@ function isTerminalWorkRunStatus(status: WorkRun['status']): boolean {
 
 function isCompletableWorkRunStatus(status: WorkRun['status']): boolean {
   return status === 'running' || status === 'waiting_for_user'
+}
+
+function isWorkRunInRequest(run: WorkRun, requestId: string): boolean {
+  return run.source?.type === workRequestSourceType && run.source.id === requestId
+}
+
+function shouldUseAnchorDependency(anchorRun: WorkRun | null, dependsOnTempIds: string[]): boolean {
+  if (!anchorRun || dependsOnTempIds.length > 0) {
+    return false
+  }
+
+  return !isTerminalWorkRunStatus(anchorRun.status) || hasCompletedWorkRunOutput(anchorRun)
 }
 
 function getSatisfiedRequiredRunIds(requiredRuns: WorkRun[]): Set<string> {

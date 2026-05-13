@@ -621,6 +621,18 @@ export const WorkboardStartRequestInputSchema = z.object({
 
 export const WorkboardDirectStartInputSchema = WorkboardGeneratePlanInputSchema
 
+export const WorkboardGenerateFollowUpPlanInputSchema = z.object({
+  requestId: z.string().min(1),
+  anchorRunId: z.string().min(1).optional(),
+  request: z.string().trim().min(12, 'Describe the follow-up work.').max(64_000)
+})
+
+export const WorkboardStartFollowUpInputSchema = z.object({
+  requestId: z.string().min(1),
+  anchorRunId: z.string().min(1).optional(),
+  plan: WorkboardDraftPlanSchema
+})
+
 export const WorkboardDataSchema = z.object({
   requests: z.array(WorkRequestSchema),
   runs: z.array(WorkboardRunSchema),
@@ -789,6 +801,10 @@ export type WorkboardDraftPlan = z.infer<typeof WorkboardDraftPlanSchema>
 export type WorkboardGeneratePlanInput = z.infer<typeof WorkboardGeneratePlanInputSchema>
 export type WorkboardStartRequestInput = z.infer<typeof WorkboardStartRequestInputSchema>
 export type WorkboardDirectStartInput = z.infer<typeof WorkboardDirectStartInputSchema>
+export type WorkboardGenerateFollowUpPlanInput = z.infer<
+  typeof WorkboardGenerateFollowUpPlanInputSchema
+>
+export type WorkboardStartFollowUpInput = z.infer<typeof WorkboardStartFollowUpInputSchema>
 export type WorkboardData = z.infer<typeof WorkboardDataSchema>
 export type WorkboardAnswerInputRequestInput = z.infer<
   typeof WorkboardAnswerInputRequestInputSchema
