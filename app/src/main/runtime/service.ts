@@ -228,6 +228,8 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
     '',
     formatRequiredInputs(input.requiredInputs),
     '',
+    'Same-agent prior Work Items in this Work Request may already be in this provider session. Treat session memory as orientation only; artifacts and workspace files are authoritative.',
+    '',
     'Read upstream files from the workspace when you need full detail. Do not assume the summary contains everything.',
     ...formatResumeMessage(input.resumeMessage),
     '',

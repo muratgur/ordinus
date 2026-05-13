@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 export const appMeta = sqliteTable('app_meta', {
   id: integer('id').primaryKey(),
@@ -120,6 +120,28 @@ export const workRuns = sqliteTable('work_runs', {
   completedAt: text('completed_at')
 })
 
+export const workRequestAgentSessions = sqliteTable(
+  'work_request_agent_sessions',
+  {
+    id: text('id').primaryKey(),
+    requestId: text('request_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    model: text('model').notNull(),
+    providerSessionRef: text('provider_session_ref'),
+    status: text('status').notNull(),
+    lastRunId: text('last_run_id'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    requestAgentUnique: uniqueIndex('work_request_agent_sessions_request_agent_unique').on(
+      table.requestId,
+      table.agentId
+    )
+  })
+)
+
 export const workRequests = sqliteTable('work_requests', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
@@ -159,6 +181,7 @@ export const workRunInputRequests = sqliteTable('work_run_input_requests', {
   detail: text('detail').notNull(),
   questions: text('questions').notNull(),
   answers: text('answers'),
+  resumeMessage: text('resume_message').notNull().default(''),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })

@@ -170,6 +170,10 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
   if (input.providerSessionRef) {
     const args = [
       'exec',
+      '--sandbox',
+      input.sandbox,
+      '-C',
+      input.workspaceRoot,
       'resume',
       input.providerSessionRef,
       '-',

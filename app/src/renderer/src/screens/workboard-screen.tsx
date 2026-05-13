@@ -19,6 +19,7 @@ import type {
   Agent,
   InteractionAnswer,
   InteractionQuestion,
+  WorkRunInputRequestStatus,
   WorkboardData,
   WorkboardDraftItem,
   WorkboardDraftPlan,
@@ -56,7 +57,12 @@ const columns: Array<{
 type WorkComposerTarget =
   | { mode: 'new' }
   | {
-      mode: 'follow-up'
+      mode: 'request'
+      requestId: string
+      requestTitle: string
+    }
+  | {
+      mode: 'item'
       requestId: string
       requestTitle: string
       anchorRunId: string
@@ -132,7 +138,8 @@ export function WorkboardScreen(): React.JSX.Element {
 
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
   const canSubmit = request.trim().length >= 12 && enabledAgents.length > 0 && !busy
-  const composerIsFollowUp = composerTarget.mode === 'follow-up'
+  const composerIsContinuation = composerTarget.mode !== 'new'
+  const selectedRequest = data.requests.find((item) => item.id === requestFilter) ?? null
 
   async function handleSubmit(): Promise<void> {
     if (!canSubmit) return
@@ -234,11 +241,24 @@ export function WorkboardScreen(): React.JSX.Element {
 
   function handleContinueRun(run: WorkboardRun): void {
     setComposerTarget({
-      mode: 'follow-up',
+      mode: 'item',
       requestId: run.requestId,
       requestTitle: run.requestTitle,
       anchorRunId: run.id,
       anchorRunTitle: run.title
+    })
+    setRequest('')
+    setSelectedRunId('')
+  }
+
+  function handleContinueRequest(requestId: string): void {
+    const workRequest = data.requests.find((item) => item.id === requestId)
+    if (!workRequest) return
+
+    setComposerTarget({
+      mode: 'request',
+      requestId: workRequest.id,
+      requestTitle: workRequest.title
     })
     setRequest('')
     setSelectedRunId('')
@@ -262,17 +282,23 @@ export function WorkboardScreen(): React.JSX.Element {
   return (
     <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col gap-3 overflow-hidden py-4">
       <section className="shrink-0 rounded-lg border bg-card shadow-sm">
-        {composerTarget.mode === 'follow-up' ? (
+        {composerTarget.mode !== 'new' ? (
           <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="attention">Follow-up</Badge>
+                <Badge variant="attention">
+                  {composerTarget.mode === 'item' ? 'Item follow-up' : 'Continuing work'}
+                </Badge>
                 <p className="truncate text-sm font-medium text-foreground">
-                  {composerTarget.anchorRunTitle}
+                  {composerTarget.mode === 'item'
+                    ? composerTarget.anchorRunTitle
+                    : composerTarget.requestTitle}
                 </p>
               </div>
               <p className="mt-1 truncate text-xs text-muted-foreground">
-                Adds work to {composerTarget.requestTitle}
+                {composerTarget.mode === 'item'
+                  ? `Adds work to ${composerTarget.requestTitle}`
+                  : 'Adds Work Items to this Work Request'}
               </p>
             </div>
             <Button
@@ -287,14 +313,14 @@ export function WorkboardScreen(): React.JSX.Element {
           </div>
         ) : null}
         <textarea
-          aria-label={composerIsFollowUp ? 'Follow-up Work Request' : 'Work Request'}
+          aria-label={composerIsContinuation ? 'Continuation Work Request' : 'Work Request'}
           className={cn(
             'max-h-40 min-h-24 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0',
-            composerIsFollowUp ? '' : 'rounded-t-lg'
+            composerIsContinuation ? '' : 'rounded-t-lg'
           )}
           placeholder={
-            composerIsFollowUp
-              ? 'Add follow-up work for the selected Work Item...'
+            composerIsContinuation
+              ? 'Add continuation work for this Work Request...'
               : 'Give agents a Work Request...'
           }
           value={request}
@@ -357,8 +383,10 @@ export function WorkboardScreen(): React.JSX.Element {
         allCount={allRunCount}
         activeCount={activeRunCount}
         requestStats={requestStats}
+        selectedRequest={selectedRequest}
         workSearch={workSearch}
         onFilterChange={setRequestFilter}
+        onContinueRequest={handleContinueRequest}
         onWorkSearchChange={setWorkSearch}
       />
 
@@ -393,9 +421,7 @@ export function WorkboardScreen(): React.JSX.Element {
         run={selectedRun}
         dependencies={data.dependencies}
         runs={data.runs}
-        inputRequest={data.inputRequests.find(
-          (item) => item.runId === selectedRun?.id && item.status === 'pending'
-        )}
+        inputRequest={getVisibleWorkRunInputRequest(data.inputRequests, selectedRun?.id)}
         busy={busy}
         onClose={() => setSelectedRunId('')}
         onCancel={(runId) => void handleCancelRun(runId)}
@@ -429,16 +455,20 @@ function WorkFilterBar({
   allCount,
   activeCount,
   requestStats,
+  selectedRequest,
   workSearch,
   onFilterChange,
+  onContinueRequest,
   onWorkSearchChange
 }: {
   filter: string
   allCount: number
   activeCount: number
   requestStats: RequestFilterStat[]
+  selectedRequest: WorkboardData['requests'][number] | null
   workSearch: string
   onFilterChange: (filter: string) => void
+  onContinueRequest: (requestId: string) => void
   onWorkSearchChange: (search: string) => void
 }): React.JSX.Element {
   const [requestPickerOpen, setRequestPickerOpen] = useState(false)
@@ -555,7 +585,19 @@ function WorkFilterBar({
         ) : null}
       </div>
 
-      <div className="flex min-w-0 xl:ml-auto">
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row xl:ml-auto">
+        {selectedRequest ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => onContinueRequest(selectedRequest.id)}
+          >
+            <GitBranch />
+            Continue this work
+          </Button>
+        ) : null}
         <label className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground sm:w-44 xl:w-40">
           <Search className="size-4 shrink-0" />
           <input
@@ -646,33 +688,37 @@ function WorkColumns({
                       No Work Items
                     </div>
                   ) : (
-                    columnRuns.map((run) => (
-                      <button
-                        key={run.id}
-                        type="button"
-                        className="rounded-md border bg-background p-3 text-left shadow-sm transition-colors hover:border-primary/40"
-                        onClick={() => onSelectRun(run.id)}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="text-sm font-semibold leading-5">{run.title}</h3>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                            {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
-                            {inputRequests.some(
-                              (request) => request.runId === run.id && request.status === 'pending'
-                            ) ? (
-                              <Badge variant="attention">Input</Badge>
-                            ) : null}
+                    columnRuns.map((run) => {
+                      const inputBadge = getWorkRunInputBadge(
+                        getVisibleWorkRunInputRequest(inputRequests, run.id)
+                      )
+
+                      return (
+                        <button
+                          key={run.id}
+                          type="button"
+                          className="rounded-md border bg-background p-3 text-left shadow-sm transition-colors hover:border-primary/40"
+                          onClick={() => onSelectRun(run.id)}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <h3 className="text-sm font-semibold leading-5">{run.title}</h3>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
+                              {inputBadge ? (
+                                <Badge variant={inputBadge.variant}>{inputBadge.label}</Badge>
+                              ) : null}
+                            </div>
                           </div>
-                        </div>
-                        <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                          {run.error || run.resultSummary || run.expectedOutput || run.instruction}
-                        </p>
-                        <p className="mt-2 truncate text-[11px] text-muted-foreground">
-                          {run.requestTitle}
-                        </p>
-                      </button>
-                    ))
+                          <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
+                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                            {run.error || run.resultSummary || run.expectedOutput || run.instruction}
+                          </p>
+                          <p className="mt-2 truncate text-[11px] text-muted-foreground">
+                            {run.requestTitle}
+                          </p>
+                        </button>
+                      )
+                    })
                   )}
                 </div>
               </section>
@@ -716,16 +762,18 @@ function PlanReviewDialog({
   onDiscard: () => void
 }): React.JSX.Element {
   const levels = useMemo(() => (plan ? buildDraftLevels(plan.items) : []), [plan])
-  const isFollowUp = target.mode === 'follow-up'
-  const targetRequestTitle = target.mode === 'follow-up' ? target.requestTitle : ''
+  const isContinuation = target.mode !== 'new'
+  const targetRequestTitle = target.mode !== 'new' ? target.requestTitle : ''
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onDiscard() : undefined)}>
       <DialogContent className="max-w-6xl p-0">
         <DialogHeader className="border-b px-6 py-4">
-          <DialogTitle>{isFollowUp ? 'Review Follow-up' : 'Review Work Request'}</DialogTitle>
+          <DialogTitle>
+            {isContinuation ? 'Review Continuation' : 'Review Work Request'}
+          </DialogTitle>
           <DialogDescription>
-            {isFollowUp
+            {isContinuation
               ? `Add these Work Items to ${targetRequestTitle}.`
               : 'Review assignments and dependencies before agents start.'}
           </DialogDescription>
@@ -790,7 +838,7 @@ function PlanReviewDialog({
 
               <div className="rounded-lg border bg-background p-4">
                 <h3 className="text-sm font-semibold">
-                  {isFollowUp ? 'Follow-up request' : 'Original request'}
+                  {isContinuation ? 'Continuation request' : 'Original request'}
                 </h3>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {request}
@@ -822,7 +870,7 @@ function PlanReviewDialog({
           </Button>
           <Button onClick={onStart} disabled={busy === 'start-draft'}>
             {busy === 'start-draft' ? <Loader2 className="animate-spin" /> : <Play />}
-            {isFollowUp ? 'Add follow-up' : 'Start work'}
+            {isContinuation ? 'Add continuation' : 'Start work'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1188,7 +1236,7 @@ function RunOutputTab({
 }): React.JSX.Element {
   return (
     <div className="grid gap-3">
-      {inputRequest ? (
+      {inputRequest?.status === 'pending' ? (
         <WorkInputRequestPanel
           inputRequest={inputRequest}
           answers={answers}
@@ -1196,12 +1244,24 @@ function RunOutputTab({
           onSubmit={onSubmitAnswers}
         />
       ) : null}
+      {inputRequest?.status === 'queued_for_resume' ? <QueuedResumePanel /> : null}
       {run.resultSummary ? (
         <DetailBlock label="Output">{run.resultSummary}</DetailBlock>
       ) : (
         <EmptyDetailState>No output yet.</EmptyDetailState>
       )}
       {run.error ? <DetailBlock label="Error">{run.error}</DetailBlock> : null}
+    </div>
+  )
+}
+
+function QueuedResumePanel(): React.JSX.Element {
+  return (
+    <div className="rounded-lg border border-status-running/30 bg-status-running/10 p-4">
+      <h4 className="text-sm font-semibold">Answer received</h4>
+      <p className="mt-1 text-sm text-muted-foreground">
+        This Work Item will continue when the agent is available.
+      </p>
     </div>
   )
 }
@@ -1294,10 +1354,10 @@ function generateDraftPlan(
   target: WorkComposerTarget,
   request: string
 ): Promise<WorkboardDraftPlan> {
-  if (target.mode === 'follow-up') {
+  if (target.mode !== 'new') {
     return window.ordinus.workboard.generateFollowUpPlan({
       requestId: target.requestId,
-      anchorRunId: target.anchorRunId,
+      anchorRunId: target.mode === 'item' ? target.anchorRunId : undefined,
       request
     })
   }
@@ -1310,10 +1370,10 @@ function startPlan(
   originalRequest: string,
   plan: WorkboardDraftPlan
 ): Promise<WorkboardData> {
-  if (target.mode === 'follow-up') {
+  if (target.mode !== 'new') {
     return window.ordinus.workboard.startFollowUp({
       requestId: target.requestId,
-      anchorRunId: target.anchorRunId,
+      anchorRunId: target.mode === 'item' ? target.anchorRunId : undefined,
       plan
     })
   }
@@ -1330,7 +1390,7 @@ function findStartedRequest(
   originalRequest: string,
   plan: WorkboardDraftPlan
 ): WorkboardData['requests'][number] | undefined {
-  if (target.mode === 'follow-up') {
+  if (target.mode !== 'new') {
     return data.requests.find((item) => item.id === target.requestId)
   }
 
@@ -1340,8 +1400,8 @@ function findStartedRequest(
 }
 
 function getLargePlanReviewMessage(target: WorkComposerTarget): string {
-  return target.mode === 'follow-up'
-    ? 'Review this follow-up before starting because it has many Work Items.'
+  return target.mode !== 'new'
+    ? 'Review this continuation before starting because it has many Work Items.'
     : 'Review this Work Request before starting because it has many Work Items.'
 }
 
@@ -1350,14 +1410,14 @@ function getStartErrorMessage(error: unknown, target: WorkComposerTarget): strin
     return error.message
   }
 
-  return target.mode === 'follow-up'
-    ? 'Follow-up work could not start.'
+  return target.mode !== 'new'
+    ? 'Continuation work could not start.'
     : 'Work Request could not start.'
 }
 
 function getSubmitButtonLabel(target: WorkComposerTarget, reviewBeforeStart: boolean): string {
-  if (target.mode === 'follow-up') {
-    return reviewBeforeStart ? 'Review follow-up' : 'Add follow-up'
+  if (target.mode !== 'new') {
+    return reviewBeforeStart ? 'Review continuation' : 'Add continuation'
   }
 
   return reviewBeforeStart ? 'Review plan' : 'Start work'
@@ -1392,6 +1452,10 @@ function getRunStateSummary(
   waitsFor: WorkboardRun[],
   inputRequest: WorkRunInputRequest | undefined
 ): string {
+  if (inputRequest?.status === 'queued_for_resume') {
+    return 'Answer received. This Work Item will continue when the agent is available.'
+  }
+
   if (run.status === 'waiting_for_user') {
     return inputRequest?.title || 'Waiting for user input.'
   }
@@ -1419,6 +1483,37 @@ function getRunStateSummary(
   }
 
   return 'Cancelled.'
+}
+
+function getVisibleWorkRunInputRequest(
+  inputRequests: WorkRunInputRequest[],
+  runId: string | undefined
+): WorkRunInputRequest | undefined {
+  if (!runId) {
+    return undefined
+  }
+
+  return (
+    inputRequests.find((item) => item.runId === runId && item.status === 'pending') ??
+    inputRequests.find((item) => item.runId === runId && item.status === 'queued_for_resume')
+  )
+}
+
+function getWorkRunInputBadge(
+  inputRequest: WorkRunInputRequest | undefined
+): { label: string; variant: 'attention' | 'outline' } | null {
+  if (!inputRequest) {
+    return null
+  }
+
+  const badgeByStatus: Partial<
+    Record<WorkRunInputRequestStatus, { label: string; variant: 'attention' | 'outline' }>
+  > = {
+    pending: { label: 'Input', variant: 'attention' },
+    queued_for_resume: { label: 'Resume queued', variant: 'outline' }
+  }
+
+  return badgeByStatus[inputRequest.status] ?? null
 }
 
 function truncateText(value: string, maxLength: number): string {

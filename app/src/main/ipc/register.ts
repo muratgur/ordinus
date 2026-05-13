@@ -347,7 +347,14 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.workboardAnswerInputRequest, (_event, payload) => {
     const input = WorkboardAnswerInputRequestInputSchema.parse(payload)
     const prepared = database.answerWorkRunInputRequest(input)
-    startPreparedWorkRun(database, runtime, prepared)
+    if (prepared.run.status === 'running') {
+      startPreparedWorkRun(database, runtime, prepared)
+    } else {
+      const requestId = getOptionalWorkRequestId(prepared.run)
+      if (requestId) {
+        startWorkRequestRuns(database, runtime, requestId)
+      }
+    }
     return database.getWorkboardData()
   })
   ipcMain.handle(ipcChannels.workboardRevealPath, (_event, payload) => {
@@ -542,16 +549,24 @@ function buildFollowUpPlanningRequest(
   if (anchorRun && getOptionalWorkRequestId(anchorRun) !== request.id) {
     throw new Error('Follow-up work must stay inside the selected Work Request.')
   }
+  const requestRuns = database
+    .listWorkRuns()
+    .filter((run) => getOptionalWorkRequestId(run) === request.id)
 
   return [
-    'Plan follow-up Work Items for an existing Ordinus Work Request.',
+    'Plan continuation Work Items for an existing Ordinus Work Request.',
     'Do not restart the original request. Add only the smallest useful next Work Items.',
+    'Use the existing work manifest for orientation only; do not assume every prior Work Item is relevant.',
+    'When the requested continuation needs details from referenced artifacts or changed files, write the new Work Item instruction so the assigned agent inspects those paths before acting.',
+    'When the requested continuation depends on prior text-only output that has no file reference, include the relevant available excerpt in the new Work Item instruction instead of telling the agent to fetch unavailable output.',
     '',
     'Existing Work Request:',
     `Title: ${request.title}`,
-    `Summary: ${request.summary || 'No summary recorded.'}`,
+    `Summary: ${formatPromptSnippet(request.summary || 'No summary recorded.', 800)}`,
     'Original request:',
-    request.originalRequest,
+    formatPromptSnippet(request.originalRequest, 1_200),
+    '',
+    formatExistingWorkForPrompt(requestRuns, anchorRun),
     '',
     anchorRun
       ? [
@@ -560,25 +575,80 @@ function buildFollowUpPlanningRequest(
           `Agent: ${anchorRun.assignedAgentName} (${anchorRun.assignedAgentRole || 'Agent'})`,
           `Status: ${anchorRun.status}`,
           'Instruction:',
-          anchorRun.instruction,
+          formatPromptSnippet(anchorRun.instruction, 1_200),
           'Latest output:',
-          anchorRun.resultSummary || anchorRun.error || 'No output recorded.',
+          formatPromptSnippet(
+            anchorRun.resultSummary || anchorRun.error || 'No output recorded.',
+            1_200
+          ),
           formatFileRefsForPrompt('Artifacts', anchorRun.artifactRefs),
           formatFileRefsForPrompt('Changed files', anchorRun.changedFiles),
           '',
-          'Prefer the same agent when the follow-up is a direct continuation of this Work Item. Use another agent only when the follow-up clearly belongs to another role.'
+          'Prefer the same agent when the new work is a direct continuation of this Work Item. Use another agent only when the continuation clearly belongs to another role.'
         ].join('\n')
       : 'No specific Work Item is selected; continue the Work Request as a whole.',
     '',
-    'User follow-up request:',
+    'User continuation request:',
     input.request
   ].join('\n')
 }
 
+function formatExistingWorkForPrompt(runs: WorkRun[], anchorRun: WorkRun | null): string {
+  if (runs.length === 0) {
+    return 'Existing Work Items: none'
+  }
+
+  const visibleRuns = runs.slice(0, 24)
+  const omittedCount = runs.length - visibleRuns.length
+
+  return [
+    'Existing Work Items in this Work Request:',
+    ...visibleRuns.map((run, index) =>
+      [
+        `${index + 1}. ${run.title}${anchorRun?.id === run.id ? ' (selected continuation point)' : ''}`,
+        `Work Run: ${run.id}`,
+        `Status: ${run.status}`,
+        `Agent: ${run.assignedAgentName} (${run.assignedAgentRole || 'Agent'})`,
+        `Output snippet: ${formatPromptSnippet(
+          run.resultSummary || run.error || 'No output recorded.',
+          500
+        )}`,
+        formatFileRefsForPrompt('Artifacts', run.artifactRefs),
+        formatFileRefsForPrompt('Changed files', run.changedFiles)
+      ].join('\n')
+    ),
+    omittedCount > 0
+      ? `Additional Work Items omitted from this planning manifest: ${omittedCount}`
+      : ''
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function formatPromptSnippet(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized || 'No output recorded.'
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 32)).trimEnd()}... [truncated for planning]`
+}
+
 function formatFileRefsForPrompt(label: string, refs: string[]): string {
-  return refs.length > 0
-    ? [label + ':', ...refs.map((ref) => `- ${ref}`)].join('\n')
-    : `${label}: none`
+  if (refs.length === 0) {
+    return `${label}: none`
+  }
+
+  const visibleRefs = refs.slice(0, 12)
+  const omittedCount = refs.length - visibleRefs.length
+
+  return [
+    label + ':',
+    ...visibleRefs.map((ref) => `- ${ref}`),
+    omittedCount > 0 ? `- ... ${omittedCount} more` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function validateWorkboardPlanAgents(
@@ -602,25 +672,28 @@ function startWorkRequestRuns(
     return
   }
 
-  database
-    .listRunnableWorkRunsForRequest(requestId, availableSlots)
-    .map((run) => database.startWorkRun({ runId: run.id }))
-    .forEach((run) => {
-      const agent = database.getAgent(run.assignedAgentId)
-      const requiredInputs = database.getRequiredInputSummaries(run.id)
+  for (const run of database.listRunnableWorkRunsForRequest(requestId, availableSlots)) {
+    const queuedResume = database.getQueuedWorkRunResume(run.id)
+    const startedRun = database.startWorkRun(
+      { runId: run.id },
+      queuedResume ? { resumedFromInputRequestId: queuedResume.inputRequestId } : {}
+    )
+    if (queuedResume) {
+      database.resolveQueuedWorkRunResume(queuedResume.inputRequestId)
+    }
 
-      startPreparedWorkRun(
-        database,
-        runtime,
-        {
-          run,
-          agent,
-          message: '',
-          providerSessionRef: run.providerSessionRef
-        },
-        requiredInputs
-      )
-    })
+    startPreparedWorkRun(
+      database,
+      runtime,
+      {
+        run: startedRun,
+        agent: database.getAgent(startedRun.assignedAgentId),
+        message: queuedResume?.message ?? '',
+        providerSessionRef: database.prepareWorkRunProviderSession(startedRun.id)
+      },
+      database.getRequiredInputSummaries(startedRun.id)
+    )
+  }
 }
 
 function startPreparedWorkRun(
@@ -631,6 +704,8 @@ function startPreparedWorkRun(
 ): void {
   const requestId = getWorkRequestId(prepared.run)
   const workspaceContext = getWorkRunWorkspaceContext(database, prepared.run)
+  const providerSessionRef =
+    database.prepareWorkRunProviderSession(prepared.run.id) ?? prepared.providerSessionRef
   const logRef = join('work-requests', requestId, prepared.run.id)
   const logDir = join(getSystemPaths().logs, logRef)
   mkdirSync(logDir, { recursive: true })
@@ -648,7 +723,7 @@ function startPreparedWorkRun(
       agentName: prepared.agent.name,
       agentRole: prepared.agent.role,
       instructions: prepared.agent.instructions,
-      providerSessionRef: prepared.providerSessionRef,
+      providerSessionRef,
       title: prepared.run.title,
       instruction: prepared.run.instruction,
       expectedOutput: prepared.run.expectedOutput,
