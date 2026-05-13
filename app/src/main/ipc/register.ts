@@ -22,6 +22,7 @@ import {
   ConversationGetInputSchema,
   ConversationRevealPathInputSchema,
   ConversationSendTurnInputSchema,
+  ConversationUpdateTitleInputSchema,
   ConversationUpdateRoutingModeInputSchema,
   OrchestrationPlanSchema,
   ProviderActionInputSchema,
@@ -202,6 +203,10 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = ConversationCreateManualInputSchema.parse(payload)
     return database.createManualConversation(input)
   })
+  ipcMain.handle(ipcChannels.conversationsUpdateTitle, (_event, payload) => {
+    const input = ConversationUpdateTitleInputSchema.parse(payload)
+    return database.updateConversationTitle(input)
+  })
   ipcMain.handle(ipcChannels.conversationsUpdateRoutingMode, (_event, payload) => {
     const input = ConversationUpdateRoutingModeInputSchema.parse(payload)
     return database.updateConversationRoutingMode(input)
@@ -238,6 +243,10 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     }
 
     revealWorkspacePath(database, input.relativePath)
+  })
+  ipcMain.handle(ipcChannels.conversationsOpenFolder, async (_event, payload) => {
+    const input = ConversationGetInputSchema.parse(payload)
+    await openConversationFolder(database, input.conversationId)
   })
   ipcMain.handle(ipcChannels.conversationsDeletePreview, (_event, payload) => {
     const input = ConversationDeletePreviewInputSchema.parse(payload)
@@ -373,19 +382,54 @@ function revealWorkspacePath(database: OrdinusDatabase, relativePath: string): v
   shell.showItemInFolder(absolutePath)
 }
 
+async function openConversationFolder(
+  database: OrdinusDatabase,
+  conversationId: string
+): Promise<void> {
+  const { absolutePath } = getConversationFolderLocation(
+    database,
+    conversationId,
+    'Choose a workspace before opening conversation folders.'
+  )
+  if (!existsSync(absolutePath)) {
+    throw new Error('Conversation folder was not found in the workspace.')
+  }
+
+  const openError = await shell.openPath(absolutePath)
+  if (openError) {
+    throw new Error(`Conversation folder could not be opened. ${openError}`)
+  }
+}
+
+function getConversationFolderLocation(
+  database: OrdinusDatabase,
+  conversationId: string,
+  missingWorkspaceMessage: string
+): {
+  conversation: ConversationDetail
+  absolutePath: string
+} {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error(missingWorkspaceMessage)
+  }
+
+  const conversation = database.getConversation({ conversationId })
+
+  return {
+    conversation,
+    absolutePath: resolveWorkspaceRelativePath(workspace.workspaceRoot, conversation.workingRoot)
+  }
+}
+
 function getConversationDeletePreview(
   database: OrdinusDatabase,
   conversationId: string
 ): ConversationDeletePreview {
-  const workspace = database.getWorkspaceConfig()
-  if (!workspace) {
-    throw new Error('Choose a workspace before deleting conversations.')
-  }
-
-  const conversation = database.getConversation({ conversationId })
-  const absolutePath = resolveWorkspaceRelativePath(
-    workspace.workspaceRoot,
-    conversation.workingRoot
+  const { conversation, absolutePath } = getConversationFolderLocation(
+    database,
+    conversationId,
+    'Choose a workspace before deleting conversations.'
   )
   const folderExists = existsSync(absolutePath)
   const counts = folderExists

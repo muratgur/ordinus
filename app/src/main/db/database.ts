@@ -24,6 +24,7 @@ import {
   ConversationGetInputSchema,
   ConversationListItemSchema,
   ConversationSendTurnInputSchema,
+  ConversationUpdateTitleInputSchema,
   ConversationTurnSchema,
   ConversationUpdateRoutingModeInputSchema,
   DbStatusSchema,
@@ -59,6 +60,7 @@ import {
   type ConversationListItem,
   type ConversationSendTurnInput,
   type ConversationTurn,
+  type ConversationUpdateTitleInput,
   type ConversationUpdateRoutingModeInput,
   type DbStatus,
   type InteractionAnswer,
@@ -1411,6 +1413,24 @@ export class OrdinusDatabase {
     })
 
     return this.getConversation({ conversationId })
+  }
+
+  updateConversationTitle(input: ConversationUpdateTitleInput): ConversationDetail {
+    const parsed = ConversationUpdateTitleInputSchema.parse(input)
+    const now = new Date().toISOString()
+
+    this.getConversation({ conversationId: parsed.conversationId })
+
+    this.db
+      .update(conversations)
+      .set({
+        title: parsed.title,
+        updatedAt: now
+      })
+      .where(eq(conversations.id, parsed.conversationId))
+      .run()
+
+    return this.getConversation({ conversationId: parsed.conversationId })
   }
 
   updateConversationRoutingMode(input: ConversationUpdateRoutingModeInput): ConversationDetail {

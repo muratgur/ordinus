@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Loader2,
   MessageSquareText,
+  Pencil,
   Plus,
   Route,
   SendHorizontal,
@@ -109,6 +110,10 @@ export function ConversationsScreen(): React.JSX.Element {
   const [loadingDeletePreview, setLoadingDeletePreview] = useState(false)
   const [deletingConversation, setDeletingConversation] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renamingConversation, setRenamingConversation] = useState(false)
+  const [renameError, setRenameError] = useState('')
+  const [openingConversationFolder, setOpeningConversationFolder] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const runningTurns = detail?.turns.filter((turn) => turn.status === 'running') ?? []
@@ -383,6 +388,45 @@ export function ConversationsScreen(): React.JSX.Element {
     }
   }
 
+  async function handleRenameConversation(title: string): Promise<void> {
+    if (!detail) {
+      return
+    }
+
+    try {
+      setRenamingConversation(true)
+      setRenameError('')
+      setError('')
+      const nextDetail = await window.ordinus.conversations.updateTitle({
+        conversationId: detail.id,
+        title
+      })
+      setDetail(nextDetail)
+      await loadConversations(nextDetail.id)
+      setRenameOpen(false)
+    } catch (renameFailure) {
+      setRenameError(getErrorMessage(renameFailure, 'Conversation name could not be saved.'))
+    } finally {
+      setRenamingConversation(false)
+    }
+  }
+
+  async function handleOpenConversationFolder(): Promise<void> {
+    if (!detail) {
+      return
+    }
+
+    try {
+      setOpeningConversationFolder(true)
+      setError('')
+      await window.ordinus.conversations.openFolder({ conversationId: detail.id })
+    } catch (openFailure) {
+      setError(getErrorMessage(openFailure, 'Conversation folder could not be opened.'))
+    } finally {
+      setOpeningConversationFolder(false)
+    }
+  }
+
   async function openDeleteConversation(conversationId: string): Promise<void> {
     setDeleteOpen(true)
     setDeletePreview(null)
@@ -451,8 +495,14 @@ export function ConversationsScreen(): React.JSX.Element {
                 cancelling={cancelling}
                 deleting={deletingConversation}
                 updatingRoutingMode={updatingRoutingMode}
+                openingFolder={openingConversationFolder}
                 onCancelTurns={(turnIds) => void handleCancelTurns(turnIds)}
                 onDeleteConversation={() => void openDeleteConversation(detail.id)}
+                onOpenFolder={() => void handleOpenConversationFolder()}
+                onOpenRename={() => {
+                  setRenameError('')
+                  setRenameOpen(true)
+                }}
                 onRoutingModeChange={(orchestrated) => void handleRoutingModeChange(orchestrated)}
               />
               <ScrollArea className="min-h-0 flex-1">
@@ -557,6 +607,21 @@ export function ConversationsScreen(): React.JSX.Element {
           }
         }}
       />
+      {detail ? (
+        <RenameConversationDialog
+          currentTitle={detail.title}
+          error={renameError}
+          open={renameOpen}
+          saving={renamingConversation}
+          onOpenChange={(open) => {
+            setRenameOpen(open)
+            if (!open) {
+              setRenameError('')
+            }
+          }}
+          onRename={(title) => void handleRenameConversation(title)}
+        />
+      ) : null}
       {detail && activeInputRequest ? (
         <InputRequestDialog
           request={activeInputRequest}
@@ -686,8 +751,11 @@ function ConversationHeader({
   cancelling,
   deleting,
   updatingRoutingMode,
+  openingFolder,
   onCancelTurns,
   onDeleteConversation,
+  onOpenFolder,
+  onOpenRename,
   onRoutingModeChange
 }: {
   detail: ConversationDetail
@@ -696,8 +764,11 @@ function ConversationHeader({
   cancelling: boolean
   deleting: boolean
   updatingRoutingMode: boolean
+  openingFolder: boolean
   onCancelTurns: (turnIds: string[]) => void
   onDeleteConversation: () => void
+  onOpenFolder: () => void
+  onOpenRename: () => void
   onRoutingModeChange: (orchestrated: boolean) => void
 }): React.JSX.Element {
   const orchestrated = usesOrchestrator(detail)
@@ -706,13 +777,44 @@ function ConversationHeader({
     <CardHeader className="border-b bg-accent/50">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <CardTitle className="truncate">{detail.title}</CardTitle>
+          <div className="flex min-w-0 items-center gap-2">
+            <CardTitle className="truncate">{detail.title}</CardTitle>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 text-muted-foreground"
+              title="Rename conversation"
+              aria-label="Rename conversation"
+              onClick={onOpenRename}
+            >
+              <Pencil className="size-4" />
+            </Button>
+          </div>
           <CardDescription className="mt-1 flex flex-wrap items-center gap-2">
             <span className="rounded-full border bg-card px-2 py-0.5 text-xs capitalize">
               {detail.mode}
             </span>
             <span>{getParticipantSummary(detail.participants, participantName)}</span>
           </CardDescription>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="shrink-0">Workspace folder</span>
+            <code className="max-w-full truncate rounded-md bg-card px-2 py-1 font-mono text-xs text-foreground">
+              {detail.workingRoot}
+            </code>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 text-muted-foreground"
+              title="Open conversation folder"
+              aria-label="Open conversation folder"
+              disabled={openingFolder}
+              onClick={onOpenFolder}
+            >
+              {openingFolder ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen />}
+            </Button>
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <StatusPill status={detail.status} />
@@ -764,6 +866,77 @@ function ConversationHeader({
         </div>
       </div>
     </CardHeader>
+  )
+}
+
+function RenameConversationDialog({
+  currentTitle,
+  error,
+  open,
+  saving,
+  onOpenChange,
+  onRename
+}: {
+  currentTitle: string
+  error: string
+  open: boolean
+  saving: boolean
+  onOpenChange: (open: boolean) => void
+  onRename: (title: string) => void
+}): React.JSX.Element {
+  const [title, setTitle] = useState(currentTitle)
+  const trimmedTitle = title.trim()
+  const canSave = Boolean(trimmedTitle) && trimmedTitle !== currentTitle && !saving
+
+  useEffect(() => {
+    if (open) {
+      setTitle(currentTitle)
+    }
+  }, [currentTitle, open])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename conversation</DialogTitle>
+          <DialogDescription>
+            Only the conversation name changes. The workspace folder stays linked.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3">
+          <label className="grid gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Conversation name</span>
+            <Input
+              maxLength={120}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && canSave) {
+                  onRename(trimmedTitle)
+                }
+              }}
+            />
+          </label>
+          {error ? <InlineError message={error} /> : null}
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={saving}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" disabled={!canSave} onClick={() => onRename(trimmedTitle)}>
+            {saving ? <Loader2 className="animate-spin" /> : null}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
