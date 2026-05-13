@@ -390,6 +390,11 @@ export const ConversationUpdateRoutingModeInputSchema = z.object({
   routingMode: ConversationRoutingModeSchema
 })
 
+export const ConversationUpdateTitleInputSchema = z.object({
+  conversationId: z.string().min(1),
+  title: z.string().trim().min(1, 'Conversation name is required.').max(120)
+})
+
 export const ConversationCancelTurnInputSchema = z.object({
   turnId: z.string().min(1)
 })
@@ -748,6 +753,7 @@ export type ConversationSendTurnInput = z.infer<typeof ConversationSendTurnInput
 export type ConversationUpdateRoutingModeInput = z.infer<
   typeof ConversationUpdateRoutingModeInputSchema
 >
+export type ConversationUpdateTitleInput = z.infer<typeof ConversationUpdateTitleInputSchema>
 export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>
 export type ConversationRevealPathInput = z.infer<typeof ConversationRevealPathInputSchema>
 export type ConversationDeletePreviewInput = z.infer<typeof ConversationDeletePreviewInputSchema>

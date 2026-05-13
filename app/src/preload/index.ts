@@ -26,6 +26,7 @@ import type {
   ConversationListItem,
   ConversationRevealPathInput,
   ConversationSendTurnInput,
+  ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
   ProviderActionInput,
@@ -98,6 +99,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.conversationsCreateDirect, input),
     createManual: async (input: ConversationCreateManualInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsCreateManual, input),
+    updateTitle: async (input: ConversationUpdateTitleInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsUpdateTitle, input),
     updateRoutingMode: async (
       input: ConversationUpdateRoutingModeInput
     ): Promise<ConversationDetail> =>
@@ -108,6 +111,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.conversationsCancelTurn, input),
     revealPath: async (input: ConversationRevealPathInput): Promise<void> =>
       ipcRenderer.invoke(ipcChannels.conversationsRevealPath, input),
+    openFolder: async (input: ConversationGetInput): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.conversationsOpenFolder, input),
     deletePreview: async (
       input: ConversationDeletePreviewInput
     ): Promise<ConversationDeletePreview> =>
