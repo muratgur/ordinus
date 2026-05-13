@@ -17,6 +17,8 @@ import {
   ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
+  ConversationDeleteInputSchema,
+  ConversationDeleteResultSchema,
   ConversationDetailSchema,
   ConversationInputRequestSchema,
   ConversationGetInputSchema,
@@ -50,6 +52,8 @@ import {
   type AgentUpdateSettingsInput,
   type AgentTurnOutcome,
   type ConversationCreateManualInput,
+  type ConversationDeleteInput,
+  type ConversationDeleteResult,
   type ConversationDetail,
   type ConversationInputRequest,
   type ConversationListItem,
@@ -130,6 +134,10 @@ export type PreparedWorkRun = {
   agent: Agent
   message: string
   providerSessionRef: string | null
+}
+
+export type ConversationDeleteDatabaseResult = ConversationDeleteResult & {
+  deletedLogRefs: string[]
 }
 
 type InitialWorkRunStatus = Extract<WorkRun['status'], 'queued' | 'blocked'>
@@ -1936,6 +1944,48 @@ export class OrdinusDatabase {
       .run()
 
     return this.getConversation({ conversationId: turn.conversationId })
+  }
+
+  deleteConversation(input: ConversationDeleteInput): ConversationDeleteDatabaseResult {
+    const parsed = ConversationDeleteInputSchema.parse(input)
+    const detail = this.getConversation({ conversationId: parsed.conversationId })
+
+    if (detail.status === 'running' || detail.turns.some((turn) => turn.status === 'running')) {
+      throw new Error('Stop this conversation before deleting it.')
+    }
+
+    return this.db.transaction((tx) => {
+      const deletedTurns = tx
+        .select({
+          id: conversationTurns.id,
+          logRef: conversationTurns.logRef
+        })
+        .from(conversationTurns)
+        .where(eq(conversationTurns.conversationId, detail.id))
+        .all()
+      const deletedLogRefs = uniqueValues(
+        deletedTurns.map((turn) => turn.logRef).filter((logRef) => logRef.trim())
+      )
+
+      tx.delete(conversationInputRequests)
+        .where(eq(conversationInputRequests.conversationId, detail.id))
+        .run()
+      tx.delete(conversationTurns).where(eq(conversationTurns.conversationId, detail.id)).run()
+      tx.delete(conversationParticipants)
+        .where(eq(conversationParticipants.conversationId, detail.id))
+        .run()
+      tx.delete(conversations).where(eq(conversations.id, detail.id)).run()
+
+      return {
+        ...ConversationDeleteResultSchema.parse({
+          deletedConversationId: detail.id,
+          deletedTurnCount: deletedTurns.length,
+          trashedWorkspaceFolder: false,
+          workspaceFolderMissing: false
+        }),
+        deletedLogRefs
+      }
+    })
   }
 
   getAgent(id: string): Agent {

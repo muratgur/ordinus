@@ -16,6 +16,10 @@ import type {
   ConversationCancelInputRequestInput,
   ConversationCreateDirectInput,
   ConversationCreateManualInput,
+  ConversationDeleteInput,
+  ConversationDeletePreview,
+  ConversationDeletePreviewInput,
+  ConversationDeleteResult,
   ConversationDetail,
   ConversationGetInput,
   ConversationListItem,
@@ -80,6 +84,8 @@ export type OrdinusApi = {
     sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>
     cancelTurn: (input: ConversationCancelTurnInput) => Promise<ConversationDetail>
     revealPath: (input: ConversationRevealPathInput) => Promise<void>
+    deletePreview: (input: ConversationDeletePreviewInput) => Promise<ConversationDeletePreview>
+    delete: (input: ConversationDeleteInput) => Promise<ConversationDeleteResult>
     answerInputRequest: (input: ConversationAnswerInputRequestInput) => Promise<ConversationDetail>
     cancelInputRequest: (input: ConversationCancelInputRequestInput) => Promise<ConversationDetail>
   }

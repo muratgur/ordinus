@@ -15,6 +15,10 @@ import {
   ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
+  ConversationDeleteInputSchema,
+  ConversationDeletePreviewInputSchema,
+  ConversationDeletePreviewSchema,
+  ConversationDeleteResultSchema,
   ConversationGetInputSchema,
   ConversationRevealPathInputSchema,
   ConversationSendTurnInputSchema,
@@ -37,6 +41,7 @@ import {
   type Agent,
   type AgentTurnOutcome,
   type ConversationDetail,
+  type ConversationDeletePreview,
   type ConversationSendTurnInput,
   type ProviderId,
   type WorkboardDraftPlan,
@@ -234,6 +239,44 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
 
     revealWorkspacePath(database, input.relativePath)
   })
+  ipcMain.handle(ipcChannels.conversationsDeletePreview, (_event, payload) => {
+    const input = ConversationDeletePreviewInputSchema.parse(payload)
+    return getConversationDeletePreview(database, input.conversationId)
+  })
+  ipcMain.handle(ipcChannels.conversationsDelete, async (_event, payload) => {
+    const input = ConversationDeleteInputSchema.parse(payload)
+    const preview = getConversationDeletePreview(database, input.conversationId)
+    const result = database.deleteConversation(input)
+    deleteLogRefs(result.deletedLogRefs)
+
+    let fileWarning: string | undefined
+    let trashedWorkspaceFolder = false
+    const workspaceFolderMissing = !preview.folderExists
+
+    if (input.deleteWorkspaceFiles) {
+      if (preview.folderExists) {
+        try {
+          await shell.trashItem(preview.absolutePath)
+          trashedWorkspaceFolder = true
+        } catch (error) {
+          fileWarning = getMainErrorMessage(
+            error,
+            'Conversation history was deleted, but the folder could not be moved to Trash.'
+          )
+        }
+      } else {
+        fileWarning = 'Conversation history was deleted, but no conversation folder was found.'
+      }
+    }
+
+    return ConversationDeleteResultSchema.parse({
+      deletedConversationId: result.deletedConversationId,
+      deletedTurnCount: result.deletedTurnCount,
+      trashedWorkspaceFolder,
+      workspaceFolderMissing,
+      fileWarning
+    })
+  })
   ipcMain.handle(ipcChannels.conversationsAnswerInputRequest, async (_event, payload) => {
     const input = ConversationAnswerInputRequestInputSchema.parse(payload)
     const prepared = database.answerConversationInputRequest(input)
@@ -328,6 +371,72 @@ function revealWorkspacePath(database: OrdinusDatabase, relativePath: string): v
   }
 
   shell.showItemInFolder(absolutePath)
+}
+
+function getConversationDeletePreview(
+  database: OrdinusDatabase,
+  conversationId: string
+): ConversationDeletePreview {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before deleting conversations.')
+  }
+
+  const conversation = database.getConversation({ conversationId })
+  const absolutePath = resolveWorkspaceRelativePath(
+    workspace.workspaceRoot,
+    conversation.workingRoot
+  )
+  const folderExists = existsSync(absolutePath)
+  const counts = folderExists
+    ? countConversationFolderEntries(absolutePath)
+    : { fileCount: 0, directoryCount: 0 }
+
+  return ConversationDeletePreviewSchema.parse({
+    conversationId: conversation.id,
+    title: conversation.title,
+    workingRoot: conversation.workingRoot,
+    absolutePath,
+    folderExists,
+    ...counts
+  })
+}
+
+function countConversationFolderEntries(folderPath: string): {
+  fileCount: number
+  directoryCount: number
+} {
+  let fileCount = 0
+  let directoryCount = 0
+  const pendingDirectories = [folderPath]
+
+  while (pendingDirectories.length > 0) {
+    const currentDirectory = pendingDirectories.pop()
+    if (!currentDirectory) {
+      continue
+    }
+
+    for (const entry of readdirSync(currentDirectory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) {
+        fileCount += 1
+        continue
+      }
+
+      if (entry.isDirectory()) {
+        directoryCount += 1
+        pendingDirectories.push(join(currentDirectory, entry.name))
+        continue
+      }
+
+      fileCount += 1
+    }
+  }
+
+  return { fileCount, directoryCount }
+}
+
+function getMainErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? `${fallback} ${error.message}` : fallback
 }
 
 async function generateWorkboardPlan(

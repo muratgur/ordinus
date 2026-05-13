@@ -13,6 +13,7 @@ import {
   Route,
   SendHorizontal,
   Square,
+  Trash2,
   UserRound,
   XCircle
 } from 'lucide-react'
@@ -38,6 +39,7 @@ import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
+  ConversationDeletePreview,
   ConversationDetail,
   ConversationInputRequest,
   ConversationListItem,
@@ -101,6 +103,12 @@ export function ConversationsScreen(): React.JSX.Element {
   const [inputDrafts, setInputDrafts] = useState<RequestDrafts>({})
   const [updatingRoutingMode, setUpdatingRoutingMode] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deletePreview, setDeletePreview] = useState<ConversationDeletePreview | null>(null)
+  const [deleteWorkspaceFiles, setDeleteWorkspaceFiles] = useState(false)
+  const [loadingDeletePreview, setLoadingDeletePreview] = useState(false)
+  const [deletingConversation, setDeletingConversation] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const runningTurns = detail?.turns.filter((turn) => turn.status === 'running') ?? []
@@ -375,6 +383,51 @@ export function ConversationsScreen(): React.JSX.Element {
     }
   }
 
+  async function openDeleteConversation(conversationId: string): Promise<void> {
+    setDeleteOpen(true)
+    setDeletePreview(null)
+    setDeleteWorkspaceFiles(false)
+    setDeleteError('')
+
+    try {
+      setLoadingDeletePreview(true)
+      setDeletePreview(await window.ordinus.conversations.deletePreview({ conversationId }))
+    } catch (previewError) {
+      setDeleteError(getErrorMessage(previewError, 'Delete details could not be loaded.'))
+    } finally {
+      setLoadingDeletePreview(false)
+    }
+  }
+
+  async function handleDeleteConversation(): Promise<void> {
+    if (!deletePreview) {
+      return
+    }
+
+    try {
+      setDeletingConversation(true)
+      setDeleteError('')
+      setError('')
+      const result = await window.ordinus.conversations.delete({
+        conversationId: deletePreview.conversationId,
+        deleteWorkspaceFiles
+      })
+      setDeleteOpen(false)
+      setDeletePreview(null)
+      setDeleteWorkspaceFiles(false)
+      await loadConversations(
+        selectedConversationId === result.deletedConversationId ? '' : selectedConversationId
+      )
+      if (result.fileWarning) {
+        setError(result.fileWarning)
+      }
+    } catch (deleteFailure) {
+      setDeleteError(getErrorMessage(deleteFailure, 'Conversation could not be deleted.'))
+    } finally {
+      setDeletingConversation(false)
+    }
+  }
+
   return (
     <div className="grid h-[calc(100vh-7rem)] min-h-0 gap-4 overflow-hidden py-6 xl:grid-cols-[280px_minmax(0,1fr)]">
       <ConversationList
@@ -382,6 +435,7 @@ export function ConversationsScreen(): React.JSX.Element {
         loading={loading}
         selectedConversationId={selectedConversationId}
         onCreateConversation={() => setCreateOpen(true)}
+        onDeleteConversation={(conversationId) => void openDeleteConversation(conversationId)}
         onSelectConversation={(conversationId) => void selectConversation(conversationId)}
       />
 
@@ -395,8 +449,10 @@ export function ConversationsScreen(): React.JSX.Element {
                 participantName={participant?.agentName ?? ''}
                 runningTurns={runningTurns}
                 cancelling={cancelling}
+                deleting={deletingConversation}
                 updatingRoutingMode={updatingRoutingMode}
                 onCancelTurns={(turnIds) => void handleCancelTurns(turnIds)}
+                onDeleteConversation={() => void openDeleteConversation(detail.id)}
                 onRoutingModeChange={(orchestrated) => void handleRoutingModeChange(orchestrated)}
               />
               <ScrollArea className="min-h-0 flex-1">
@@ -483,6 +539,24 @@ export function ConversationsScreen(): React.JSX.Element {
         onCreateConversation={handleCreateConversation}
         onOpenChange={setCreateOpen}
       />
+      <DeleteConversationDialog
+        deleting={deletingConversation}
+        deleteWorkspaceFiles={deleteWorkspaceFiles}
+        error={deleteError}
+        loading={loadingDeletePreview}
+        open={deleteOpen}
+        preview={deletePreview}
+        onDelete={() => void handleDeleteConversation()}
+        onDeleteWorkspaceFilesChange={setDeleteWorkspaceFiles}
+        onOpenChange={(open) => {
+          setDeleteOpen(open)
+          if (!open) {
+            setDeletePreview(null)
+            setDeleteWorkspaceFiles(false)
+            setDeleteError('')
+          }
+        }}
+      />
       {detail && activeInputRequest ? (
         <InputRequestDialog
           request={activeInputRequest}
@@ -515,12 +589,14 @@ function ConversationList({
   loading,
   selectedConversationId,
   onCreateConversation,
+  onDeleteConversation,
   onSelectConversation
 }: {
   conversations: ConversationListItem[]
   loading: boolean
   selectedConversationId: string
   onCreateConversation: () => void
+  onDeleteConversation: (conversationId: string) => void
   onSelectConversation: (conversationId: string) => void
 }): React.JSX.Element {
   return (
@@ -547,28 +623,48 @@ function ConversationList({
         <ScrollArea className="min-h-0 flex-1">
           <CardContent className="grid gap-2 p-3">
             {conversations.map((conversation) => (
-              <button
+              <div
                 key={conversation.id}
-                type="button"
                 className={cn(
-                  'grid min-w-0 gap-2 rounded-lg border bg-card p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-lg border bg-card p-2 transition-colors hover:bg-accent',
                   selectedConversationId === conversation.id && 'border-primary/40 bg-primary-soft'
                 )}
-                onClick={() => onSelectConversation(conversation.id)}
               >
-                <div className="flex min-w-0 items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{conversation.title}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {conversation.agentName || 'No participant'}
-                    </p>
+                <button
+                  type="button"
+                  className="grid min-w-0 gap-2 rounded-md p-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onSelectConversation(conversation.id)}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{conversation.title}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {conversation.agentName || 'No participant'}
+                      </p>
+                    </div>
+                    <StatusDot status={conversation.status} />
                   </div>
-                  <StatusDot status={conversation.status} />
-                </div>
-                <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
-                  {conversation.lastPreview || 'No messages yet'}
-                </p>
-              </button>
+                  <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
+                    {conversation.lastPreview || 'No messages yet'}
+                  </p>
+                </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 self-start text-muted-foreground hover:text-status-attention"
+                  disabled={conversation.status === 'running'}
+                  title={
+                    conversation.status === 'running'
+                      ? 'Stop this conversation before deleting it.'
+                      : 'Delete conversation'
+                  }
+                  onClick={() => onDeleteConversation(conversation.id)}
+                >
+                  <Trash2 />
+                  <span className="sr-only">Delete conversation</span>
+                </Button>
+              </div>
             ))}
 
             {!loading && conversations.length === 0 ? (
@@ -588,16 +684,20 @@ function ConversationHeader({
   participantName,
   runningTurns,
   cancelling,
+  deleting,
   updatingRoutingMode,
   onCancelTurns,
+  onDeleteConversation,
   onRoutingModeChange
 }: {
   detail: ConversationDetail
   participantName: string
   runningTurns: ConversationTurn[]
   cancelling: boolean
+  deleting: boolean
   updatingRoutingMode: boolean
   onCancelTurns: (turnIds: string[]) => void
+  onDeleteConversation: () => void
   onRoutingModeChange: (orchestrated: boolean) => void
 }): React.JSX.Element {
   const orchestrated = usesOrchestrator(detail)
@@ -645,9 +745,151 @@ function ConversationHeader({
               {runningTurns.length > 1 ? 'Stop all' : 'Stop'}
             </Button>
           ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="text-status-attention hover:text-status-attention"
+            disabled={deleting || detail.status === 'running'}
+            title={
+              detail.status === 'running'
+                ? 'Stop this conversation before deleting it.'
+                : 'Delete conversation'
+            }
+            onClick={onDeleteConversation}
+          >
+            {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            Delete
+          </Button>
         </div>
       </div>
     </CardHeader>
+  )
+}
+
+function DeleteConversationDialog({
+  deleting,
+  deleteWorkspaceFiles,
+  error,
+  loading,
+  open,
+  preview,
+  onDelete,
+  onDeleteWorkspaceFilesChange,
+  onOpenChange
+}: {
+  deleting: boolean
+  deleteWorkspaceFiles: boolean
+  error: string
+  loading: boolean
+  open: boolean
+  preview: ConversationDeletePreview | null
+  onDelete: () => void
+  onDeleteWorkspaceFilesChange: (deleteWorkspaceFiles: boolean) => void
+  onOpenChange: (open: boolean) => void
+}): React.JSX.Element {
+  const canDelete = Boolean(preview) && !loading && !deleting
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-status-attention" />
+            Delete conversation
+          </DialogTitle>
+          <DialogDescription>
+            This removes the conversation history from Ordinus. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3">
+          {loading ? (
+            <div className="flex items-center gap-2 rounded-lg border bg-accent px-3 py-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Checking conversation folder
+            </div>
+          ) : null}
+
+          {preview ? (
+            <>
+              <div className="grid gap-2 rounded-lg border bg-accent p-3 text-sm">
+                <div>
+                  <p className="text-xs font-medium uppercase text-muted-foreground">
+                    Conversation
+                  </p>
+                  <p className="truncate font-semibold">{preview.title}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase text-muted-foreground">
+                    Workspace folder
+                  </p>
+                  <code className="block break-all rounded-md bg-card px-2 py-1 font-mono text-xs">
+                    {preview.workingRoot}
+                  </code>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase text-muted-foreground">
+                    Full location
+                  </p>
+                  <code className="block break-all rounded-md bg-card px-2 py-1 font-mono text-xs">
+                    {preview.absolutePath}
+                  </code>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {preview.folderExists
+                    ? `${formatEntryCount(preview.fileCount, 'file')} and ${formatEntryCount(
+                        preview.directoryCount,
+                        'folder'
+                      )} will be moved if you include workspace files.`
+                    : 'No conversation folder found.'}
+                </p>
+              </div>
+
+              <label className="flex items-start gap-3 rounded-lg border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1 size-4 shrink-0 accent-primary"
+                  checked={deleteWorkspaceFiles}
+                  disabled={!preview.folderExists || deleting}
+                  onChange={(event) => onDeleteWorkspaceFilesChange(event.target.checked)}
+                />
+                <span className="grid gap-1">
+                  <span className="font-medium text-status-attention">
+                    Also move this conversation folder to Trash
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Only this folder is moved. Project files changed outside this folder are not
+                    deleted.
+                  </span>
+                </span>
+              </label>
+            </>
+          ) : null}
+
+          {error ? (
+            <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
+              {error}
+            </p>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={deleting}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" disabled={!canDelete} onClick={onDelete}>
+            {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            Delete conversation
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1616,6 +1858,10 @@ function getBlockedReason(
 
 function formatStatusLabel(status: string): string {
   return status === 'waiting_for_user' ? 'waiting for user' : status
+}
+
+function formatEntryCount(count: number, label: string): string {
+  return `${count} ${label}${count === 1 ? '' : 's'}`
 }
 
 function hasRunningTurnForParticipant(turns: ConversationTurn[], participantId: string): boolean {
