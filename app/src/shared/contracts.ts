@@ -466,7 +466,12 @@ export const WorkRunEventKindSchema = z.enum([
   'cancelled',
   'dependency_satisfied'
 ])
-export const WorkRunInputRequestStatusSchema = ConversationInputRequestStatusSchema
+export const WorkRunInputRequestStatusSchema = z.enum([
+  'pending',
+  'queued_for_resume',
+  'resolved',
+  'cancelled'
+])
 
 export const WorkRunSourceSchema = z.object({
   type: z.string().trim().min(1).max(80),
@@ -561,6 +566,7 @@ export const WorkRunInputRequestSchema = z.object({
   detail: z.string(),
   questions: z.array(InteractionQuestionSchema).min(1).max(3),
   answers: z.array(InteractionAnswerSchema).nullable(),
+  resumeMessage: z.string(),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -624,7 +630,7 @@ export const WorkboardDirectStartInputSchema = WorkboardGeneratePlanInputSchema
 export const WorkboardGenerateFollowUpPlanInputSchema = z.object({
   requestId: z.string().min(1),
   anchorRunId: z.string().min(1).optional(),
-  request: z.string().trim().min(12, 'Describe the follow-up work.').max(64_000)
+  request: z.string().trim().min(12, 'Describe the continuation work.').max(64_000)
 })
 
 export const WorkboardStartFollowUpInputSchema = z.object({

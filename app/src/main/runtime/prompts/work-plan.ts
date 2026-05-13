@@ -127,6 +127,10 @@ Rules:
 - Preserve the user's language where practical.
 - Write each instruction as the complete task for the assigned agent.
 - expectedOutput should describe the concrete output the user can inspect.
+- If the planning input references prior artifacts or changed files that may matter, tell the assigned
+  agent which paths to inspect instead of copying large prior content into the plan.
+- If the continuation depends on prior text-only output with no file reference, include the relevant
+  available excerpt in the Work Item instruction; do not tell the assigned agent to fetch unavailable output.
 - tempId values must be stable within this draft, such as item-1, item-2, item-3.
 
 Planning input JSON:

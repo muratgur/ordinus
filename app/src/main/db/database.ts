@@ -95,6 +95,7 @@ import {
   conversationParticipants,
   conversations,
   conversationTurns,
+  workRequestAgentSessions,
   workRequests,
   workRunDependencies,
   workRunEvents,
@@ -140,11 +141,17 @@ export type PreparedWorkRun = {
   providerSessionRef: string | null
 }
 
+export type QueuedWorkRunResume = {
+  inputRequestId: string
+  message: string
+}
+
 export type ConversationDeleteDatabaseResult = ConversationDeleteResult & {
   deletedLogRefs: string[]
 }
 
 type InitialWorkRunStatus = Extract<WorkRun['status'], 'queued' | 'blocked'>
+type WorkRequestAgentSession = typeof workRequestAgentSessions.$inferSelect
 
 export class OrdinusDatabase {
   private readonly databasePath: string
@@ -165,9 +172,11 @@ export class OrdinusDatabase {
         conversationParticipants,
         conversations,
         conversationTurns,
+        workRequestAgentSessions,
         workRequests,
         workRunDependencies,
         workRunEvents,
+        workRunInputRequests,
         workRuns,
         workspaceConfig
       }
@@ -579,6 +588,7 @@ export class OrdinusDatabase {
           .run()
       })
     })
+    this.ensureWorkRequestAgentSessionsForRuns([runId])
 
     this.appendWorkRunEvent(runId, 'created', {
       assignedAgentId: agent.id,
@@ -728,6 +738,8 @@ export class OrdinusDatabase {
       })
     })
 
+    this.ensureWorkRequestAgentSessionsForRuns(Array.from(runIdsByTempId.values()))
+
     return this.getWorkRequest(requestId)
   }
 
@@ -737,7 +749,7 @@ export class OrdinusDatabase {
     const request = this.getWorkRequest(parsed.requestId)
     const workspace = this.getWorkspaceConfig()
     if (!workspace) {
-      throw new Error('Choose a workspace before adding follow-up work.')
+      throw new Error('Choose a workspace before adding continuation work.')
     }
 
     const anchorRun = parsed.anchorRunId ? this.getWorkRun(parsed.anchorRunId) : null
@@ -752,7 +764,7 @@ export class OrdinusDatabase {
     )
     plan.items.forEach((item) => {
       if (!agentsById.has(item.assignedAgentId)) {
-        throw new Error('One or more follow-up Work Items are assigned to an unavailable agent.')
+        throw new Error('One or more continuation Work Items are assigned to an unavailable agent.')
       }
     })
     validateWorkboardDraftPlanDependencies(plan.items)
@@ -766,13 +778,13 @@ export class OrdinusDatabase {
         const agent = agentsById.get(item.assignedAgentId)
         const runId = runIdsByTempId.get(item.tempId)
         if (!agent || !runId) {
-          throw new Error('Follow-up Work Item could not be prepared.')
+          throw new Error('Continuation Work Item could not be prepared.')
         }
 
         const dependentRunIds = item.dependsOnTempIds.map((tempId) => {
           const dependsOnRunId = runIdsByTempId.get(tempId)
           if (!dependsOnRunId) {
-            throw new Error('Follow-up Work Item dependency could not be prepared.')
+            throw new Error('Continuation Work Item dependency could not be prepared.')
           }
 
           return dependsOnRunId
@@ -875,6 +887,7 @@ export class OrdinusDatabase {
     if (firstRunId) {
       this.refreshWorkRequestStatusForRun(firstRunId)
     }
+    this.ensureWorkRequestAgentSessionsForRuns(Array.from(runIdsByTempId.values()))
 
     return this.getWorkRequest(request.id)
   }
@@ -986,8 +999,26 @@ export class OrdinusDatabase {
 
   listRunnableWorkRunsForRequest(requestId: string, limit: number): WorkRun[] {
     this.getWorkRequest(requestId)
+    if (limit <= 0) {
+      return []
+    }
 
-    return this.db
+    const runningAgentIds = new Set(
+      this.db
+        .select({ agentId: workRuns.assignedAgentId })
+        .from(workRuns)
+        .where(
+          and(
+            eq(workRuns.sourceType, workRequestSourceType),
+            eq(workRuns.sourceId, requestId),
+            eq(workRuns.status, 'running')
+          )
+        )
+        .all()
+        .map((run) => run.agentId)
+    )
+    const selectedAgentIds = new Set<string>()
+    const queuedRuns = this.db
       .select()
       .from(workRuns)
       .where(
@@ -998,9 +1029,109 @@ export class OrdinusDatabase {
         )
       )
       .orderBy(desc(workRuns.priority), asc(workRuns.createdAt))
-      .limit(limit)
       .all()
       .map(parseWorkRun)
+    const queuedResumeRunIds = this.getQueuedResumeRunIds(queuedRuns.map((run) => run.id))
+
+    return queuedRuns
+      .sort((left, right) => {
+        const leftResume = queuedResumeRunIds.has(left.id) ? 1 : 0
+        const rightResume = queuedResumeRunIds.has(right.id) ? 1 : 0
+
+        return (
+          rightResume - leftResume ||
+          right.priority - left.priority ||
+          left.createdAt.localeCompare(right.createdAt)
+        )
+      })
+      .filter((run) => {
+        if (runningAgentIds.has(run.assignedAgentId) || selectedAgentIds.has(run.assignedAgentId)) {
+          return false
+        }
+
+        selectedAgentIds.add(run.assignedAgentId)
+        return true
+      })
+      .slice(0, limit)
+  }
+
+  prepareWorkRunProviderSession(runId: string): string | null {
+    const run = this.getWorkRun(runId)
+    const session = this.ensureWorkRequestAgentSessionForRun(run)
+    if (!session) {
+      return run.providerSessionRef
+    }
+
+    const providerSessionRef = session.providerSessionRef ?? run.providerSessionRef
+    const now = new Date().toISOString()
+    this.db
+      .update(workRequestAgentSessions)
+      .set({
+        providerId: run.providerId,
+        model: run.model,
+        providerSessionRef,
+        status: 'active',
+        lastRunId: run.id,
+        updatedAt: now
+      })
+      .where(eq(workRequestAgentSessions.id, session.id))
+      .run()
+
+    if (providerSessionRef && run.providerSessionRef !== providerSessionRef) {
+      this.db
+        .update(workRuns)
+        .set({
+          providerSessionRef,
+          updatedAt: now
+        })
+        .where(eq(workRuns.id, run.id))
+        .run()
+    }
+
+    return providerSessionRef
+  }
+
+  getQueuedWorkRunResume(runId: string): QueuedWorkRunResume | null {
+    const request = this.db
+      .select({
+        id: workRunInputRequests.id,
+        resumeMessage: workRunInputRequests.resumeMessage
+      })
+      .from(workRunInputRequests)
+      .where(
+        and(
+          eq(workRunInputRequests.runId, runId),
+          eq(workRunInputRequests.status, 'queued_for_resume')
+        )
+      )
+      .orderBy(desc(workRunInputRequests.updatedAt), desc(workRunInputRequests.createdAt))
+      .get()
+
+    if (!request) {
+      return null
+    }
+
+    return {
+      inputRequestId: request.id,
+      message: request.resumeMessage
+    }
+  }
+
+  resolveQueuedWorkRunResume(inputRequestId: string): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(workRunInputRequests)
+      .set({
+        status: 'resolved',
+        updatedAt: now
+      })
+      .where(
+        and(
+          eq(workRunInputRequests.id, inputRequestId),
+          eq(workRunInputRequests.status, 'queued_for_resume')
+        )
+      )
+      .run()
   }
 
   countRunningWorkRunsForRequest(requestId: string): number {
@@ -1019,7 +1150,7 @@ export class OrdinusDatabase {
       .all().length
   }
 
-  startWorkRun(input: WorkRunActionInput): WorkRun {
+  startWorkRun(input: WorkRunActionInput, eventPayload: Record<string, unknown> = {}): WorkRun {
     const parsed = WorkRunActionInputSchema.parse(input)
     const run = this.getWorkRun(parsed.runId)
 
@@ -1037,7 +1168,7 @@ export class OrdinusDatabase {
       })
       .where(eq(workRuns.id, run.id))
       .run()
-    this.appendWorkRunEvent(run.id, 'started', {})
+    this.appendWorkRunEvent(run.id, 'started', eventPayload)
     this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
@@ -1158,6 +1289,7 @@ export class OrdinusDatabase {
         })
       })
     })
+    this.recordWorkRunProviderSession(run.id, parsed.providerSessionRef ?? run.providerSessionRef)
     this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
@@ -1198,6 +1330,7 @@ export class OrdinusDatabase {
           detail: input.outcome.detail ?? '',
           questions: JSON.stringify(input.outcome.questions),
           answers: null,
+          resumeMessage: '',
           createdAt: now,
           updatedAt: now
         })
@@ -1213,6 +1346,7 @@ export class OrdinusDatabase {
         })
         .run()
     })
+    this.recordWorkRunProviderSession(run.id, input.providerSessionRef)
     this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
@@ -1234,12 +1368,56 @@ export class OrdinusDatabase {
     const agent = this.requireActiveAgent(run.assignedAgentId)
     const now = new Date().toISOString()
     const message = buildWorkInputRequestContinuationMessage(request, answers)
+    const shouldQueueResume = this.hasRunningWorkRunForRequestAgent(run)
+
+    if (shouldQueueResume) {
+      this.db.transaction((tx) => {
+        tx.update(workRunInputRequests)
+          .set({
+            status: 'queued_for_resume',
+            answers: JSON.stringify(answers),
+            resumeMessage: message,
+            updatedAt: now
+          })
+          .where(eq(workRunInputRequests.id, request.id))
+          .run()
+        tx.update(workRuns)
+          .set({
+            status: 'queued',
+            updatedAt: now
+          })
+          .where(eq(workRuns.id, run.id))
+          .run()
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId: run.id,
+            sequence: this.getNextWorkRunEventSequence(run.id),
+            kind: 'queued',
+            payload: JSON.stringify({
+              resumedFromInputRequestId: request.id,
+              reason: 'agent_session_busy'
+            }),
+            createdAt: now
+          })
+          .run()
+      })
+      this.refreshWorkRequestStatusForRun(run.id)
+
+      return {
+        run: this.getWorkRun(run.id),
+        agent,
+        message,
+        providerSessionRef: run.providerSessionRef
+      }
+    }
 
     this.db.transaction((tx) => {
       tx.update(workRunInputRequests)
         .set({
           status: 'resolved',
           answers: JSON.stringify(answers),
+          resumeMessage: message,
           updatedAt: now
         })
         .where(eq(workRunInputRequests.id, request.id))
@@ -1323,7 +1501,10 @@ export class OrdinusDatabase {
           updatedAt: now
         })
         .where(
-          and(eq(workRunInputRequests.runId, run.id), eq(workRunInputRequests.status, 'pending'))
+          and(
+            eq(workRunInputRequests.runId, run.id),
+            inArray(workRunInputRequests.status, ['pending', 'queued_for_resume'])
+          )
         )
         .run()
     })
@@ -2293,6 +2474,146 @@ export class OrdinusDatabase {
     )
   }
 
+  private getQueuedResumeRunIds(runIds: string[]): Set<string> {
+    if (runIds.length === 0) {
+      return new Set()
+    }
+
+    return new Set(
+      this.db
+        .select({ runId: workRunInputRequests.runId })
+        .from(workRunInputRequests)
+        .where(
+          and(
+            inArray(workRunInputRequests.runId, runIds),
+            eq(workRunInputRequests.status, 'queued_for_resume')
+          )
+        )
+        .all()
+        .map((request) => request.runId)
+    )
+  }
+
+  private ensureWorkRequestAgentSessionsForRuns(runIds: string[]): void {
+    uniqueValues(runIds).forEach((runId) => {
+      this.ensureWorkRequestAgentSessionForRun(this.getWorkRun(runId))
+    })
+  }
+
+  private ensureWorkRequestAgentSessionForRun(run: WorkRun): WorkRequestAgentSession | null {
+    const requestId = run.source?.type === workRequestSourceType ? run.source.id : ''
+    if (!requestId) {
+      return null
+    }
+
+    const existing = this.db
+      .select()
+      .from(workRequestAgentSessions)
+      .where(
+        and(
+          eq(workRequestAgentSessions.requestId, requestId),
+          eq(workRequestAgentSessions.agentId, run.assignedAgentId)
+        )
+      )
+      .get()
+    if (existing) {
+      return existing
+    }
+
+    const now = new Date().toISOString()
+    const providerSessionRef =
+      run.providerSessionRef ??
+      this.getLatestProviderSessionRefForRequestAgent(requestId, run.assignedAgentId)
+    const session: WorkRequestAgentSession = {
+      id: createWorkRequestAgentSessionId(),
+      requestId,
+      agentId: run.assignedAgentId,
+      providerId: run.providerId,
+      model: run.model,
+      providerSessionRef,
+      status: 'active',
+      lastRunId: null,
+      createdAt: now,
+      updatedAt: now
+    }
+
+    this.db.insert(workRequestAgentSessions).values(session).run()
+
+    return session
+  }
+
+  private getLatestProviderSessionRefForRequestAgent(
+    requestId: string,
+    agentId: string
+  ): string | null {
+    return (
+      this.db
+        .select({ providerSessionRef: workRuns.providerSessionRef })
+        .from(workRuns)
+        .where(
+          and(
+            eq(workRuns.sourceType, workRequestSourceType),
+            eq(workRuns.sourceId, requestId),
+            eq(workRuns.assignedAgentId, agentId)
+          )
+        )
+        .orderBy(desc(workRuns.updatedAt), desc(workRuns.createdAt))
+        .all()
+        .find((run) => Boolean(run.providerSessionRef))?.providerSessionRef ?? null
+    )
+  }
+
+  private recordWorkRunProviderSession(
+    runId: string,
+    providerSessionRef: string | null | undefined
+  ): void {
+    if (!providerSessionRef) {
+      return
+    }
+
+    const run = this.getWorkRun(runId)
+    const session = this.ensureWorkRequestAgentSessionForRun(run)
+    if (!session) {
+      return
+    }
+
+    this.db
+      .update(workRequestAgentSessions)
+      .set({
+        providerId: run.providerId,
+        model: run.model,
+        providerSessionRef,
+        status: 'active',
+        lastRunId: run.id,
+        updatedAt: new Date().toISOString()
+      })
+      .where(eq(workRequestAgentSessions.id, session.id))
+      .run()
+  }
+
+  private hasRunningWorkRunForRequestAgent(run: WorkRun): boolean {
+    const requestId = run.source?.type === workRequestSourceType ? run.source.id : ''
+    if (!requestId) {
+      return false
+    }
+
+    return Boolean(
+      this.db
+        .select({ id: workRuns.id })
+        .from(workRuns)
+        .where(
+          and(
+            eq(workRuns.sourceType, workRequestSourceType),
+            eq(workRuns.sourceId, requestId),
+            eq(workRuns.assignedAgentId, run.assignedAgentId),
+            eq(workRuns.status, 'running'),
+            ne(workRuns.id, run.id)
+          )
+        )
+        .get()
+    )
+  }
+
   private appendWorkRunEvent(
     runId: string,
     kind: WorkRunEventKind,
@@ -2549,6 +2870,10 @@ function createWorkRequestId(): string {
   return `wrq-${randomUUID()}`
 }
 
+function createWorkRequestAgentSessionId(): string {
+  return `wrs-${randomUUID()}`
+}
+
 function createWorkRunDependencyId(): string {
   return `wrd-${randomUUID()}`
 }
@@ -2650,13 +2975,15 @@ function parseWorkRunInputRequest(value: unknown): WorkRunInputRequest {
   return WorkRunInputRequestSchema.parse({
     ...value,
     questions: parseJsonArray(value.questions),
-    answers: value.answers ? parseJsonArray(value.answers) : null
+    answers: value.answers ? parseJsonArray(value.answers) : null,
+    resumeMessage: typeof value.resumeMessage === 'string' ? value.resumeMessage : ''
   })
 }
 
 function isDatabaseWorkRunInputRequest(value: unknown): value is {
   questions: string
   answers: string | null
+  resumeMessage?: string
 } {
   return typeof value === 'object' && value !== null && 'questions' in value && 'answers' in value
 }
