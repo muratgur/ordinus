@@ -17,6 +17,10 @@ import type {
   ConversationCancelInputRequestInput,
   ConversationCreateDirectInput,
   ConversationCreateManualInput,
+  ConversationDeleteInput,
+  ConversationDeletePreview,
+  ConversationDeletePreviewInput,
+  ConversationDeleteResult,
   ConversationDetail,
   ConversationGetInput,
   ConversationListItem,
@@ -104,6 +108,12 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.conversationsCancelTurn, input),
     revealPath: async (input: ConversationRevealPathInput): Promise<void> =>
       ipcRenderer.invoke(ipcChannels.conversationsRevealPath, input),
+    deletePreview: async (
+      input: ConversationDeletePreviewInput
+    ): Promise<ConversationDeletePreview> =>
+      ipcRenderer.invoke(ipcChannels.conversationsDeletePreview, input),
+    delete: async (input: ConversationDeleteInput): Promise<ConversationDeleteResult> =>
+      ipcRenderer.invoke(ipcChannels.conversationsDelete, input),
     answerInputRequest: async (
       input: ConversationAnswerInputRequestInput
     ): Promise<ConversationDetail> =>

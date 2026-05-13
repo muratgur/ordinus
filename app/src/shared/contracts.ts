@@ -397,6 +397,30 @@ export const ConversationRevealPathInputSchema = ConversationCancelTurnInputSche
   relativePath: WorkspaceRelativePathSchema
 })
 
+export const ConversationDeletePreviewInputSchema = ConversationGetInputSchema
+
+export const ConversationDeletePreviewSchema = z.object({
+  conversationId: z.string().min(1),
+  title: z.string().min(1),
+  workingRoot: WorkspaceRelativePathSchema,
+  absolutePath: z.string().min(1),
+  folderExists: z.boolean(),
+  fileCount: z.number().int().nonnegative(),
+  directoryCount: z.number().int().nonnegative()
+})
+
+export const ConversationDeleteInputSchema = ConversationGetInputSchema.extend({
+  deleteWorkspaceFiles: z.boolean()
+})
+
+export const ConversationDeleteResultSchema = z.object({
+  deletedConversationId: z.string().min(1),
+  deletedTurnCount: z.number().int().nonnegative(),
+  trashedWorkspaceFolder: z.boolean(),
+  workspaceFolderMissing: z.boolean(),
+  fileWarning: z.string().optional()
+})
+
 export const ConversationAnswerInputRequestInputSchema = z.object({
   requestId: z.string().min(1),
   answers: z.array(InteractionAnswerSchema).max(3)
@@ -725,6 +749,10 @@ export type ConversationUpdateRoutingModeInput = z.infer<
 >
 export type ConversationCancelTurnInput = z.infer<typeof ConversationCancelTurnInputSchema>
 export type ConversationRevealPathInput = z.infer<typeof ConversationRevealPathInputSchema>
+export type ConversationDeletePreviewInput = z.infer<typeof ConversationDeletePreviewInputSchema>
+export type ConversationDeletePreview = z.infer<typeof ConversationDeletePreviewSchema>
+export type ConversationDeleteInput = z.infer<typeof ConversationDeleteInputSchema>
+export type ConversationDeleteResult = z.infer<typeof ConversationDeleteResultSchema>
 export type ConversationAnswerInputRequestInput = z.infer<
   typeof ConversationAnswerInputRequestInputSchema
 >

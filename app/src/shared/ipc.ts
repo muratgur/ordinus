@@ -22,6 +22,8 @@ export const ipcChannels = {
   conversationsSendTurn: 'conversations:send-turn',
   conversationsCancelTurn: 'conversations:cancel-turn',
   conversationsRevealPath: 'conversations:reveal-path',
+  conversationsDeletePreview: 'conversations:delete-preview',
+  conversationsDelete: 'conversations:delete',
   conversationsAnswerInputRequest: 'conversations:answer-input-request',
   conversationsCancelInputRequest: 'conversations:cancel-input-request',
   workboardList: 'workboard:list',
