@@ -41,6 +41,7 @@ type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
 type CreateAgentStep = 'describe' | 'review'
 type SettingsDraft = {
+  name: string
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox
@@ -192,6 +193,7 @@ export function AgentsScreen(): React.JSX.Element {
             ) : selectedAgent ? (
               <AgentDetail
                 agent={selectedAgent}
+                agents={agents}
                 activeSection={activeSection}
                 onAgentSaved={handleAgentSaved}
                 onAgentDeleted={handleAgentDeleted}
@@ -302,11 +304,13 @@ function AgentLibrary({
 
 function AgentDetail({
   agent,
+  agents,
   activeSection,
   onAgentSaved,
   onAgentDeleted
 }: {
   agent: Agent
+  agents: Agent[]
   activeSection: AgentSection
   onAgentSaved: (agent: Agent) => void
   onAgentDeleted: (agentId: string) => void
@@ -324,6 +328,7 @@ function AgentDetail({
       <SettingsPanel
         key={agent.id}
         agent={agent}
+        agents={agents}
         onAgentSaved={onAgentSaved}
         onAgentDeleted={onAgentDeleted}
       />
@@ -816,10 +821,12 @@ Include:
 
 function SettingsPanel({
   agent,
+  agents,
   onAgentSaved,
   onAgentDeleted
 }: {
   agent: Agent
+  agents: Agent[]
   onAgentSaved: (agent: Agent) => void
   onAgentDeleted: (agentId: string) => void
 }): React.JSX.Element {
@@ -831,7 +838,8 @@ function SettingsPanel({
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
   const dirty = isSettingsDirty(draft, savedSettings)
-  const canSave = dirty && Boolean(draft.model.trim()) && !saving
+  const nameIssue = getAgentNameIssue(draft.name, savedSettings.name, agents, agent.id)
+  const canSave = dirty && Boolean(draft.model.trim()) && !nameIssue && !saving
 
   function updateDraft(next: Partial<SettingsDraft>): void {
     setDraft((current) => {
@@ -854,6 +862,7 @@ function SettingsPanel({
       const nextAgent = await window.ordinus.agents.updateSettings({
         id: agent.id,
         ...draft,
+        name: draft.name.trim(),
         model: draft.model.trim()
       })
       const nextSettings = getPersistedSettingsDraft(nextAgent)
@@ -912,6 +921,30 @@ function SettingsPanel({
       </div>
 
       {error ? <InlineError message={error} /> : null}
+
+      <section className="grid gap-3 rounded-lg border bg-card p-4">
+        <div className="grid gap-1">
+          <p className="text-sm font-semibold">Identity</p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Rename how this agent appears across Ordinus.
+          </p>
+        </div>
+        <FormField label="Agent name">
+          <Input
+            maxLength={80}
+            value={draft.name}
+            onChange={(event) => updateDraft({ name: event.target.value })}
+          />
+        </FormField>
+        <p
+          className={cn(
+            'text-xs leading-5 text-muted-foreground',
+            nameIssue && 'text-status-attention'
+          )}
+        >
+          {nameIssue ?? 'Existing conversations and local files stay linked.'}
+        </p>
+      </section>
 
       <section className="grid gap-4 rounded-lg border bg-card p-4">
         <div className="grid gap-1">
@@ -1245,6 +1278,7 @@ function getAgentStatus(agent: Agent): AgentStatus {
 
 function getPersistedSettingsDraft(agent: Agent): SettingsDraft {
   return {
+    name: agent.name,
     providerId: agent.providerId,
     model: agent.model,
     sandbox: agent.sandbox,
@@ -1261,6 +1295,7 @@ function getEditableSettingsDraft(settings: SettingsDraft): SettingsDraft {
 
 function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): boolean {
   return (
+    draft.name !== savedSettings.name ||
     draft.providerId !== savedSettings.providerId ||
     draft.model !== savedSettings.model ||
     draft.sandbox !== savedSettings.sandbox ||
@@ -1291,6 +1326,37 @@ function ModelField({
       </SelectControl>
     </FormField>
   )
+}
+
+function getAgentNameIssue(
+  name: string,
+  savedName: string,
+  agents: Agent[],
+  currentAgentId: string
+): string | null {
+  const trimmedName = name.trim()
+  if (!trimmedName) {
+    return 'Agent name is required.'
+  }
+
+  if (trimmedName.length > 80) {
+    return 'Agent name must be 80 characters or fewer.'
+  }
+
+  if (normalizeAgentName(trimmedName) === normalizeAgentName(savedName)) {
+    return null
+  }
+
+  const duplicateAgent = agents.some(
+    (agent) =>
+      agent.id !== currentAgentId &&
+      normalizeAgentName(agent.name) === normalizeAgentName(trimmedName)
+  )
+  return duplicateAgent ? 'Another agent already uses this name.' : null
+}
+
+function normalizeAgentName(name: string): string {
+  return name.trim().toLocaleLowerCase()
 }
 
 function getSelectedModelLabel(providerId: ProviderId, model: string): string {

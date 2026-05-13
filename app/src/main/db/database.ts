@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { randomUUID } from 'node:crypto'
@@ -478,10 +478,14 @@ export class OrdinusDatabase {
     if (currentAgent.enabled && !parsed.enabled) {
       this.assertAgentHasNoRunningWork(currentAgent.id, 'disable')
     }
+    if (this.hasDuplicateAgentName(parsed.name, currentAgent.id)) {
+      throw new Error('Another agent already uses this name.')
+    }
 
     this.db
       .update(agents)
       .set({
+        name: parsed.name,
         providerId: parsed.providerId,
         model: parsed.model,
         sandbox: parsed.sandbox,
@@ -2008,6 +2012,17 @@ export class OrdinusDatabase {
     return agent
   }
 
+  private hasDuplicateAgentName(name: string, currentAgentId: string): boolean {
+    const normalizedName = normalizeAgentName(name)
+
+    return this.db
+      .select({ name: agents.name })
+      .from(agents)
+      .where(ne(agents.id, currentAgentId))
+      .all()
+      .some((agent) => normalizeAgentName(agent.name) === normalizedName)
+  }
+
   getConversationTurn(id: string): ConversationTurn {
     const turn = this.db.select().from(conversationTurns).where(eq(conversationTurns.id, id)).get()
 
@@ -2378,6 +2393,10 @@ function createWorkRunInputRequestId(): string {
 
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
+}
+
+function normalizeAgentName(name: string): string {
+  return name.trim().toLocaleLowerCase()
 }
 
 function parseConversationTurn(value: unknown): ConversationTurn {
