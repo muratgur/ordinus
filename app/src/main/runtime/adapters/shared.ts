@@ -40,6 +40,15 @@ export type ConversationProcessResult = {
   cancelled: boolean
 }
 
+export type CliFailureMessageOptions = {
+  stdout: string
+  stderr: string
+  jsonFallbackKeys?: string[]
+  ignoredDiagnosticPatterns?: RegExp[]
+  ignoredJsonEventTypes?: string[]
+  defaultMessage: string
+}
+
 export type RunConversationProcessOptions = {
   executable: CliExecutable
   args: string[]
@@ -66,7 +75,7 @@ export function runConversationProcess({
     const stderrLog = createWriteStream(join(dirname(input.eventLogPath), 'stderr.txt'), {
       flags: 'a'
     })
-    const child = spawn(executable.command, args, {
+    const child = spawn(executable.command, withCliBaseArgs(executable, args), {
       cwd: input.workspaceRoot,
       env,
       shell: executable.shell,
@@ -167,8 +176,113 @@ export function readCliJsonErrorMessage(value: string, fallbackKeys: string[]): 
   }
 }
 
+export function readCliFailureMessage({
+  stdout,
+  stderr,
+  jsonFallbackKeys = [],
+  ignoredDiagnosticPatterns = [],
+  ignoredJsonEventTypes = [],
+  defaultMessage
+}: CliFailureMessageOptions): string {
+  return (
+    readCliJsonErrorMessage(stdout, jsonFallbackKeys) ||
+    readCliJsonErrorMessage(stderr, jsonFallbackKeys) ||
+    readCliJsonLineErrorMessage(stdout, ignoredJsonEventTypes) ||
+    readCliJsonLineErrorMessage(stderr, ignoredJsonEventTypes) ||
+    readCliTextFailureMessage(stderr, ignoredDiagnosticPatterns) ||
+    readCliTextFailureMessage(stdout, ignoredDiagnosticPatterns) ||
+    defaultMessage
+  )
+}
+
 export function getStringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+export function addCliModelArg(args: string[], model: string, index = args.length): void {
+  if (model === 'default') {
+    return
+  }
+
+  args.splice(index, 0, '--model', model)
+}
+
+function readCliJsonLineErrorMessage(value: string, ignoredEventTypes: string[]): string {
+  const ignoredEvents = new Set(ignoredEventTypes)
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (const line of [...lines].reverse()) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+
+    if (ignoredEvents.has(getCliEventType(parsed))) {
+      continue
+    }
+
+    const message = findNestedErrorMessage(parsed)
+    if (message) {
+      return message
+    }
+  }
+
+  return ''
+}
+
+function readCliTextFailureMessage(value: string, ignoredDiagnosticPatterns: RegExp[]): string {
+  return (
+    value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(
+        (line) => line && !ignoredDiagnosticPatterns.some((pattern) => pattern.test(line))
+      ) ?? ''
+  )
+}
+
+function getCliEventType(value: unknown): string {
+  return getStringPath(value, ['type']) || getStringPath(value, ['event'])
+}
+
+function getStringPath(value: unknown, path: string[]): string {
+  let current = value
+
+  for (const part of path) {
+    if (!isRecord(current)) {
+      return ''
+    }
+    current = current[part]
+  }
+
+  return typeof current === 'string' ? current : ''
+}
+
+function findNestedErrorMessage(value: unknown): string {
+  if (!isRecord(value)) {
+    return ''
+  }
+
+  for (const key of ['message', 'error', 'detail', 'reason']) {
+    const direct = value[key]
+    if (typeof direct === 'string' && direct.trim()) {
+      return direct.trim()
+    }
+  }
+
+  for (const key of ['payload', 'data', 'event']) {
+    const nested = findNestedErrorMessage(value[key])
+    if (nested) {
+      return nested
+    }
+  }
+
+  return ''
 }
 
 export async function connectCliProvider({

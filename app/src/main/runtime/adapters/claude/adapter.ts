@@ -13,7 +13,7 @@ import {
   type WorkboardDraftPlan
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
-import { findCliExecutable, type CliExecutable } from '../../cli/executable'
+import { findCliExecutable, withCliBaseArgs, type CliExecutable } from '../../cli/executable'
 import { extractJsonObject, firstLine, isRecord, parseJsonFromCliOutput } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
@@ -41,13 +41,14 @@ import {
 } from '../../prompts/conversation-outcome'
 import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
 import {
+  addCliModelArg,
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
   disconnectCliProvider,
-  getStringValue,
   getCliVersion,
-  readCliJsonErrorMessage,
+  getStringValue,
+  readCliFailureMessage,
   runConversationProcess,
   scheduleLoginCleanup
 } from '../shared'
@@ -115,7 +116,7 @@ async function logoutClaudeProvider(): Promise<void> {
     return
   }
 
-  const result = await runCapture(executable.command, ['auth', 'logout'], {
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, ['auth', 'logout']), {
     env: getClaudeEnvironment(),
     shell: executable.shell,
     timeoutMs: 10_000
@@ -166,10 +167,12 @@ async function sendClaudeConversationTurn(
 
   if (result.code !== 0) {
     throw new Error(
-      readCliJsonErrorMessage(result.stdout, ['result', 'message']) ||
-        readCliJsonErrorMessage(result.stderr, ['result', 'message']) ||
-        firstLine(result.stderr || result.stdout) ||
-        'Claude conversation turn failed.'
+      readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        jsonFallbackKeys: ['result', 'message'],
+        defaultMessage: 'Claude conversation turn failed.'
+      })
     )
   }
 
@@ -208,9 +211,7 @@ function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): strin
     args.push('--name', input.agentName)
   }
 
-  if (input.model !== 'default') {
-    args.push('--model', input.model)
-  }
+  addCliModelArg(args, input.model)
 
   return args
 }
@@ -287,11 +288,9 @@ async function generateClaudeAgentDraft(input: RuntimeAgentDraftInput): Promise<
     'dontAsk'
   ]
 
-  if (input.model !== 'default') {
-    args.splice(1, 0, '--model', input.model)
-  }
+  addCliModelArg(args, input.model, 1)
 
-  const result = await runCapture(executable.command, args, {
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
     env: getClaudeEnvironment(),
     shell: executable.shell,
     stdin: buildAgentDraftPrompt(input.requestedWork),
@@ -333,11 +332,9 @@ async function generateClaudeOrchestrationPlan(
     'dontAsk'
   ]
 
-  if (input.model !== 'default') {
-    args.splice(1, 0, '--model', input.model)
-  }
+  addCliModelArg(args, input.model, 1)
 
-  const result = await runCapture(executable.command, args, {
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
     cwd: input.workspaceRoot,
     env: getClaudeEnvironment(),
     shell: executable.shell,
@@ -378,11 +375,9 @@ async function generateClaudeWorkboardPlan(
     'dontAsk'
   ]
 
-  if (input.model !== 'default') {
-    args.splice(1, 0, '--model', input.model)
-  }
+  addCliModelArg(args, input.model, 1)
 
-  const result = await runCapture(executable.command, args, {
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
     cwd: input.workspaceRoot,
     env: getClaudeEnvironment(),
     shell: executable.shell,
@@ -420,7 +415,7 @@ async function getClaudeStatus(loginProcess: ProviderLoginProcess | null): Promi
     const env = getClaudeEnvironment()
     const version = await getCliVersion(executable, env)
 
-    const authResult = await runCapture(executable.command, ['auth', 'status'], {
+    const authResult = await runCapture(executable.command, withCliBaseArgs(executable, ['auth', 'status']), {
       env,
       shell: executable.shell,
       timeoutMs: 10_000
@@ -471,7 +466,7 @@ function startClaudeLogin(
     let settled = false
     let output = ''
     const args = ['auth', 'login', ...getClaudeLoginArgs(loginMethod)]
-    const child = spawn(executable.command, args, {
+    const child = spawn(executable.command, withCliBaseArgs(executable, args), {
       cwd: getSystemPaths().userData,
       env: getClaudeEnvironment(),
       shell: executable.shell,

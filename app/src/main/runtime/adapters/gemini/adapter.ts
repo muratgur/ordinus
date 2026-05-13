@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, extname, join } from 'node:path'
+import { join } from 'node:path'
 import {
   AgentSandboxSchema,
   ProviderStatusSchema,
@@ -13,7 +13,12 @@ import {
   type WorkboardDraftPlan
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
-import { findCliExecutable, withCliBaseArgs, type CliExecutable } from '../../cli/executable'
+import {
+  findCliExecutable,
+  getCliSiblingNodeModuleScript,
+  withCliBaseArgs,
+  type CliExecutable
+} from '../../cli/executable'
 import { firstLine, isRecord, parseJsonFromCliOutput } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
@@ -31,13 +36,14 @@ import {
 } from '../../prompts/conversation-outcome'
 import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
 import {
+  addCliModelArg,
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
   disconnectCliProvider,
-  getStringValue,
   getCliVersion,
-  readCliJsonErrorMessage,
+  getStringValue,
+  readCliFailureMessage,
   runConversationProcess,
   scheduleLoginCleanup,
   stopProviderLoginProcess
@@ -61,6 +67,8 @@ const geminiAuthEnvKeys = [
   'GOOGLE_CLOUD_LOCATION',
   'GOOGLE_APPLICATION_CREDENTIALS'
 ] as const
+
+const ignoredGeminiDiagnosticPatterns = [/^Warning: 256-color support not detected\./]
 
 export const geminiProviderAdapter: ProviderAdapter = {
   id: 'gemini',
@@ -131,7 +139,7 @@ async function sendGeminiConversationTurn(
     : buildGeminiConversationPrompt(input)
   const result = await runConversationProcess({
     executable,
-    args: withCliBaseArgs(executable, args),
+    args,
     input,
     context,
     env: getGeminiEnvironment(),
@@ -145,10 +153,13 @@ async function sendGeminiConversationTurn(
 
   if (result.code !== 0) {
     throw new Error(
-      readCliJsonErrorMessage(result.stdout, ['result', 'response', 'message']) ||
-        readCliJsonErrorMessage(result.stderr, ['result', 'response', 'message']) ||
-        firstLine(result.stderr || result.stdout) ||
-        'Gemini conversation turn failed.'
+      readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        jsonFallbackKeys: ['result', 'response', 'message'],
+        ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+        defaultMessage: 'Gemini conversation turn failed.'
+      })
     )
   }
 
@@ -181,9 +192,7 @@ function buildGeminiConversationArgs(input: RuntimeConversationTurnInput): strin
     args.push('--resume', input.providerSessionRef)
   }
 
-  if (input.model !== 'default') {
-    args.unshift('--model', input.model)
-  }
+  addCliModelArg(args, input.model, 0)
 
   return args
 }
@@ -254,9 +263,7 @@ async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<
       buildAgentDraftPrompt(input.requestedWork)
     ]
 
-    if (input.model !== 'default') {
-      args.splice(0, 0, '--model', input.model)
-    }
+    addCliModelArg(args, input.model, 0)
 
     const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
       cwd: tempDir,
@@ -267,7 +274,12 @@ async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<
 
     if (result.code !== 0) {
       throw new Error(
-        firstLine(result.stderr || result.stdout) || 'Gemini could not draft the agent.'
+        readCliFailureMessage({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+          defaultMessage: 'Gemini could not draft the agent.'
+        })
       )
     }
 
@@ -302,9 +314,7 @@ async function generateGeminiOrchestrationPlan(
     buildOrchestrationPrompt(input)
   ]
 
-  if (input.model !== 'default') {
-    args.splice(0, 0, '--model', input.model)
-  }
+  addCliModelArg(args, input.model, 0)
 
   const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
     cwd: input.workspaceRoot,
@@ -315,7 +325,12 @@ async function generateGeminiOrchestrationPlan(
 
   if (result.code !== 0) {
     throw new Error(
-      firstLine(result.stderr || result.stdout) || 'Gemini could not route this message.'
+      readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+        defaultMessage: 'Gemini could not route this message.'
+      })
     )
   }
 
@@ -345,9 +360,7 @@ async function generateGeminiWorkboardPlan(
     buildWorkboardPlanPrompt(input)
   ]
 
-  if (input.model !== 'default') {
-    args.splice(0, 0, '--model', input.model)
-  }
+  addCliModelArg(args, input.model, 0)
 
   const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
     cwd: input.workspaceRoot,
@@ -358,7 +371,12 @@ async function generateGeminiWorkboardPlan(
 
   if (result.code !== 0) {
     throw new Error(
-      firstLine(result.stderr || result.stdout) || 'Gemini could not prepare this Work Request.'
+      readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+        defaultMessage: 'Gemini could not prepare this Work Request.'
+      })
     )
   }
 
@@ -530,43 +548,15 @@ function getGeminiEnvironment(): NodeJS.ProcessEnv {
 }
 
 async function findGeminiExecutable(): Promise<CliExecutable | null> {
-  const executable = await findCliExecutable('gemini', 'GEMINI_BIN')
-  if (!executable) {
-    return null
-  }
-
-  return normalizeGeminiExecutable(executable)
-}
-
-function normalizeGeminiExecutable(executable: CliExecutable): CliExecutable {
-  const extension = extname(executable.command).toLowerCase()
-
-  if (extension === '.js') {
-    return createNodeScriptExecutable(executable.command)
-  }
-
-  const bundlePath = join(
-    dirname(executable.command),
-    'node_modules',
-    '@google',
-    'gemini-cli',
-    'bundle',
-    'gemini.js'
-  )
-
-  if ((extension === '.cmd' || extension === '') && existsSync(bundlePath)) {
-    return createNodeScriptExecutable(bundlePath)
-  }
-
-  return executable
-}
-
-function createNodeScriptExecutable(scriptPath: string): CliExecutable {
-  return {
-    command: 'node',
-    baseArgs: [scriptPath],
-    shell: false
-  }
+  return findCliExecutable('gemini', 'GEMINI_BIN', {
+    nodeScriptCandidates: (executable) => [
+      getCliSiblingNodeModuleScript(
+        executable,
+        ['@google', 'gemini-cli'],
+        ['bundle', 'gemini.js']
+      )
+    ]
+  })
 }
 
 function getGeminiAuthStatus(): { connected: boolean; accountLabel: string } {

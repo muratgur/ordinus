@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
 import {
-  createWriteStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -19,7 +18,7 @@ import {
   type WorkboardDraftPlan
 } from '@shared/contracts'
 import { buildRuntimeEnvironment } from '../../cli/environment'
-import { findCliExecutable, type CliExecutable } from '../../cli/executable'
+import { findCliExecutable, withCliBaseArgs, type CliExecutable } from '../../cli/executable'
 import { extractJsonObject, firstLine, isRecord, parseJsonFromCliOutput } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
@@ -47,11 +46,14 @@ import {
 } from '../../prompts/conversation-outcome'
 import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
 import {
+  addCliModelArg,
   connectCliProvider,
   createProviderLoginResult,
   createProviderStatusBase,
   disconnectCliProvider,
   getCliVersion,
+  readCliFailureMessage,
+  runConversationProcess,
   scheduleLoginCleanup,
   stopProviderLoginProcess
 } from '../shared'
@@ -126,14 +128,29 @@ async function sendCodexConversationTurn(
   const prompt = input.providerSessionRef
     ? buildCodexResumePrompt(input)
     : buildCodexConversationPrompt(input)
-  const result = await runCodexConversationProcess(executable, args, input, context, prompt)
+  const result = await runConversationProcess({
+    executable,
+    args,
+    input,
+    context,
+    env: getCodexEnvironment(),
+    stdin: prompt,
+    streamErrorMessage: 'Codex process streams could not be opened.'
+  })
 
   if (result.cancelled) {
     throw new Error('Conversation turn was cancelled.')
   }
 
   if (result.code !== 0) {
-    throw new Error(getCodexFailureMessage(result.stderr, result.stdout))
+    throw new Error(
+      readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        ignoredJsonEventTypes: ['thread.started'],
+        defaultMessage: 'Codex exited before returning a Work Item result.'
+      })
+    )
   }
 
   const providerSessionRef = extractCodexSessionRef(result.stdout) || input.providerSessionRef || ''
@@ -162,9 +179,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
       input.lastMessagePath
     ]
 
-    if (input.model !== 'default') {
-      args.push('--model', input.model)
-    }
+    addCliModelArg(args, input.model)
 
     return args
   }
@@ -185,9 +200,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     input.lastMessagePath
   ]
 
-  if (input.model !== 'default') {
-    args.push('--model', input.model)
-  }
+  addCliModelArg(args, input.model)
 
   return args
 }
@@ -227,104 +240,6 @@ function writeCodexConversationOutcomeSchema(input: RuntimeConversationTurnInput
   return schemaPath
 }
 
-type CodexConversationProcessResult = {
-  code: number | null
-  stdout: string
-  stderr: string
-  cancelled: boolean
-}
-
-function runCodexConversationProcess(
-  executable: CliExecutable,
-  args: string[],
-  input: RuntimeConversationTurnInput,
-  context: ProviderRuntimeContext,
-  stdin: string
-): Promise<CodexConversationProcessResult> {
-  return new Promise((resolve, reject) => {
-    mkdirSync(dirname(input.eventLogPath), { recursive: true })
-
-    const eventLog = createWriteStream(input.eventLogPath, { flags: 'a' })
-    const child = spawn(executable.command, args, {
-      cwd: input.workspaceRoot,
-      env: getCodexEnvironment(),
-      shell: executable.shell,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-    const process = {
-      child,
-      cancelled: false,
-      cleanupTimer: null as NodeJS.Timeout | null
-    }
-
-    context.conversationProcesses.set(input.turnId, process)
-
-    let settled = false
-    let stdout = ''
-    let stderr = ''
-
-    process.cleanupTimer = setTimeout(
-      () => {
-        process.cancelled = true
-        child.kill()
-      },
-      10 * 60 * 1000
-    )
-
-    const finish = (value: CodexConversationProcessResult): void => {
-      if (settled) return
-      settled = true
-      if (process.cleanupTimer) {
-        clearTimeout(process.cleanupTimer)
-      }
-      context.conversationProcesses.delete(input.turnId)
-      eventLog.end()
-      resolve(value)
-    }
-
-    if (!child.stdin || !child.stdout || !child.stderr) {
-      settled = true
-      if (process.cleanupTimer) {
-        clearTimeout(process.cleanupTimer)
-      }
-      context.conversationProcesses.delete(input.turnId)
-      eventLog.end()
-      reject(new Error('Codex process streams could not be opened.'))
-      return
-    }
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
-      stdout += text
-      eventLog.write(text)
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-    })
-    child.once('error', (error) => {
-      if (settled) return
-      settled = true
-      if (process.cleanupTimer) {
-        clearTimeout(process.cleanupTimer)
-      }
-      context.conversationProcesses.delete(input.turnId)
-      eventLog.end()
-      reject(error)
-    })
-    child.once('close', (code) => {
-      finish({
-        code,
-        stdout,
-        stderr,
-        cancelled: process.cancelled
-      })
-    })
-
-    child.stdin.write(stdin)
-    child.stdin.end()
-  })
-}
-
 async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
   const executable = await findCodexExecutable()
   if (!executable) {
@@ -353,11 +268,9 @@ async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<A
       outputPath
     ]
 
-    if (input.model !== 'default') {
-      args.push('--model', input.model)
-    }
+    addCliModelArg(args, input.model)
 
-    const result = await runCapture(executable.command, args, {
+    const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
       env: getCodexEnvironment(),
       shell: executable.shell,
       stdin: buildAgentDraftPrompt(input.requestedWork),
@@ -408,11 +321,9 @@ async function generateCodexOrchestrationPlan(
       outputPath
     ]
 
-    if (input.model !== 'default') {
-      args.push('--model', input.model)
-    }
+    addCliModelArg(args, input.model)
 
-    const result = await runCapture(executable.command, args, {
+    const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
       env: getCodexEnvironment(),
       shell: executable.shell,
       stdin: buildOrchestrationPrompt(input),
@@ -461,11 +372,9 @@ async function generateCodexWorkboardPlan(
       outputPath
     ]
 
-    if (input.model !== 'default') {
-      args.push('--model', input.model)
-    }
+    addCliModelArg(args, input.model)
 
-    const result = await runCapture(executable.command, args, {
+    const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
       env: getCodexEnvironment(),
       shell: executable.shell,
       stdin: buildWorkboardPlanPrompt(input),
@@ -505,7 +414,7 @@ async function getCodexStatus(loginProcess: ProviderLoginProcess | null): Promis
     const env = getCodexEnvironment()
     const version = await getCliVersion(executable, env)
 
-    const authResult = await runCapture(executable.command, ['login', 'status'], {
+    const authResult = await runCapture(executable.command, withCliBaseArgs(executable, ['login', 'status']), {
       env,
       shell: executable.shell,
       timeoutMs: 10_000
@@ -555,7 +464,7 @@ function startCodexLogin(
   return new Promise((resolve, reject) => {
     let settled = false
     let output = ''
-    const child = spawn(executable.command, ['login'], {
+    const child = spawn(executable.command, withCliBaseArgs(executable, ['login']), {
       cwd: getSystemPaths().userData,
       env: getCodexEnvironment(),
       shell: executable.shell,
@@ -637,53 +546,6 @@ function readCodexLastMessage(outputPath: string): string {
   return readFileSync(outputPath, 'utf8').trim()
 }
 
-function getCodexFailureMessage(stderr: string, stdout: string): string {
-  const stderrMessage = firstLine(stderr)
-  if (stderrMessage) {
-    return stderrMessage
-  }
-
-  const eventMessage = extractCodexErrorEventMessage(stdout)
-  if (eventMessage) {
-    return eventMessage
-  }
-
-  const textMessage = [...stdout.split(/\r?\n/)]
-    .reverse()
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith('{'))
-
-  return textMessage || 'Codex exited before returning a Work Item result.'
-}
-
-function extractCodexErrorEventMessage(value: string): string {
-  const lines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  for (const line of [...lines].reverse()) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(line)
-    } catch {
-      continue
-    }
-
-    const eventType = getEventType(parsed)
-    if (eventType === 'thread.started') {
-      continue
-    }
-
-    const message = findErrorLikeString(parsed)
-    if (message) {
-      return message
-    }
-  }
-
-  return ''
-}
-
 function extractCodexSessionRef(value: string): string {
   const lines = value
     .split(/\r?\n/)
@@ -762,24 +624,3 @@ function findSessionLikeString(value: unknown): string {
   return ''
 }
 
-function findErrorLikeString(value: unknown): string {
-  if (!isRecord(value)) {
-    return ''
-  }
-
-  for (const key of ['message', 'error', 'detail', 'reason']) {
-    const direct = value[key]
-    if (typeof direct === 'string' && direct.trim()) {
-      return direct.trim()
-    }
-  }
-
-  for (const key of ['payload', 'data', 'event']) {
-    const nested = findErrorLikeString(value[key])
-    if (nested) {
-      return nested
-    }
-  }
-
-  return ''
-}
