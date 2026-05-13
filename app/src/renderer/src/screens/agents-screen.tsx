@@ -5,6 +5,7 @@ import {
   Bot,
   FileText,
   FolderOpen,
+  Info,
   Loader2,
   Plus,
   Search,
@@ -34,11 +35,7 @@ import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import type { Agent, AgentDraft, AgentSandbox, AgentSkill, ProviderId } from '@shared/contracts'
-import {
-  getDefaultModelForProvider,
-  getProviderModelOptions,
-  isKnownProviderModel
-} from '@shared/provider-models'
+import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
@@ -49,6 +46,30 @@ type SettingsDraft = {
   sandbox: AgentSandbox
   enabled: boolean
 }
+
+const sandboxOptions: Array<{
+  value: AgentSandbox
+  label: string
+  description: string
+  badge?: string
+}> = [
+  {
+    value: 'read-only',
+    label: 'Read only',
+    description: 'Inspect context and propose changes without editing files.'
+  },
+  {
+    value: 'workspace-write',
+    label: 'Workspace write',
+    description: 'Edit files inside this workspace for normal coding tasks.',
+    badge: 'Recommended'
+  },
+  {
+    value: 'full-access',
+    label: 'Full access',
+    description: 'Allow broader local operations for trusted agents and tasks only.'
+  }
+]
 
 const sections: Array<{ id: AgentSection; label: string; icon: typeof Bot }> = [
   { id: 'instructions', label: 'Instructions', icon: FileText },
@@ -367,7 +388,10 @@ function CreateAgentDialog({
         requestedWork: intent,
         sandbox: 'workspace-write'
       })
-      setDraft(nextDraft)
+      setDraft({
+        ...nextDraft,
+        model: getSupportedModelOrDefault(nextDraft.providerId, nextDraft.model)
+      })
       setStep('review')
     } catch (draftError) {
       setError(getErrorMessage(draftError, 'Agent draft could not be generated.'))
@@ -458,8 +482,13 @@ function CreateAgentDialog({
                   />
                 </label>
 
-                <section className="grid gap-3 rounded-lg border bg-card p-4">
-                  <p className="text-sm font-semibold">Runtime</p>
+                <section className="grid gap-4 rounded-lg border bg-card p-4">
+                  <div className="grid gap-1">
+                    <p className="text-sm font-semibold">Runtime</p>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      Choose the CLI and model this agent uses when it runs.
+                    </p>
+                  </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <FormField label="Provider CLI">
                       <SelectControl
@@ -476,17 +505,13 @@ function CreateAgentDialog({
                       model={draft.model}
                       onChange={(model) => updateDraft({ model })}
                     />
-                    <FormField label="Sandbox">
-                      <SelectControl
-                        value={draft.sandbox}
-                        onChange={(value) => updateDraft({ sandbox: value as AgentSandbox })}
-                      >
-                        <option value="read-only">Read only</option>
-                        <option value="workspace-write">Workspace write</option>
-                        <option value="full-access">Full access</option>
-                      </SelectControl>
-                    </FormField>
                   </div>
+                  <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
+                  <SandboxField
+                    name="create-agent-sandbox"
+                    value={draft.sandbox}
+                    onChange={(sandbox) => updateDraft({ sandbox })}
+                  />
                 </section>
                 {error ? <InlineError message={error} /> : null}
               </div>
@@ -798,9 +823,9 @@ function SettingsPanel({
   onAgentSaved: (agent: Agent) => void
   onAgentDeleted: (agentId: string) => void
 }): React.JSX.Element {
-  const initialSettings = getSettingsDraft(agent)
+  const initialSettings = getPersistedSettingsDraft(agent)
   const [savedSettings, setSavedSettings] = useState<SettingsDraft>(initialSettings)
-  const [draft, setDraft] = useState<SettingsDraft>(initialSettings)
+  const [draft, setDraft] = useState<SettingsDraft>(getEditableSettingsDraft(initialSettings))
   const [saving, setSaving] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -831,9 +856,9 @@ function SettingsPanel({
         ...draft,
         model: draft.model.trim()
       })
-      const nextSettings = getSettingsDraft(nextAgent)
+      const nextSettings = getPersistedSettingsDraft(nextAgent)
       setSavedSettings(nextSettings)
-      setDraft(nextSettings)
+      setDraft(getEditableSettingsDraft(nextSettings))
       onAgentSaved(nextAgent)
     } catch (saveError) {
       setError(getErrorMessage(saveError, 'Settings could not be saved.'))
@@ -869,7 +894,7 @@ function SettingsPanel({
             size="sm"
             className="h-8 px-2.5 text-xs"
             disabled={!dirty || saving}
-            onClick={() => setDraft(savedSettings)}
+            onClick={() => setDraft(getEditableSettingsDraft(savedSettings))}
           >
             Discard
           </Button>
@@ -889,7 +914,12 @@ function SettingsPanel({
       {error ? <InlineError message={error} /> : null}
 
       <section className="grid gap-4 rounded-lg border bg-card p-4">
-        <p className="text-sm font-semibold">Runtime</p>
+        <div className="grid gap-1">
+          <p className="text-sm font-semibold">Runtime</p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Choose the CLI and model this agent uses when it runs.
+          </p>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <FormField label="Provider CLI">
             <SelectControl
@@ -907,23 +937,13 @@ function SettingsPanel({
             model={draft.model}
             onChange={(model) => updateDraft({ model })}
           />
-
-          <FormField label="Sandbox">
-            <SelectControl
-              value={draft.sandbox}
-              onChange={(value) => updateDraft({ sandbox: value as AgentSandbox })}
-            >
-              <option value="read-only">Read only</option>
-              <option value="workspace-write">Workspace write</option>
-              <option value="full-access">Full access</option>
-            </SelectControl>
-          </FormField>
         </div>
-        {draft.sandbox === 'full-access' ? (
-          <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
-            Full access should be reserved for agents that need broad local operations.
-          </p>
-        ) : null}
+        <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
+        <SandboxField
+          name="agent-settings-sandbox"
+          value={draft.sandbox}
+          onChange={(sandbox) => updateDraft({ sandbox })}
+        />
       </section>
 
       <section className="grid gap-3 rounded-lg border bg-card p-4">
@@ -1101,6 +1121,90 @@ function FormField({
   )
 }
 
+function RuntimeModelSummary({
+  providerId,
+  model
+}: {
+  providerId: ProviderId
+  model: string
+}): React.JSX.Element {
+  return (
+    <div className="flex min-h-10 items-start gap-2 rounded-md border bg-accent px-3 py-2 text-xs leading-5 text-muted-foreground">
+      <Info className="mt-0.5 size-3.5 shrink-0" />
+      <p>
+        <span className="font-medium text-foreground">
+          {getSelectedModelLabel(providerId, model)}
+        </span>
+        <span> - {getModelDescription(providerId, model)}</span>
+      </p>
+    </div>
+  )
+}
+
+function SandboxField({
+  name,
+  value,
+  onChange
+}: {
+  name: string
+  value: AgentSandbox
+  onChange: (value: AgentSandbox) => void
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-3 border-t pt-4">
+      <div className="grid gap-1">
+        <p className="text-sm font-semibold">Sandbox</p>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Control what this agent is allowed to do locally.
+        </p>
+      </div>
+      <div className="grid gap-2 lg:grid-cols-3">
+        {sandboxOptions.map((option) => {
+          const selected = option.value === value
+          const fullAccess = option.value === 'full-access'
+
+          return (
+            <label
+              key={option.value}
+              className={cn(
+                'grid min-h-[112px] cursor-pointer gap-2 rounded-md border bg-card p-3 text-sm transition-colors hover:bg-accent',
+                selected && 'border-primary bg-primary-soft/60',
+                selected && fullAccess && 'border-status-attention bg-status-attention/10'
+              )}
+            >
+              <span className="flex items-start gap-2">
+                <input
+                  type="radio"
+                  name={name}
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
+                  checked={selected}
+                  onChange={() => onChange(option.value)}
+                />
+                <span className="grid min-w-0 gap-1">
+                  <span className="font-medium text-foreground">{option.label}</span>
+                  <span
+                    className={cn(
+                      'text-xs leading-5 text-muted-foreground',
+                      selected && fullAccess && 'text-status-attention'
+                    )}
+                  >
+                    {option.description}
+                  </span>
+                  {option.badge ? (
+                    <span className="w-fit rounded-full border bg-card px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      {option.badge}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+            </label>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function EmptyState({
   icon,
   title,
@@ -1139,12 +1243,19 @@ function getAgentStatus(agent: Agent): AgentStatus {
   return 'ready'
 }
 
-function getSettingsDraft(agent: Agent): SettingsDraft {
+function getPersistedSettingsDraft(agent: Agent): SettingsDraft {
   return {
     providerId: agent.providerId,
     model: agent.model,
     sandbox: agent.sandbox,
     enabled: agent.enabled
+  }
+}
+
+function getEditableSettingsDraft(settings: SettingsDraft): SettingsDraft {
+  return {
+    ...settings,
+    model: getSupportedModelOrDefault(settings.providerId, settings.model)
   }
 }
 
@@ -1167,38 +1278,41 @@ function ModelField({
   onChange: (model: string) => void
 }): React.JSX.Element {
   const modelOptions = getProviderModelOptions(providerId)
-  const knownModelSelected = isKnownProviderModel(providerId, model)
-  const selectValue = knownModelSelected ? model : 'custom'
-  const description =
-    modelOptions.find((option) => option.id === model)?.description ??
-    'Use a model id supported by the selected local CLI.'
-
-  function handleSelect(nextModel: string): void {
-    onChange(nextModel === 'custom' ? '' : nextModel)
-  }
+  const selectValue = getSupportedModelOrDefault(providerId, model)
 
   return (
     <FormField label="Model">
-      <div className="grid gap-2">
-        <SelectControl value={selectValue} onChange={handleSelect}>
-          {modelOptions.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-          <option value="custom">Custom model</option>
-        </SelectControl>
-        {selectValue === 'custom' ? (
-          <Input
-            value={model}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="Provider-supported model id"
-          />
-        ) : null}
-        <p className="text-xs leading-5 text-muted-foreground">{description}</p>
-      </div>
+      <SelectControl value={selectValue} onChange={onChange}>
+        {modelOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </SelectControl>
     </FormField>
   )
+}
+
+function getSelectedModelLabel(providerId: ProviderId, model: string): string {
+  const selectedModel = getSupportedModelOrDefault(providerId, model)
+  return (
+    getProviderModelOptions(providerId).find((option) => option.id === selectedModel)?.label ??
+    model
+  )
+}
+
+function getModelDescription(providerId: ProviderId, model: string): string {
+  const selectedModel = getSupportedModelOrDefault(providerId, model)
+  return (
+    getProviderModelOptions(providerId).find((option) => option.id === selectedModel)
+      ?.description ?? 'Use a model id supported by the selected local CLI.'
+  )
+}
+
+function getSupportedModelOrDefault(providerId: ProviderId, model: string): string {
+  return getProviderModelOptions(providerId).some((option) => option.id === model)
+    ? model
+    : getDefaultModelForProvider(providerId)
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
