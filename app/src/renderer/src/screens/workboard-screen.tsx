@@ -711,7 +711,10 @@ function WorkColumns({
                           </div>
                           <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
                           <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {run.error || run.resultSummary || run.expectedOutput || run.instruction}
+                            {run.error ||
+                              run.resultSummary ||
+                              run.expectedOutput ||
+                              run.instruction}
                           </p>
                           <p className="mt-2 truncate text-[11px] text-muted-foreground">
                             {run.requestTitle}
@@ -762,25 +765,41 @@ function PlanReviewDialog({
   onDiscard: () => void
 }): React.JSX.Element {
   const levels = useMemo(() => (plan ? buildDraftLevels(plan.items) : []), [plan])
+  const stageById = useMemo(() => buildDraftStageMap(levels), [levels])
   const isContinuation = target.mode !== 'new'
   const targetRequestTitle = target.mode !== 'new' ? target.requestTitle : ''
+  const itemCount = plan?.items.length ?? 0
+  const parallelStageCount = levels.filter((level) => level.length > 1).length
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onDiscard() : undefined)}>
-      <DialogContent className="max-w-6xl p-0">
-        <DialogHeader className="border-b px-6 py-4">
-          <DialogTitle>
-            {isContinuation ? 'Review Continuation' : 'Review Work Request'}
-          </DialogTitle>
-          <DialogDescription>
-            {isContinuation
-              ? `Add these Work Items to ${targetRequestTitle}.`
-              : 'Review assignments and dependencies before agents start.'}
-          </DialogDescription>
+      <DialogContent className="grid h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0 sm:h-[min(860px,calc(100vh-2rem))] sm:max-h-[calc(100vh-2rem)]">
+        <DialogHeader className="border-b px-5 py-4 pr-12 sm:px-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <DialogTitle>
+                {isContinuation ? 'Review Continuation' : 'Review Work Request'}
+              </DialogTitle>
+              <DialogDescription className="mt-1">
+                {isContinuation
+                  ? `Add these Work Items to ${targetRequestTitle}.`
+                  : 'Review assignments and dependencies before agents start.'}
+              </DialogDescription>
+            </div>
+            {plan ? (
+              <div className="flex flex-wrap gap-2 text-left">
+                <Badge variant="secondary">{itemCount} Work Items</Badge>
+                <Badge variant="outline">{levels.length} Stages</Badge>
+                {parallelStageCount > 0 ? (
+                  <Badge variant="outline">{parallelStageCount} Parallel stages</Badge>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </DialogHeader>
         {plan ? (
-          <div className="grid min-h-[620px] grid-cols-1 overflow-hidden lg:grid-cols-[1fr_360px]">
-            <div className="flex min-w-0 flex-col gap-4 overflow-auto p-6">
+          <div className="grid min-h-0 grid-cols-1 overflow-y-auto ordinus-scrollbar lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden">
+            <div className="flex min-w-0 flex-col gap-4 p-5 ordinus-scrollbar sm:p-6 lg:min-h-0 lg:overflow-y-auto">
               <div className="grid gap-3 md:grid-cols-[1fr_2fr]">
                 <label className="grid gap-1 text-xs font-medium text-muted-foreground">
                   Title
@@ -800,41 +819,13 @@ function PlanReviewDialog({
                 </label>
               </div>
 
-              <div className="rounded-lg border bg-background p-4">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                  <Columns3 className="size-4" />
-                  Dependency flow
-                </div>
-                <div className="flex min-w-max flex-col gap-4">
-                  {levels.map((level, index) => (
-                    <div key={index} className="flex items-stretch gap-3">
-                      {level.map((item) => (
-                        <button
-                          key={item.tempId}
-                          type="button"
-                          className={cn(
-                            'w-64 rounded-md border bg-card p-3 text-left transition-colors',
-                            item.tempId === selectedItemId
-                              ? 'border-primary ring-2 ring-primary/20'
-                              : 'hover:border-primary/40'
-                          )}
-                          onClick={() => onSelectItem(item.tempId)}
-                        >
-                          <p className="text-sm font-semibold leading-5">{item.title}</p>
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            {agentName(agents, item.assignedAgentId)}
-                          </p>
-                          {item.dependsOnTempIds.length > 0 ? (
-                            <p className="mt-2 text-[11px] text-muted-foreground">
-                              Waits for {item.dependsOnTempIds.length}
-                            </p>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <DraftStageTimeline
+                levels={levels}
+                stageById={stageById}
+                agents={agents}
+                selectedItemId={selectedItemId}
+                onSelectItem={onSelectItem}
+              />
 
               <div className="rounded-lg border bg-background p-4">
                 <h3 className="text-sm font-semibold">
@@ -846,12 +837,13 @@ function PlanReviewDialog({
               </div>
             </div>
 
-            <div className="border-l bg-card p-4">
+            <div className="border-t bg-card p-4 ordinus-scrollbar lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
               {selectedItem ? (
                 <DraftItemEditor
                   item={selectedItem}
                   items={plan.items}
                   agents={agents}
+                  stageById={stageById}
                   onChange={(patch) => onUpdateItem(selectedItem.tempId, patch)}
                 />
               ) : (
@@ -860,7 +852,7 @@ function PlanReviewDialog({
             </div>
           </div>
         ) : null}
-        <DialogFooter className="border-t px-6 py-4">
+        <DialogFooter className="border-t bg-background px-5 py-4 sm:px-6">
           <Button variant="outline" onClick={onDiscard}>
             Discard
           </Button>
@@ -878,20 +870,132 @@ function PlanReviewDialog({
   )
 }
 
+function DraftStageTimeline({
+  levels,
+  stageById,
+  agents,
+  selectedItemId,
+  onSelectItem
+}: {
+  levels: WorkboardDraftItem[][]
+  stageById: Map<string, number>
+  agents: Agent[]
+  selectedItemId: string
+  onSelectItem: (tempId: string) => void
+}): React.JSX.Element {
+  return (
+    <section className="grid gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Columns3 className="size-4 shrink-0 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">Execution stages</h3>
+        </div>
+        <p className="text-xs text-muted-foreground">Items in the same stage can start together.</p>
+      </div>
+      <div className="grid gap-3">
+        {levels.map((level, index) => (
+          <section key={index} className="rounded-lg border bg-background">
+            <header className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h4 className="text-sm font-semibold">Stage {index + 1}</h4>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {index === 0
+                    ? 'Starts as soon as work begins.'
+                    : `Starts after required earlier Work Items complete.`}
+                </p>
+              </div>
+              <Badge variant={level.length > 1 ? 'running' : 'secondary'}>
+                {level.length > 1 ? `${level.length} parallel` : '1 item'}
+              </Badge>
+            </header>
+            <div className="grid gap-2 p-3">
+              {level.map((item) => (
+                <DraftStageItemButton
+                  key={item.tempId}
+                  item={item}
+                  stageById={stageById}
+                  agents={agents}
+                  selected={item.tempId === selectedItemId}
+                  onSelect={() => onSelectItem(item.tempId)}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function DraftStageItemButton({
+  item,
+  stageById,
+  agents,
+  selected,
+  onSelect
+}: {
+  item: WorkboardDraftItem
+  stageById: Map<string, number>
+  agents: Agent[]
+  selected: boolean
+  onSelect: () => void
+}): React.JSX.Element {
+  const dependencyCount = item.dependsOnTempIds.length
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        'group rounded-md border bg-card px-3 py-2.5 text-left transition-colors',
+        selected ? 'border-primary ring-2 ring-primary/20' : 'hover:border-primary/40'
+      )}
+      onClick={onSelect}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold leading-5">{item.title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {agentName(agents, item.assignedAgentId)}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">
+          {dependencyCount > 0 ? (
+            <Badge variant="outline">Waits for {dependencyCount}</Badge>
+          ) : (
+            <Badge variant="secondary">Ready first</Badge>
+          )}
+          <Badge variant="outline">Stage {stageById.get(item.tempId) ?? 1}</Badge>
+        </div>
+      </div>
+      <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+        {item.expectedOutput || item.instruction}
+      </p>
+    </button>
+  )
+}
+
 function DraftItemEditor({
   item,
   items,
   agents,
+  stageById,
   onChange
 }: {
   item: WorkboardDraftItem
   items: WorkboardDraftItem[]
   agents: Agent[]
+  stageById: Map<string, number>
   onChange: (patch: Partial<WorkboardDraftItem>) => void
 }): React.JSX.Element {
   return (
-    <div className="grid gap-3">
-      <h3 className="text-sm font-semibold">Work Item details</h3>
+    <div className="grid gap-4">
+      <div>
+        <p className="text-xs font-medium text-muted-foreground">
+          Stage {stageById.get(item.tempId) ?? 1}
+        </p>
+        <h3 className="mt-1 text-sm font-semibold">Work Item details</h3>
+      </div>
+      <DraftDependencyMap item={item} items={items} stageById={stageById} />
       <label className="grid gap-1 text-xs font-medium text-muted-foreground">
         Title
         <input
@@ -942,22 +1046,127 @@ function DraftItemEditor({
         <p className="text-xs font-medium text-muted-foreground">Waits for</p>
         {items
           .filter((candidate) => candidate.tempId !== item.tempId)
-          .map((candidate) => (
-            <label key={candidate.tempId} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4"
-                checked={item.dependsOnTempIds.includes(candidate.tempId)}
-                onChange={(event) => {
-                  const next = event.target.checked
-                    ? [...item.dependsOnTempIds, candidate.tempId]
-                    : item.dependsOnTempIds.filter((id) => id !== candidate.tempId)
-                  onChange({ dependsOnTempIds: next })
-                }}
-              />
-              {candidate.title}
-            </label>
-          ))}
+          .map((candidate) => {
+            const checked = item.dependsOnTempIds.includes(candidate.tempId)
+            const createsCycle =
+              !checked && draftItemDependsOn(items, candidate.tempId, item.tempId)
+
+            return (
+              <label
+                key={candidate.tempId}
+                className={cn(
+                  'flex items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm',
+                  createsCycle && 'opacity-60'
+                )}
+                title={createsCycle ? 'This would create a dependency cycle.' : undefined}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 size-4"
+                  checked={checked}
+                  disabled={createsCycle}
+                  onChange={(event) => {
+                    const next = event.target.checked
+                      ? [...item.dependsOnTempIds, candidate.tempId]
+                      : item.dependsOnTempIds.filter((id) => id !== candidate.tempId)
+                    onChange({ dependsOnTempIds: next })
+                  }}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{candidate.title}</span>
+                  <span className="text-xs text-muted-foreground">
+                    Stage {stageById.get(candidate.tempId) ?? 1}
+                    {createsCycle ? ' - would create a cycle' : ''}
+                  </span>
+                </span>
+              </label>
+            )
+          })}
+      </div>
+    </div>
+  )
+}
+
+function DraftDependencyMap({
+  item,
+  items,
+  stageById
+}: {
+  item: WorkboardDraftItem
+  items: WorkboardDraftItem[]
+  stageById: Map<string, number>
+}): React.JSX.Element {
+  const waitsFor = item.dependsOnTempIds
+    .map((id) => items.find((candidate) => candidate.tempId === id))
+    .filter((candidate): candidate is WorkboardDraftItem => Boolean(candidate))
+    .sort(
+      (first, second) => (stageById.get(first.tempId) ?? 0) - (stageById.get(second.tempId) ?? 0)
+    )
+  const blocks = items
+    .filter((candidate) => candidate.dependsOnTempIds.includes(item.tempId))
+    .sort(
+      (first, second) => (stageById.get(first.tempId) ?? 0) - (stageById.get(second.tempId) ?? 0)
+    )
+
+  return (
+    <section className="rounded-lg border bg-background p-3">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <GitBranch className="size-4 text-muted-foreground" />
+        Dependency map
+      </div>
+      <div className="mt-3 grid gap-2">
+        <DraftDependencyMapGroup
+          label="Waits for"
+          empty="Starts without dependencies."
+          items={waitsFor}
+          stageById={stageById}
+        />
+        <div className="flex justify-center text-xs text-muted-foreground">then</div>
+        <div className="rounded-md border border-primary/30 bg-primary-soft/40 px-3 py-2">
+          <p className="truncate text-sm font-semibold">{item.title}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Stage {stageById.get(item.tempId) ?? 1}
+          </p>
+        </div>
+        <div className="flex justify-center text-xs text-muted-foreground">unlocks</div>
+        <DraftDependencyMapGroup
+          label="Blocks"
+          empty="Does not unlock another Work Item yet."
+          items={blocks}
+          stageById={stageById}
+        />
+      </div>
+    </section>
+  )
+}
+
+function DraftDependencyMapGroup({
+  label,
+  empty,
+  items,
+  stageById
+}: {
+  label: string
+  empty: string
+  items: WorkboardDraftItem[]
+  stageById: Map<string, number>
+}): React.JSX.Element {
+  return (
+    <div className="rounded-md border bg-card p-2">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <div className="mt-2 grid gap-1.5">
+        {items.length > 0 ? (
+          items.map((item) => (
+            <div key={item.tempId} className="rounded-sm bg-accent/60 px-2 py-1.5">
+              <p className="truncate text-xs font-medium">{item.title}</p>
+              <p className="text-[11px] text-muted-foreground">
+                Stage {stageById.get(item.tempId) ?? 1}
+              </p>
+            </div>
+          ))
+        ) : (
+          <p className="text-xs text-muted-foreground">{empty}</p>
+        )}
       </div>
     </div>
   )
@@ -1750,6 +1959,32 @@ function buildDraftLevels(items: WorkboardDraftItem[]): WorkboardDraftItem[][] {
     .filter((value, index, all) => all.indexOf(value) === index)
     .sort((a, b) => a - b)
     .map((level) => items.filter((item) => levels.get(item.tempId) === level))
+}
+
+function buildDraftStageMap(levels: WorkboardDraftItem[][]): Map<string, number> {
+  return new Map(
+    levels.flatMap((level, levelIndex) =>
+      level.map((item) => [item.tempId, levelIndex + 1] as const)
+    )
+  )
+}
+
+function draftItemDependsOn(
+  items: WorkboardDraftItem[],
+  itemId: string,
+  dependencyId: string,
+  visited = new Set<string>()
+): boolean {
+  if (visited.has(itemId)) return false
+  visited.add(itemId)
+
+  const item = items.find((candidate) => candidate.tempId === itemId)
+  if (!item) return false
+  if (item.dependsOnTempIds.includes(dependencyId)) return true
+
+  return item.dependsOnTempIds.some((nextDependencyId) =>
+    draftItemDependsOn(items, nextDependencyId, dependencyId, visited)
+  )
 }
 
 function agentName(agents: Agent[], agentId: string): string {
