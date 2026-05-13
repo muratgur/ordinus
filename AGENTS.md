@@ -31,6 +31,17 @@ Build a command center for AI-assisted work, not a generic chatbot.
 - Track applied SQL through Drizzle and app-level schema version through `app_meta.schema_version`.
 - Do not add agent, task, provider, schedule, or inbox schemas prematurely.
 
+## Cross-Platform Development
+
+Ordinus must work on both macOS and Windows. When making changes, account for platform differences before finishing.
+
+- Do not assume POSIX-only paths, shell commands, environment variable syntax, executable names, file permissions, or case-sensitive filesystems.
+- Use Node/Electron APIs such as `path`, `os`, and provider command `executable + args` arrays instead of shell-specific strings.
+- Consider Windows `.cmd`/`.exe` behavior, spaces in paths, CRLF/LF differences, and macOS/Linux case sensitivity.
+- For changes touching filesystem access, process execution, packaging, provider runtimes, scripts, or native dependencies, verify or explain platform impact.
+- Prefer npm scripts and cross-platform tooling over shell-specific commands.
+
+
 ## Current Stack
 
 - Electron + electron-vite
