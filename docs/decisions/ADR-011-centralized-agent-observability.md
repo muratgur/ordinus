@@ -75,6 +75,7 @@ Observed Run
   provider and model
   sanitized runtime invocation
   lifecycle status
+  liveness health
   current phase
   latest activity
   timing metrics
@@ -86,6 +87,8 @@ Observed Run Event
   sequence
   timestamp
   kind
+  source
+  confidence
   phase/status when relevant
   user-readable summary
   structured payload for diagnostics
@@ -136,6 +139,85 @@ cancelled
 Provider-specific raw events may be preserved in main-owned logs, but renderer UI should prefer the
 normalized event summary. Diagnostics can expose additional technical detail only when the user asks
 for it through an explicit diagnostic surface.
+
+### Event Source And Confidence
+
+Every normalized event should record where it came from and how confidently Ordinus can present it.
+
+Event source:
+
+```text
+provider
+runtime
+inferred
+user
+system
+```
+
+Event confidence:
+
+```text
+reported
+derived
+estimated
+unknown
+```
+
+Examples:
+
+- A provider-emitted JSON tool event is `source=provider`, `confidence=reported`.
+- `Provider process started` is `source=runtime`, `confidence=reported`.
+- `Still running. Last output 2m ago.` is `source=inferred`, `confidence=derived`.
+- Token usage from a provider result is `source=provider`, `confidence=reported`.
+- Token usage from text estimation is `source=inferred`, `confidence=estimated`.
+
+Renderer surfaces do not need to show source and confidence on every row, but diagnostics should make
+them inspectable. Product copy should avoid overstating inferred or estimated events.
+
+### Liveness Health
+
+Observed runs should expose a liveness health state separate from lifecycle status.
+
+Lifecycle status answers what state the run is in:
+
+```text
+queued
+starting
+running
+waiting_for_user
+completed
+failed
+cancelled
+```
+
+Liveness health answers whether the active runtime appears alive:
+
+```text
+unknown
+healthy
+quiet
+stalled
+exited
+```
+
+Initial meanings:
+
+- `unknown`: no live process information is available yet.
+- `healthy`: the process is active and has emitted recent activity or is within expected startup.
+- `quiet`: the process is active, but no provider output has arrived for a noticeable interval.
+- `stalled`: the process is still alive, but silence has crossed a configured threshold or the run
+  appears stuck.
+- `exited`: the process has ended, but final persistence or parsing may still be resolving.
+
+UI should use liveness health to reduce empty waiting. For example:
+
+```text
+Provider is running. No output yet.
+Still running. Last output 2m ago.
+Provider exited. Saving result.
+```
+
+Thresholds should be conservative and provider-aware. A quiet provider is not automatically failed.
 
 ### Runtime Invocation Visibility
 
@@ -199,6 +281,15 @@ Raw diagnostics must be treated differently from product activity:
   authoritative product state.
 - Normalized activity remains the primary source for board cards, conversation turns, and workload
   summaries.
+
+Diagnostics streaming must have backpressure controls:
+
+- Stream only while a diagnostics surface is open.
+- Send bounded chunks rather than unbounded buffers.
+- Throttle UI updates when providers emit output quickly.
+- Load an initial tail window, such as the last N KB or last N lines, instead of the full log.
+- Truncate or summarize oversized chunks in renderer views.
+- Keep full raw data in the main-owned log file until retention cleanup, subject to size limits.
 
 ### Live Diagnostics Data Lifecycle
 
@@ -323,6 +414,27 @@ automation ships, Ordinus should define retention controls for raw logs and norm
 history. The first implementation may keep logs until the related run/conversation/work request is
 deleted, but it should avoid designing SQLite around unbounded raw text.
 
+### Redaction And Privacy
+
+Observability must preserve Ordinus's local-first trust boundary.
+
+Raw diagnostics and normalized events may contain sensitive data because providers can echo prompts,
+file contents, command output, paths, and tool arguments. The main process must redact or omit
+sensitive values before exposing data to renderer diagnostics or writing normalized event payloads.
+
+Minimum redaction policy:
+
+- Do not expose environment variable values.
+- Do not expose plaintext secret values or secret refs resolved in main.
+- Redact known token/key patterns before display or persistence.
+- Redact provider auth file contents and app-managed runtime config details.
+- Treat raw diagnostics as potentially sensitive and label them as diagnostics, not ordinary product
+  activity.
+- Delete run logs when the owning run, conversation, or Work Request is deleted.
+
+All observability data remains local unless a future explicit export or sharing feature is designed
+and approved separately.
+
 ### UI Projections
 
 Different modules may show the same observability state in different densities:
@@ -354,6 +466,22 @@ Useful workload fields include:
 
 This supports user trust and coordination without adding premature scheduling or capacity planning
 features.
+
+### Cancellation Visibility
+
+Cancellation is part of observability, not only a command.
+
+When the user cancels a run, the activity timeline should record the cancellation path:
+
+```text
+Cancellation requested.
+Graceful stop sent.
+Provider process exited.
+Forced stop after timeout.
+Cancelled.
+```
+
+This keeps user control visible and helps diagnose providers that do not stop cleanly.
 
 ## Alternatives Considered
 
@@ -392,6 +520,8 @@ features.
 - Workboard and Conversations can share a common activity timeline pattern.
 - Agents can gain workload views without creating a separate workload runtime.
 - Advanced users can inspect live raw provider output and sanitized invocation details when needed.
+- Active runs can distinguish lifecycle status from runtime liveness, reducing ambiguous waiting.
+- Event source and confidence make provider-reported facts distinguishable from runtime inference.
 - Provider adapters need incremental event parsing work, starting with the provider that offers the
   best structured output.
 - The product can show honest partial information when a provider does not expose detailed activity.
@@ -406,6 +536,7 @@ features.
 - Add typed shared contracts before exposing renderer APIs.
 - Add explicit IPC methods or subscriptions for observability snapshots and event updates.
 - Add opt-in live diagnostics IPC that can stream or tail redacted stdout/stderr for a selected run.
+- Add stream limits and throttling before exposing live diagnostics to renderer surfaces.
 - Keep provider raw logs main-owned under Electron `userData/logs`.
 - Keep SQLite event payloads compact; do not store raw stdout/stderr chunks there by default.
 - Redact secrets before writing normalized events, diagnostics, or raw logs.
@@ -418,10 +549,12 @@ features.
   own rows while sharing a common event table keyed by source?
 - Should renderer updates use push subscriptions, polling, or push with polling fallback?
 - Which provider should be the first fully parsed adapter for phase and usage events?
+- What quiet and stalled thresholds should be used for each provider?
 - Which sanitized invocation fields are safe and useful enough to show in diagnostics?
 - Should live raw diagnostics be streamed continuously while open, or tailed from the persisted log?
 - How long should normalized observability events and raw logs be retained?
 - Should users get a setting for raw log retention, maximum size, or manual cleanup?
+- What maximum tail size and stream throttle should diagnostics use?
 - Which events should be considered user-facing activity versus diagnostic-only detail?
 - Should usage estimates be enabled in the first version, or should the MVP only show provider-
   reported usage and `unavailable`?
