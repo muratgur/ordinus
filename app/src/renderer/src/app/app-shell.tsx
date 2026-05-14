@@ -30,7 +30,7 @@ export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-6 py-3">
+        <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-2 px-6 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <NavLink
               to="/home"
@@ -103,7 +103,7 @@ export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX
         </div>
       </header>
 
-      <div className="mx-auto flex min-h-[calc(100vh-7rem)] w-full max-w-6xl flex-col px-6">
+      <div className="mx-auto flex min-h-[calc(100vh-7rem)] w-full max-w-screen-2xl flex-col px-6">
         <Outlet />
       </div>
     </main>
