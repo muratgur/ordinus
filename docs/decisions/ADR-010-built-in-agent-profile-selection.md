@@ -39,6 +39,24 @@ Store built-in profiles as readable Markdown resources under `app/resources/prof
 these files as read-only bundled product content. SQLite stores user-created agents and future
 user-specific state, not the built-in catalog itself.
 
+Built-in profiles are not agents. They are read-only templates that can produce an editable agent
+draft. A profile has a stable catalog identity such as `corporate/project-steward`, while a
+user-created agent has an opaque runtime identity such as `agt-<uuid>`. The two identity namespaces
+must remain separate:
+
+- `profile.id` identifies a bundled profile in the catalog.
+- `agent.id` identifies a durable user-created agent in SQLite, app-owned folders, conversations,
+  work runs, and future runtime state.
+- Selecting or inspecting a profile must not create an agent, reserve an agent id, create an
+  agent-owned folder, or write to SQLite.
+- Creating an agent from a profile must call the same create path as all other agent creation flows,
+  and that path must generate a new `agt-<uuid>` id in the main process.
+- `profile.id` must never be copied into `agent.id`.
+
+The agent creation flow must remain compatible with agents that already exist in the local database.
+Existing agents continue to be listed and managed from SQLite. The profile catalog is an additional
+starting surface, not a replacement for the user's saved agents.
+
 The first screen contains:
 
 - A header for adding an agent.
@@ -93,7 +111,14 @@ The `Review agent` step owns editable fields:
 - Sandbox/access.
 - Enabled state.
 
-Creating an agent happens only from the review step.
+Creating an agent happens only from the review step. If the review step exposes enabled state, the
+create contract must persist the reviewed value. New creation paths should default enabled to `true`
+only when the user has not been offered an enabled-state control.
+
+Agent names are user-facing labels, not identifiers. The create path should reject duplicate active
+or disabled agent names using the same normalized-name rule used when updating agent settings, or
+the review step should require the user to choose a distinct name before creation. Duplicate names do
+not break the opaque id model, but they make the agent list and assignment surfaces harder to scan.
 
 ## Alternatives Considered
 
@@ -104,6 +129,29 @@ Creating an agent happens only from the review step.
   for data that is not user-owned state. Long Markdown instructions are harder to review and maintain
   when embedded in database bootstrap code.
 - Rejected: Built-in profiles are versioned application resources, not durable user data.
+
+### Use Profile Ids As Agent Ids
+
+- Pros: Makes it easy to see which built-in profile an agent originally came from.
+- Cons: Couples bundled product content to durable user state, prevents multiple agents from the
+  same profile, breaks the opaque `agt-<uuid>` identity model, and makes profile catalog changes
+  risky for saved agents, folders, conversations, and work runs.
+- Rejected: Profile identity and agent identity must remain separate namespaces.
+
+### Seed Built-In Profiles As Preinstalled Agents
+
+- Pros: Users would see useful agents immediately after install.
+- Cons: Confuses read-only product templates with user-created durable state, creates migration and
+  deletion questions when bundled profiles change, and risks cluttering agent management with agents
+  the user did not explicitly create.
+- Rejected: Built-in profiles remain catalog entries until the user creates an agent from one.
+
+### Allow Duplicate Agent Names On Create
+
+- Pros: Simple persistence behavior because `agent.id` already guarantees technical uniqueness.
+- Cons: Agent pickers, work assignment, conversations, and settings become ambiguous when two saved
+  agents have the same display name.
+- Rejected: Agent creation should use the same duplicate-name protection as settings updates.
 
 ### Three Equal Creation Tabs
 
@@ -149,19 +197,32 @@ Creating an agent happens only from the review step.
 - Future profile metadata should support catalog search and filtering without forcing that metadata
   into every card.
 - Database migrations are not needed when the built-in catalog content changes.
+- Existing saved agents continue to work because profile catalog data is not seeded into or merged
+  with the `agents` table.
+- Multiple agents may be created from the same built-in profile over time, but each created agent
+  receives its own opaque `agt-<uuid>` id and durable state.
+- Duplicate display names are treated as a user-experience problem even though opaque ids prevent
+  technical collisions.
 
 ## Implementation Notes
 
 - Built-in profile data lives under `app/resources/profiles`, grouped by category folders.
+- Existing profile drafts under `docs/profiles` are source material for product content, but the
+  runtime catalog should be packaged from `app/resources/profiles`.
 - Profile catalog discovery is directory-based. Adding a category folder or Markdown profile under
   `app/resources/profiles` should make it available after app restart or rebuild as long as the file
   passes validation. No database migration or hardcoded registry update should be required.
 - Profile Markdown files should include frontmatter for stable ids, category, tags, summary, role,
   and optional recommendation metadata. The Markdown body is the long instruction/preview text.
+- Profile ids should use a catalog namespace such as `<category>/<profile-slug>` and remain stable
+  across copy edits. They should not use the `agt-` prefix.
 - The main process should load and validate the read-only catalog, then expose it to the renderer
   through typed IPC. Renderer code should not read the filesystem directly.
 - Instructions should be formatted for drawer readability, preferably with clear Markdown sections.
 - Profile selection should not persist anything until the user confirms from `Review agent`.
+- Creating from a profile should transform profile metadata into an `AgentDraft`; persistence starts
+  only when the reviewed draft is submitted through the agent create IPC handler.
+- The main-process create path should generate the agent id and enforce duplicate-name validation.
 - The creation surface should remain one consistent large dialog or creation workspace; it should not
   mix small popups, full-screen routes, and nested modal flows for different starting paths.
 - The renderer should keep profile selection UI focused on catalog browsing. Provider, model,
