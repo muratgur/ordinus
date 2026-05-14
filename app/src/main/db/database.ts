@@ -378,11 +378,16 @@ export class OrdinusDatabase {
 
   createAgent(input: AgentCreateInput): Agent {
     const parsed = AgentCreateInputSchema.parse(input)
+    if (this.hasDuplicateAgentName(parsed.name, '')) {
+      throw new Error('Another agent already uses this name.')
+    }
+
     const now = new Date().toISOString()
     const agent = AgentSchema.parse({
       ...parsed,
+      name: parsed.name.trim(),
+      model: parsed.model.trim(),
       id: getUniqueAgentId((id) => this.hasAgent(id)),
-      enabled: true,
       createdAt: now,
       updatedAt: now
     })
@@ -390,6 +395,22 @@ export class OrdinusDatabase {
     this.db.insert(agents).values(agent).run()
 
     return agent
+  }
+
+  getAvailableAgentName(name: string): string {
+    const baseName = cleanAgentName(name) || 'New agent'
+    if (!this.hasDuplicateAgentName(baseName, '')) {
+      return baseName
+    }
+
+    let suffix = 2
+    let candidate = `${baseName} ${suffix}`
+    while (this.hasDuplicateAgentName(candidate, '')) {
+      suffix += 1
+      candidate = `${baseName} ${suffix}`
+    }
+
+    return candidate
   }
 
   updateAgentInstructions(input: AgentUpdateInstructionsInput): Agent {
@@ -2890,8 +2911,12 @@ function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
 }
 
+function cleanAgentName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ')
+}
+
 function normalizeAgentName(name: string): string {
-  return name.trim().toLocaleLowerCase()
+  return cleanAgentName(name).toLocaleLowerCase()
 }
 
 function parseConversationTurn(value: unknown): ConversationTurn {

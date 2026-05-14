@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
+  BookOpen,
   Bot,
   FileText,
   FolderOpen,
@@ -12,9 +13,11 @@ import {
   Settings2,
   Sparkles,
   Trash2,
-  WandSparkles
+  WandSparkles,
+  X
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
+import { Badge } from '@renderer/components/ui/badge'
 import { SelectControl } from '@renderer/components/select-control'
 import {
   Card,
@@ -34,12 +37,21 @@ import {
 import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
-import type { Agent, AgentDraft, AgentSandbox, AgentSkill, ProviderId } from '@shared/contracts'
+import type {
+  Agent,
+  AgentDraft,
+  AgentProfile,
+  AgentProfileCatalog,
+  AgentSandbox,
+  AgentSkill,
+  ProviderId
+} from '@shared/contracts'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
-type CreateAgentStep = 'describe' | 'review'
+type CreateAgentStep = 'catalog' | 'describe' | 'review'
+type ReviewBackStep = 'catalog' | 'describe'
 type SettingsDraft = {
   name: string
   providerId: ProviderId
@@ -214,6 +226,7 @@ export function AgentsScreen(): React.JSX.Element {
       </main>
 
       <CreateAgentDialog
+        agents={agents}
         open={createAgentOpen}
         onAgentCreated={handleAgentCreated}
         onOpenChange={setCreateAgentOpen}
@@ -343,27 +356,78 @@ function AgentDetail({
 }
 
 function CreateAgentDialog({
+  agents,
   open,
   onAgentCreated,
   onOpenChange
 }: {
+  agents: Agent[]
   open: boolean
   onAgentCreated: (agent: Agent) => void
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
-  const [step, setStep] = useState<CreateAgentStep>('describe')
+  const [step, setStep] = useState<CreateAgentStep>('catalog')
+  const [reviewBackStep, setReviewBackStep] = useState<ReviewBackStep>('catalog')
+  const [catalog, setCatalog] = useState<AgentProfileCatalog | null>(null)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [selectedCategoryId, setSelectedCategoryId] = useState('all')
+  const [selectedProfileId, setSelectedProfileId] = useState('')
   const [intent, setIntent] = useState('')
   const [draft, setDraft] = useState<AgentDraft | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const canDraft = intent.trim().length >= 12 && !busy
+  const nameIssue = draft ? getAgentNameIssue(draft.name, '', agents, '') : null
   const canCreate =
     Boolean(
       draft?.name.trim() && draft.role.trim() && draft.instructions.trim() && draft.model.trim()
-    ) && !busy
+    ) &&
+    !nameIssue &&
+    !busy
+  const selectedProfile =
+    catalog?.profiles.find((profile) => profile.id === selectedProfileId) ?? null
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    let mounted = true
+
+    async function loadCatalog(): Promise<void> {
+      try {
+        setCatalogLoading(true)
+        setError('')
+        const nextCatalog = await window.ordinus.agents.listProfiles()
+        if (!mounted) return
+
+        setCatalog(nextCatalog)
+        setSelectedProfileId('')
+      } catch (loadError) {
+        if (mounted) {
+          setError(getErrorMessage(loadError, 'Agent profiles could not be loaded.'))
+        }
+      } finally {
+        if (mounted) {
+          setCatalogLoading(false)
+        }
+      }
+    }
+
+    void loadCatalog()
+
+    return () => {
+      mounted = false
+    }
+  }, [open])
 
   function resetDialog(): void {
-    setStep('describe')
+    setStep('catalog')
+    setReviewBackStep('catalog')
+    setCatalogQuery('')
+    setSelectedCategoryId('all')
+    setSelectedProfileId('')
     setIntent('')
     setDraft(null)
     setBusy(false)
@@ -381,6 +445,42 @@ function CreateAgentDialog({
     setDraft((current) => (current ? { ...current, ...next } : current))
   }
 
+  function setReviewDraft(nextDraft: AgentDraft, backStep: ReviewBackStep): void {
+    setDraft({
+      ...nextDraft,
+      model: getSupportedModelOrDefault(nextDraft.providerId, nextDraft.model),
+      enabled: nextDraft.enabled ?? true
+    })
+    setReviewBackStep(backStep)
+    setStep('review')
+  }
+
+  async function handleUseProfile(profileId: string): Promise<void> {
+    try {
+      setBusy(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftFromProfile({ profileId })
+      setReviewDraft(nextDraft, 'catalog')
+    } catch (draftError) {
+      setError(getErrorMessage(draftError, 'Agent draft could not be created from this profile.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleBlankAgent(): Promise<void> {
+    try {
+      setBusy(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftBlank()
+      setReviewDraft(nextDraft, 'catalog')
+    } catch (draftError) {
+      setError(getErrorMessage(draftError, 'Blank agent draft could not be created.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleDraftAgent(): Promise<void> {
     if (!canDraft) {
       return
@@ -393,11 +493,7 @@ function CreateAgentDialog({
         requestedWork: intent,
         sandbox: 'workspace-write'
       })
-      setDraft({
-        ...nextDraft,
-        model: getSupportedModelOrDefault(nextDraft.providerId, nextDraft.model)
-      })
-      setStep('review')
+      setReviewDraft(nextDraft, 'describe')
     } catch (draftError) {
       setError(getErrorMessage(draftError, 'Agent draft could not be generated.'))
     } finally {
@@ -417,7 +513,13 @@ function CreateAgentDialog({
     try {
       setBusy(true)
       setError('')
-      const agent = await window.ordinus.agents.create({ ...draft, model: draft.model.trim() })
+      const agent = await window.ordinus.agents.create({
+        ...draft,
+        name: draft.name.trim(),
+        role: draft.role.trim(),
+        model: draft.model.trim(),
+        enabled: draft.enabled
+      })
       onAgentCreated(agent)
       resetDialog()
     } catch (createError) {
@@ -429,115 +531,87 @@ function CreateAgentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-4xl gap-0 p-0">
+      <DialogContent className="grid h-[min(860px,calc(100vh-2rem))] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
         <div className="border-b p-5 pr-12">
           <DialogHeader>
-            <DialogTitle>Create agent</DialogTitle>
-            <DialogDescription>
-              Start with the work this agent should own, then review the generated draft.
-            </DialogDescription>
+            <DialogTitle>Add agent</DialogTitle>
+            <DialogDescription>{getCreateAgentDialogDescription(step)}</DialogDescription>
           </DialogHeader>
-          <StepProgress step={step} />
         </div>
 
-        {step === 'describe' ? (
-          <div className="grid gap-3 p-5">
-            <label className="grid gap-2">
-              <span className="text-sm font-semibold">What should this agent help with?</span>
-              <textarea
-                className="ordinus-scrollbar min-h-56 resize-y rounded-lg border bg-card p-4 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                placeholder="Example: I need an agent that reviews pull requests, checks missing tests, and flags risky changes before merge."
-                value={intent}
-                onChange={(event) => setIntent(event.target.value)}
-              />
-            </label>
-            {error ? <InlineError message={error} /> : null}
-          </div>
-        ) : draft ? (
-          <ScrollArea key={step} className="h-[min(680px,calc(100vh-15rem))]">
-            <div className="p-5">
-              <div className="grid gap-4">
-                <div className="grid gap-2 rounded-lg border bg-accent p-4">
-                  <p className="text-xs font-medium text-muted-foreground">Requested work</p>
-                  <p className="text-base font-semibold leading-6">{draft.requestedWork}</p>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <FormField label="Agent name">
-                    <Input
-                      value={draft.name}
-                      onChange={(event) => updateDraft({ name: event.target.value })}
-                    />
-                  </FormField>
-                  <FormField label="Role">
-                    <Input
-                      value={draft.role}
-                      onChange={(event) => updateDraft({ role: event.target.value })}
-                    />
-                  </FormField>
-                </div>
-
-                <label className="grid gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">Instructions</span>
-                  <textarea
-                    className="ordinus-scrollbar min-h-[300px] resize-y rounded-lg border bg-card p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                    spellCheck={false}
-                    value={draft.instructions}
-                    onChange={(event) => updateDraft({ instructions: event.target.value })}
-                  />
-                </label>
-
-                <section className="grid gap-4 rounded-lg border bg-card p-4">
-                  <div className="grid gap-1">
-                    <p className="text-sm font-semibold">Runtime</p>
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      Choose the CLI and model this agent uses when it runs.
-                    </p>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <FormField label="Provider CLI">
-                      <SelectControl
-                        value={draft.providerId}
-                        onChange={(value) => handleProviderChange(value as ProviderId)}
-                      >
-                        <option value="codex">Codex</option>
-                        <option value="claude">Claude</option>
-                        <option value="gemini">Gemini</option>
-                      </SelectControl>
-                    </FormField>
-                    <ModelField
-                      providerId={draft.providerId}
-                      model={draft.model}
-                      onChange={(model) => updateDraft({ model })}
-                    />
-                  </div>
-                  <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
-                  <SandboxField
-                    name="create-agent-sandbox"
-                    value={draft.sandbox}
-                    onChange={(sandbox) => updateDraft({ sandbox })}
-                  />
-                </section>
-                {error ? <InlineError message={error} /> : null}
-              </div>
+        {step === 'catalog' ? (
+          <ProfileCatalogStep
+            busy={busy}
+            catalog={catalog}
+            categoryId={selectedCategoryId}
+            error={error}
+            loading={catalogLoading}
+            query={catalogQuery}
+            selectedProfile={selectedProfile}
+            selectedProfileId={selectedProfileId}
+            onBlankAgent={() => void handleBlankAgent()}
+            onCategoryChange={setSelectedCategoryId}
+            onCloseProfile={() => setSelectedProfileId('')}
+            onDescribeWithAi={() => {
+              setError('')
+              setStep('describe')
+            }}
+            onProfileSelect={setSelectedProfileId}
+            onQueryChange={setCatalogQuery}
+            onUseProfile={(profileId) => void handleUseProfile(profileId)}
+          />
+        ) : step === 'describe' ? (
+          <ScrollArea className="h-full min-h-0">
+            <div className="grid gap-3 p-5">
+              <label className="grid gap-2">
+                <span className="text-sm font-semibold">What should this agent help with?</span>
+                <textarea
+                  className="ordinus-scrollbar min-h-56 resize-y rounded-lg border bg-card p-4 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  placeholder="Example: I need an agent that reviews pull requests, checks missing tests, and flags risky changes before merge."
+                  value={intent}
+                  onChange={(event) => setIntent(event.target.value)}
+                />
+              </label>
+              {error ? <InlineError message={error} /> : null}
             </div>
           </ScrollArea>
+        ) : draft ? (
+          <ReviewAgentStep
+            draft={draft}
+            error={error}
+            nameIssue={nameIssue}
+            onDraftChange={updateDraft}
+            onProviderChange={handleProviderChange}
+          />
         ) : null}
 
         <DialogFooter className="border-t bg-accent/50 p-4">
-          {step === 'describe' ? (
+          {step === 'catalog' ? (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => handleOpenChange(false)}
+            >
+              Cancel
+            </Button>
+          ) : step === 'describe' ? (
             <>
               <Button
                 type="button"
                 variant="ghost"
                 disabled={busy}
-                onClick={() => handleOpenChange(false)}
+                onClick={() => {
+                  setError('')
+                  setStep('catalog')
+                }}
               >
-                Cancel
+                <ArrowLeft />
+                Back
               </Button>
               <Button type="button" disabled={!canDraft} onClick={() => void handleDraftAgent()}>
                 {busy ? <Loader2 className="animate-spin" /> : <WandSparkles />}
-                Draft agent
+                Review draft
               </Button>
             </>
           ) : (
@@ -546,7 +620,10 @@ function CreateAgentDialog({
                 type="button"
                 variant="ghost"
                 disabled={busy}
-                onClick={() => setStep('describe')}
+                onClick={() => {
+                  setError('')
+                  setStep(reviewBackStep)
+                }}
               >
                 <ArrowLeft />
                 Back
@@ -560,6 +637,409 @@ function CreateAgentDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ProfileCatalogStep({
+  busy,
+  catalog,
+  categoryId,
+  error,
+  loading,
+  query,
+  selectedProfile,
+  selectedProfileId,
+  onBlankAgent,
+  onCategoryChange,
+  onCloseProfile,
+  onDescribeWithAi,
+  onProfileSelect,
+  onQueryChange,
+  onUseProfile
+}: {
+  busy: boolean
+  catalog: AgentProfileCatalog | null
+  categoryId: string
+  error: string
+  loading: boolean
+  query: string
+  selectedProfile: AgentProfile | null
+  selectedProfileId: string
+  onBlankAgent: () => void
+  onCategoryChange: (categoryId: string) => void
+  onCloseProfile: () => void
+  onDescribeWithAi: () => void
+  onProfileSelect: (profileId: string) => void
+  onQueryChange: (query: string) => void
+  onUseProfile: (profileId: string) => void
+}): React.JSX.Element {
+  const profiles = getVisibleProfiles(catalog, categoryId, query)
+
+  return (
+    <div className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+      <div className="grid gap-3 border-b bg-accent/30 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search profiles"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={busy} onClick={onDescribeWithAi}>
+            <WandSparkles />
+            Describe with AI
+          </Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={onBlankAgent}>
+            <Plus />
+            Blank agent
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid min-h-0 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="min-w-0 border-b p-3 lg:border-b-0 lg:border-r">
+          <ScrollArea className="max-h-40 lg:h-full lg:max-h-none">
+            <div className="flex gap-2 lg:grid">
+              <CategoryButton
+                active={categoryId === 'all'}
+                count={catalog?.profiles.length ?? 0}
+                label="All profiles"
+                onClick={() => onCategoryChange('all')}
+              />
+              {catalog?.categories.map((category) => (
+                <CategoryButton
+                  key={category.id}
+                  active={categoryId === category.id}
+                  count={category.count}
+                  label={category.label}
+                  onClick={() => onCategoryChange(category.id)}
+                />
+              ))}
+            </div>
+          </ScrollArea>
+        </aside>
+
+        <ScrollArea className="h-full min-h-0">
+          <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+            {error ? (
+              <div className="col-span-full">
+                <InlineError message={error} />
+              </div>
+            ) : null}
+
+            {profiles.map((profile) => (
+              <ProfileCard
+                key={profile.id}
+                catalog={catalog}
+                profile={profile}
+                selected={selectedProfileId === profile.id}
+                onSelect={onProfileSelect}
+              />
+            ))}
+
+            {loading ? (
+              <div className="col-span-full grid min-h-48 place-items-center rounded-lg border border-dashed bg-accent p-6 text-center text-sm text-muted-foreground">
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading profiles
+                </span>
+              </div>
+            ) : null}
+
+            {!loading && profiles.length === 0 ? (
+              <EmptyState
+                icon={<BookOpen />}
+                title={catalog?.profiles.length ? 'No profiles match this search' : 'No profiles'}
+                detail={
+                  catalog?.profiles.length
+                    ? 'Try another search term or category.'
+                    : 'Built-in profiles are not available in this build.'
+                }
+              />
+            ) : null}
+          </div>
+        </ScrollArea>
+      </div>
+
+      <ProfileDetailDrawer
+        busy={busy}
+        error={error}
+        open={Boolean(selectedProfile)}
+        profile={selectedProfile}
+        onClose={onCloseProfile}
+        onUseProfile={onUseProfile}
+      />
+    </div>
+  )
+}
+
+function ProfileCard({
+  catalog,
+  profile,
+  selected,
+  onSelect
+}: {
+  catalog: AgentProfileCatalog | null
+  profile: AgentProfile
+  selected: boolean
+  onSelect: (profileId: string) => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'grid min-h-[172px] gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        selected && 'border-primary/50 bg-primary-soft/50'
+      )}
+      onClick={() => onSelect(profile.id)}
+    >
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="line-clamp-2 text-sm font-semibold leading-5">{profile.name}</p>
+          <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{profile.role}</p>
+        </div>
+        {profile.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
+      </div>
+      <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{profile.summary}</p>
+      <div className="flex flex-wrap gap-1.5">
+        <Badge variant="outline">{getCategoryLabel(catalog, profile.category)}</Badge>
+        {profile.tags.slice(0, 2).map((tag) => (
+          <Badge key={tag} variant="outline">
+            {tag}
+          </Badge>
+        ))}
+      </div>
+    </button>
+  )
+}
+
+function CategoryButton({
+  active,
+  count,
+  label,
+  onClick
+}: {
+  active: boolean
+  count: number
+  label: string
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'flex h-10 min-w-36 shrink-0 items-center justify-between gap-3 rounded-md px-3 text-left text-sm transition-colors lg:w-full',
+        active
+          ? 'bg-primary-soft text-foreground'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+      )}
+      onClick={onClick}
+    >
+      <span className="truncate">{label}</span>
+      <span className="shrink-0 text-xs">{count}</span>
+    </button>
+  )
+}
+
+function ProfileDetailDrawer({
+  busy,
+  error,
+  open,
+  profile,
+  onClose,
+  onUseProfile
+}: {
+  busy: boolean
+  error: string
+  open: boolean
+  profile: AgentProfile | null
+  onClose: () => void
+  onUseProfile: (profileId: string) => void
+}): React.JSX.Element {
+  function handleUseProfile(): void {
+    if (!profile) {
+      return
+    }
+
+    onUseProfile(profile.id)
+  }
+
+  return (
+    <div
+      className={cn(
+        'absolute inset-0 z-10 bg-background/45 transition-opacity',
+        open ? 'opacity-100' : 'pointer-events-none opacity-0'
+      )}
+    >
+      <button
+        type="button"
+        className="absolute inset-0 cursor-default"
+        aria-label="Close profile details"
+        onClick={onClose}
+      />
+      <aside
+        className={cn(
+          'absolute bottom-0 right-0 top-0 grid w-full max-w-xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden border-l bg-card shadow-lg transition-transform duration-200 sm:w-[520px]',
+          open ? 'translate-x-0' : 'translate-x-full'
+        )}
+      >
+        <div className="grid gap-2 border-b p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-base font-semibold leading-6">{profile?.name ?? 'Profile'}</p>
+              <p className="mt-1 text-sm leading-5 text-muted-foreground">{profile?.role ?? ''}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {profile?.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
+              <Button type="button" variant="ghost" size="icon" onClick={onClose}>
+                <span className="sr-only">Close profile details</span>
+                <X />
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {profile?.tags.map((tag) => (
+              <Badge key={tag} variant="outline">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        </div>
+
+        <ScrollArea className="h-full min-h-0">
+          <div className="whitespace-pre-wrap p-4 font-mono text-xs leading-5 text-muted-foreground">
+            {profile?.instructions ?? ''}
+          </div>
+        </ScrollArea>
+
+        <div className="grid gap-3 border-t bg-accent/50 p-4">
+          {error ? <InlineError message={error} /> : null}
+          <Button
+            type="button"
+            disabled={busy || !profile}
+            onClick={handleUseProfile}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : <BookOpen />}
+            Use profile
+          </Button>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function ReviewAgentStep({
+  draft,
+  error,
+  nameIssue,
+  onDraftChange,
+  onProviderChange
+}: {
+  draft: AgentDraft
+  error: string
+  nameIssue: string | null
+  onDraftChange: (draft: Partial<AgentDraft>) => void
+  onProviderChange: (providerId: ProviderId) => void
+}): React.JSX.Element {
+  return (
+    <ScrollArea className="h-full min-h-0">
+      <div className="p-5">
+        <div className="grid gap-4">
+          <div className="grid gap-2 rounded-lg border bg-accent p-4">
+            <p className="text-xs font-medium text-muted-foreground">Requested work</p>
+            <p className="text-base font-semibold leading-6">{draft.requestedWork}</p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <FormField label="Agent name">
+              <Input
+                value={draft.name}
+                onChange={(event) => onDraftChange({ name: event.target.value })}
+              />
+            </FormField>
+            <FormField label="Role">
+              <Input
+                value={draft.role}
+                onChange={(event) => onDraftChange({ role: event.target.value })}
+              />
+            </FormField>
+          </div>
+          <p
+            className={cn(
+              'text-xs leading-5 text-muted-foreground',
+              nameIssue && 'text-status-attention'
+            )}
+          >
+            {nameIssue ?? 'Agent names must be distinct so assignment lists stay clear.'}
+          </p>
+
+          <label className="grid gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Instructions</span>
+            <textarea
+              className="ordinus-scrollbar min-h-[300px] resize-y rounded-lg border bg-card p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              spellCheck={false}
+              value={draft.instructions}
+              onChange={(event) => onDraftChange({ instructions: event.target.value })}
+            />
+          </label>
+
+          <section className="grid gap-4 rounded-lg border bg-card p-4">
+            <div className="grid gap-1">
+              <p className="text-sm font-semibold">Runtime</p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Choose the CLI and model this agent uses when it runs.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <FormField label="Provider CLI">
+                <SelectControl
+                  value={draft.providerId}
+                  onChange={(value) => onProviderChange(value as ProviderId)}
+                >
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                  <option value="gemini">Gemini</option>
+                </SelectControl>
+              </FormField>
+              <ModelField
+                providerId={draft.providerId}
+                model={draft.model}
+                onChange={(model) => onDraftChange({ model })}
+              />
+            </div>
+            <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
+            <SandboxField
+              name="create-agent-sandbox"
+              value={draft.sandbox}
+              onChange={(sandbox) => onDraftChange({ sandbox })}
+            />
+          </section>
+
+          <section className="grid gap-3 rounded-lg border bg-card p-4">
+            <p className="text-sm font-semibold">Lifecycle</p>
+            <label className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">Enabled</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  Agent can be assigned work after creation
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                className="size-4 shrink-0 accent-primary"
+                checked={draft.enabled}
+                onChange={(event) => onDraftChange({ enabled: event.target.checked })}
+              />
+            </label>
+          </section>
+
+          {error ? <InlineError message={error} /> : null}
+        </div>
+      </div>
+    </ScrollArea>
   )
 }
 
@@ -1076,54 +1556,38 @@ function DeleteAgentDialog({
   )
 }
 
-function StepProgress({ step }: { step: CreateAgentStep }): React.JSX.Element {
+function getCreateAgentDialogDescription(step: CreateAgentStep): string {
+  if (step === 'describe') {
+    return 'Describe the role you need. Ordinus will prepare a draft for review before saving.'
+  }
+
+  if (step === 'review') {
+    return 'Review and adjust the agent before saving it to this workspace.'
+  }
+
+  return 'Choose a profile, describe a role with AI, or start from blank. Nothing is saved until review.'
+}
+
+function getVisibleProfiles(
+  catalog: AgentProfileCatalog | null,
+  categoryId: string,
+  query: string
+): AgentProfile[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+
   return (
-    <div className="mt-4 flex max-w-sm items-center gap-3">
-      <StepProgressItem
-        active={step === 'describe'}
-        complete={step === 'review'}
-        label="Describe"
-        number={1}
-      />
-      <span className="h-px flex-1 bg-border" />
-      <StepProgressItem active={step === 'review'} label="Review" number={2} />
-    </div>
+    catalog?.profiles.filter((profile) => {
+      const categoryMatches = categoryId === 'all' || profile.category === categoryId
+      const queryMatches =
+        !normalizedQuery || getProfileSearchText(profile).includes(normalizedQuery)
+
+      return categoryMatches && queryMatches
+    }) ?? []
   )
 }
 
-function StepProgressItem({
-  active,
-  complete,
-  label,
-  number
-}: {
-  active: boolean
-  complete?: boolean
-  label: string
-  number: number
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-2 text-xs font-medium',
-        active && 'text-foreground',
-        complete && 'text-status-completed',
-        !active && !complete && 'text-muted-foreground'
-      )}
-    >
-      <span
-        className={cn(
-          'grid size-6 place-items-center rounded-full border text-xs',
-          active && 'border-primary bg-primary text-primary-foreground',
-          complete && 'border-status-completed bg-status-completed text-primary-foreground',
-          !active && !complete && 'bg-card'
-        )}
-      >
-        {number}
-      </span>
-      <span>{label}</span>
-    </div>
-  )
+function getProfileSearchText(profile: AgentProfile): string {
+  return `${profile.name} ${profile.role} ${profile.summary} ${profile.tags.join(' ')}`.toLocaleLowerCase()
 }
 
 function StatusDot({ status }: { status: AgentStatus }): React.JSX.Element {
@@ -1356,7 +1820,11 @@ function getAgentNameIssue(
 }
 
 function normalizeAgentName(name: string): string {
-  return name.trim().toLocaleLowerCase()
+  return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function getCategoryLabel(catalog: AgentProfileCatalog | null, categoryId: string): string {
+  return catalog?.categories.find((category) => category.id === categoryId)?.label ?? categoryId
 }
 
 function getSelectedModelLabel(providerId: ProviderId, model: string): string {

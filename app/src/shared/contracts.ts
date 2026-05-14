@@ -108,6 +108,38 @@ export const AgentDraftFromIntentInputSchema = z.object({
   sandbox: AgentSandboxSchema.default('workspace-write')
 })
 
+export const AgentProfileSchema = z.object({
+  id: z
+    .string()
+    .regex(
+      /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/,
+      'Profile id must use the category/profile-slug namespace.'
+    )
+    .refine((value) => !value.startsWith('agt-'), 'Profile ids must not use the agent namespace.'),
+  category: z.string().min(1),
+  name: z.string().min(1).max(80),
+  role: z.string().min(1).max(120),
+  summary: z.string().min(1).max(300),
+  tags: z.array(z.string().min(1).max(40)).default([]),
+  recommended: z.boolean().default(false),
+  instructions: z.string().min(1)
+})
+
+export const AgentProfileCategorySchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  count: z.number().int().nonnegative()
+})
+
+export const AgentProfileCatalogSchema = z.object({
+  categories: z.array(AgentProfileCategorySchema),
+  profiles: z.array(AgentProfileSchema)
+})
+
+export const AgentDraftFromProfileInputSchema = z.object({
+  profileId: AgentProfileSchema.shape.id
+})
+
 export const AgentDraftSchema = z.object({
   requestedWork: z.string().min(1),
   name: z.string().min(1).max(80),
@@ -115,7 +147,8 @@ export const AgentDraftSchema = z.object({
   instructions: z.string().min(1),
   providerId: ProviderIdSchema,
   model: z.string().min(1),
-  sandbox: AgentSandboxSchema
+  sandbox: AgentSandboxSchema,
+  enabled: z.boolean().default(true)
 })
 
 export const AgentCreateInputSchema = AgentDraftSchema
@@ -737,7 +770,11 @@ export type ProviderConnectInput = z.input<typeof ProviderConnectInputSchema>
 export type ProviderConnectResult = z.infer<typeof ProviderConnectResultSchema>
 export type SetupStatus = z.infer<typeof SetupStatusSchema>
 export type Agent = z.infer<typeof AgentSchema>
+export type AgentProfile = z.infer<typeof AgentProfileSchema>
+export type AgentProfileCategory = z.infer<typeof AgentProfileCategorySchema>
+export type AgentProfileCatalog = z.infer<typeof AgentProfileCatalogSchema>
 export type AgentDraftFromIntentInput = z.infer<typeof AgentDraftFromIntentInputSchema>
+export type AgentDraftFromProfileInput = z.infer<typeof AgentDraftFromProfileInputSchema>
 export type AgentDraft = z.infer<typeof AgentDraftSchema>
 export type AgentCreateInput = z.infer<typeof AgentCreateInputSchema>
 export type AgentUpdateInstructionsInput = z.infer<typeof AgentUpdateInstructionsInputSchema>
