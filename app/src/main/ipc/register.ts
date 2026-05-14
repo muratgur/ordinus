@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
   AgentDeleteInputSchema,
+  AgentDraftFromProfileInputSchema,
   AgentDraftFromIntentInputSchema,
   AgentSkillCreateInputSchema,
   AgentSkillsListInputSchema,
@@ -61,6 +62,12 @@ import {
   ensureAgentHome,
   listAgentSkills
 } from '../agents/filesystem'
+import {
+  buildAgentDraftFromProfile,
+  buildBlankAgentDraft,
+  getAgentProfile,
+  listAgentProfiles
+} from '../agents/profiles'
 import {
   ensureWorkspaceRelativeDirectory,
   resolveReportedWorkspaceFileRefs,
@@ -148,6 +155,7 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     agents.forEach((agent) => ensureAgentHome(agent))
     return agents
   })
+  ipcMain.handle(ipcChannels.agentsListProfiles, () => listAgentProfiles())
   ipcMain.handle(ipcChannels.agentsDraftFromIntent, async (_event, payload) => {
     const input = AgentDraftFromIntentInputSchema.parse(payload)
     const workspace = database.getWorkspaceConfig()
@@ -156,10 +164,42 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
       throw new Error('Choose a workspace before creating an agent.')
     }
 
-    return runtime.generateAgentDraft({
+    const draft = await runtime.generateAgentDraft({
       ...input,
       providerId: workspace.defaultProviderId,
       model: workspace.defaultModel
+    })
+    return {
+      ...draft,
+      name: database.getAvailableAgentName(draft.name),
+      enabled: draft.enabled ?? true
+    }
+  })
+  ipcMain.handle(ipcChannels.agentsDraftFromProfile, (_event, payload) => {
+    const input = AgentDraftFromProfileInputSchema.parse(payload)
+    const workspace = database.getWorkspaceConfig()
+
+    if (!workspace) {
+      throw new Error('Choose a workspace before creating an agent.')
+    }
+
+    return buildAgentDraftFromProfile(getAgentProfile(input.profileId), {
+      providerId: workspace.defaultProviderId,
+      model: workspace.defaultModel,
+      makeUniqueName: (name) => database.getAvailableAgentName(name)
+    })
+  })
+  ipcMain.handle(ipcChannels.agentsDraftBlank, () => {
+    const workspace = database.getWorkspaceConfig()
+
+    if (!workspace) {
+      throw new Error('Choose a workspace before creating an agent.')
+    }
+
+    return buildBlankAgentDraft({
+      providerId: workspace.defaultProviderId,
+      model: workspace.defaultModel,
+      makeUniqueName: (name) => database.getAvailableAgentName(name)
     })
   })
   ipcMain.handle(ipcChannels.agentsCreate, (_event, payload) => {

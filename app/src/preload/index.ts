@@ -5,7 +5,9 @@ import type {
   AgentDeleteInput,
   AgentDeleteResult,
   AgentDraft,
+  AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
+  AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
   AgentSkillsListInput,
@@ -77,8 +79,13 @@ const ordinus = {
   },
   agents: {
     list: async (): Promise<Agent[]> => ipcRenderer.invoke(ipcChannels.agentsList),
+    listProfiles: async (): Promise<AgentProfileCatalog> =>
+      ipcRenderer.invoke(ipcChannels.agentsListProfiles),
     draftFromIntent: async (input: AgentDraftFromIntentInput): Promise<AgentDraft> =>
       ipcRenderer.invoke(ipcChannels.agentsDraftFromIntent, input),
+    draftFromProfile: async (input: AgentDraftFromProfileInput): Promise<AgentDraft> =>
+      ipcRenderer.invoke(ipcChannels.agentsDraftFromProfile, input),
+    draftBlank: async (): Promise<AgentDraft> => ipcRenderer.invoke(ipcChannels.agentsDraftBlank),
     create: async (input: AgentCreateInput): Promise<Agent> =>
       ipcRenderer.invoke(ipcChannels.agentsCreate, input),
     updateInstructions: async (input: AgentUpdateInstructionsInput): Promise<Agent> =>

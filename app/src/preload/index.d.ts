@@ -4,7 +4,9 @@ import type {
   AgentDeleteInput,
   AgentDeleteResult,
   AgentDraft,
+  AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
+  AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
   AgentSkillsListInput,
@@ -70,7 +72,10 @@ export type OrdinusApi = {
   }
   agents: {
     list: () => Promise<Agent[]>
+    listProfiles: () => Promise<AgentProfileCatalog>
     draftFromIntent: (input: AgentDraftFromIntentInput) => Promise<AgentDraft>
+    draftFromProfile: (input: AgentDraftFromProfileInput) => Promise<AgentDraft>
+    draftBlank: () => Promise<AgentDraft>
     create: (input: AgentCreateInput) => Promise<Agent>
     updateInstructions: (input: AgentUpdateInstructionsInput) => Promise<Agent>
     updateSettings: (input: AgentUpdateSettingsInput) => Promise<Agent>
