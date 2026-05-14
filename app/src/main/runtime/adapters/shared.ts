@@ -6,6 +6,8 @@ import { firstLine, isRecord, parseJsonFromCliOutput } from '../cli/output'
 import { runCapture } from '../cli/process'
 import { ProviderConnectResultSchema, ProviderStatusSchema } from '@shared/contracts'
 import type { ProviderConnectResult, ProviderId, ProviderStatus } from '@shared/contracts'
+import { redactDiagnosticsText } from '../../observability/redaction'
+import type { RuntimeObservation } from '../../observability/types'
 import type {
   ProviderLoginProcess,
   ProviderRuntimeContext,
@@ -57,6 +59,7 @@ export type RunConversationProcessOptions = {
   env: NodeJS.ProcessEnv
   stdin: string
   streamErrorMessage: string
+  observeStdoutLine?: (line: string) => RuntimeObservation[]
 }
 
 export function runConversationProcess({
@@ -66,7 +69,8 @@ export function runConversationProcess({
   context,
   env,
   stdin,
-  streamErrorMessage
+  streamErrorMessage,
+  observeStdoutLine
 }: RunConversationProcessOptions): Promise<ConversationProcessResult> {
   return new Promise((resolve, reject) => {
     mkdirSync(dirname(input.eventLogPath), { recursive: true })
@@ -92,6 +96,7 @@ export function runConversationProcess({
     let settled = false
     let stdout = ''
     let stderr = ''
+    let stdoutLineBuffer = ''
 
     process.cleanupTimer = setTimeout(
       () => {
@@ -125,14 +130,23 @@ export function runConversationProcess({
     }
 
     child.stdout.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
+      const text = redactDiagnosticsText(chunk.toString())
       stdout += text
       eventLog.write(text)
+      input.observability?.stdout(text)
+      if (observeStdoutLine) {
+        stdoutLineBuffer = observeProviderStdoutLines(
+          `${stdoutLineBuffer}${text}`,
+          observeStdoutLine,
+          input
+        )
+      }
     })
     child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
+      const text = redactDiagnosticsText(chunk.toString())
       stderr += text
       stderrLog.write(text)
+      input.observability?.stderr(text)
     })
     child.once('error', (error) => {
       if (settled) return
@@ -141,6 +155,12 @@ export function runConversationProcess({
       reject(error)
     })
     child.once('close', (code) => {
+      if (observeStdoutLine && stdoutLineBuffer.trim()) {
+        observeProviderStdoutLines(`${stdoutLineBuffer}\n`, observeStdoutLine, input)
+      }
+      input.observability?.complete(
+        process.cancelled ? 'cancelled' : code === 0 ? 'completed' : 'failed'
+      )
       finish({
         code,
         stdout,
@@ -174,6 +194,25 @@ export function readCliJsonErrorMessage(value: string, fallbackKeys: string[]): 
   } catch {
     return ''
   }
+}
+
+function observeProviderStdoutLines(
+  text: string,
+  observeStdoutLine: (line: string) => RuntimeObservation[],
+  input: RuntimeConversationTurnInput
+): string {
+  const lines = text.split(/\r?\n/)
+  const remainder = lines.pop() ?? ''
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    for (const event of observeStdoutLine(trimmed)) {
+      input.observability?.record(event)
+    }
+  }
+
+  return remainder
 }
 
 export function readCliFailureMessage({

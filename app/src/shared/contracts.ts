@@ -679,6 +679,138 @@ export const WorkboardDataSchema = z.object({
   inputRequests: z.array(WorkRunInputRequestSchema)
 })
 
+export const ObservedRunSourceSurfaceSchema = z.enum(['workboard', 'conversation'])
+export const ObservedRunLifecycleStatusSchema = z.enum([
+  'queued',
+  'starting',
+  'running',
+  'waiting_for_user',
+  'completed',
+  'failed',
+  'cancelled'
+])
+export const ObservedRunLivenessHealthSchema = z.enum([
+  'unknown',
+  'healthy',
+  'quiet',
+  'stalled',
+  'exited'
+])
+export const ObservedRunPhaseSchema = z.enum([
+  'queued',
+  'starting',
+  'running',
+  'reading',
+  'editing',
+  'waiting_for_user',
+  'blocked',
+  'completed',
+  'failed',
+  'cancelled'
+])
+export const ObservedRunEventKindSchema = z.enum([
+  'status',
+  'phase',
+  'message',
+  'tool',
+  'file',
+  'command',
+  'output',
+  'metric',
+  'error'
+])
+export const ObservedRunEventSourceSchema = z.enum([
+  'provider',
+  'runtime',
+  'inferred',
+  'user',
+  'system'
+])
+export const ObservedRunEventConfidenceSchema = z.enum([
+  'reported',
+  'derived',
+  'estimated',
+  'unknown'
+])
+export const ObservedRunUsageSourceSchema = z.enum(['provider', 'estimated', 'unavailable'])
+
+export const ObservedRunSnapshotSchema = z.object({
+  id: z.string().min(1),
+  sourceSurface: ObservedRunSourceSurfaceSchema,
+  sourceItemId: z.string().min(1),
+  sourceItemTitle: z.string(),
+  assignedAgentId: z.string(),
+  assignedAgentName: z.string(),
+  assignedAgentRole: z.string(),
+  providerId: ProviderIdSchema,
+  model: z.string().min(1),
+  lifecycleStatus: ObservedRunLifecycleStatusSchema,
+  livenessHealth: ObservedRunLivenessHealthSchema,
+  currentPhase: ObservedRunPhaseSchema,
+  latestActivity: z.string(),
+  latestActivityAt: z.string().nullable(),
+  queuedAt: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  firstActivityAt: z.string().nullable(),
+  lastActivityAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  elapsedMs: z.number().int().nonnegative(),
+  idleMs: z.number().int().nonnegative().nullable(),
+  inputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  totalTokens: z.number().int().nonnegative().nullable(),
+  usageSource: ObservedRunUsageSourceSchema,
+  updatedAt: z.string()
+})
+
+export const ObservedRunEventSchema = z.object({
+  id: z.string().min(1),
+  observedRunId: z.string().min(1),
+  sequence: z.number().int().positive(),
+  timestamp: z.string(),
+  kind: ObservedRunEventKindSchema,
+  source: ObservedRunEventSourceSchema,
+  confidence: ObservedRunEventConfidenceSchema,
+  phase: ObservedRunPhaseSchema.nullable(),
+  lifecycleStatus: ObservedRunLifecycleStatusSchema.nullable(),
+  summary: z.string(),
+  payload: z.record(z.string(), z.unknown())
+})
+
+export const ObservedRunListEventsInputSchema = z.object({
+  observedRunId: z.string().min(1)
+})
+
+export const ObservedConversationRunsInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+export const ObservedRunDiagnosticsInputSchema = z.object({
+  observedRunId: z.string().min(1),
+  stdoutOffset: z.number().int().nonnegative().optional(),
+  stderrOffset: z.number().int().nonnegative().optional()
+})
+
+export const ObservedRunDiagnosticsStreamSchema = z.object({
+  text: z.string(),
+  startOffset: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative(),
+  truncated: z.boolean()
+})
+
+export const ObservedRunDiagnosticsSchema = z.object({
+  observedRunId: z.string().min(1),
+  invocation: z.object({
+    provider: z.string(),
+    executable: z.string(),
+    args: z.array(z.string()),
+    cwd: z.string(),
+    startedAt: z.string().nullable()
+  }),
+  stdout: ObservedRunDiagnosticsStreamSchema,
+  stderr: ObservedRunDiagnosticsStreamSchema
+})
+
 export const WorkboardAnswerInputRequestInputSchema = z.object({
   requestId: z.string().min(1),
   answers: z.array(InteractionAnswerSchema).max(3)
@@ -849,6 +981,20 @@ export type WorkboardGenerateFollowUpPlanInput = z.infer<
 >
 export type WorkboardStartFollowUpInput = z.infer<typeof WorkboardStartFollowUpInputSchema>
 export type WorkboardData = z.infer<typeof WorkboardDataSchema>
+export type ObservedRunSourceSurface = z.infer<typeof ObservedRunSourceSurfaceSchema>
+export type ObservedRunLifecycleStatus = z.infer<typeof ObservedRunLifecycleStatusSchema>
+export type ObservedRunLivenessHealth = z.infer<typeof ObservedRunLivenessHealthSchema>
+export type ObservedRunPhase = z.infer<typeof ObservedRunPhaseSchema>
+export type ObservedRunEventKind = z.infer<typeof ObservedRunEventKindSchema>
+export type ObservedRunEventSource = z.infer<typeof ObservedRunEventSourceSchema>
+export type ObservedRunEventConfidence = z.infer<typeof ObservedRunEventConfidenceSchema>
+export type ObservedRunUsageSource = z.infer<typeof ObservedRunUsageSourceSchema>
+export type ObservedRunSnapshot = z.infer<typeof ObservedRunSnapshotSchema>
+export type ObservedRunEvent = z.infer<typeof ObservedRunEventSchema>
+export type ObservedRunListEventsInput = z.infer<typeof ObservedRunListEventsInputSchema>
+export type ObservedConversationRunsInput = z.infer<typeof ObservedConversationRunsInputSchema>
+export type ObservedRunDiagnosticsInput = z.infer<typeof ObservedRunDiagnosticsInputSchema>
+export type ObservedRunDiagnostics = z.infer<typeof ObservedRunDiagnosticsSchema>
 export type WorkboardAnswerInputRequestInput = z.infer<
   typeof WorkboardAnswerInputRequestInputSchema
 >

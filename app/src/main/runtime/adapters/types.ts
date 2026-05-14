@@ -15,6 +15,7 @@ import type {
 } from '@shared/contracts'
 import type { RuntimeOrchestrationPlanInput } from '../prompts/orchestration'
 import type { RuntimeWorkboardPlanInput } from '../prompts/work-plan'
+import type { RuntimeObservationSink } from '../../observability/types'
 
 export type { RuntimeOrchestrationPlanInput } from '../prompts/orchestration'
 export type { RuntimeWorkboardPlanInput } from '../prompts/work-plan'
@@ -58,6 +59,7 @@ export type RuntimeConversationTurnInput = {
   logRef: string
   eventLogPath: string
   lastMessagePath: string
+  observability?: RuntimeObservationSink
 }
 
 export type RuntimeConversationTurnResult = {
@@ -86,6 +88,7 @@ export type RuntimeWorkRunInput = {
   logRef: string
   eventLogPath: string
   lastMessagePath: string
+  observability?: RuntimeObservationSink
 }
 
 export type RuntimeWorkRunResult = RuntimeConversationTurnResult

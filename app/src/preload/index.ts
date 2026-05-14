@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { IpcRendererEvent } from 'electron'
 import type {
   Agent,
   AgentCreateInput,
@@ -31,6 +32,12 @@ import type {
   ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
+  ObservedConversationRunsInput,
+  ObservedRunDiagnostics,
+  ObservedRunDiagnosticsInput,
+  ObservedRunEvent,
+  ObservedRunListEventsInput,
+  ObservedRunSnapshot,
   ProviderActionInput,
   ProviderConnectInput,
   ProviderConnectResult,
@@ -157,6 +164,27 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workboardAnswerInputRequest, input),
     revealPath: async (input: WorkboardRevealPathInput): Promise<void> =>
       ipcRenderer.invoke(ipcChannels.workboardRevealPath, input)
+  },
+  observability: {
+    listWorkboard: async (): Promise<ObservedRunSnapshot[]> =>
+      ipcRenderer.invoke(ipcChannels.observabilityListWorkboard),
+    listConversation: async (
+      input: ObservedConversationRunsInput
+    ): Promise<ObservedRunSnapshot[]> =>
+      ipcRenderer.invoke(ipcChannels.observabilityListConversation, input),
+    listEvents: async (input: ObservedRunListEventsInput): Promise<ObservedRunEvent[]> =>
+      ipcRenderer.invoke(ipcChannels.observabilityListEvents, input),
+    getDiagnostics: async (
+      input: ObservedRunDiagnosticsInput
+    ): Promise<ObservedRunDiagnostics> =>
+      ipcRenderer.invoke(ipcChannels.observabilityGetDiagnostics, input),
+    onRunChanged: (callback: (snapshot: ObservedRunSnapshot) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, snapshot: ObservedRunSnapshot): void => {
+        callback(snapshot)
+      }
+      ipcRenderer.on(ipcChannels.observabilityRunChanged, listener)
+      return () => ipcRenderer.removeListener(ipcChannels.observabilityRunChanged, listener)
+    }
   },
   runtime: {
     getProviders: async (): Promise<ProviderStatus[]> =>

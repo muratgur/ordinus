@@ -4,12 +4,14 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { OrdinusDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc/register'
+import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
 
 app.setName('Ordinus')
 
 const database = new OrdinusDatabase()
 const runtime = createRuntimeService()
+const observability = createObservabilityService(database)
 
 const preferredWindowSize = {
   width: 1360,
@@ -123,7 +125,7 @@ app.whenReady().then(() => {
   })
 
   database.initialize()
-  registerIpcHandlers(database, runtime)
+  registerIpcHandlers(database, runtime, observability)
 
   createWindow()
 

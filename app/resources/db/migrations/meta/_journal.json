@@ -120,6 +120,13 @@
       "when": 1778716800000,
       "tag": "0016_work_run_input_resume_message",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1778750000000,
+      "tag": "0017_workboard_observability",
+      "breakpoints": true
     }
   ]
 }

@@ -28,6 +28,8 @@ import {
   ConversationTurnSchema,
   ConversationUpdateRoutingModeInputSchema,
   DbStatusSchema,
+  ObservedRunEventSchema,
+  ObservedRunSnapshotSchema,
   WorkspaceConfigSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
   WorkboardAnswerInputRequestInputSchema,
@@ -67,6 +69,16 @@ import {
   type InteractionAnswer,
   type InteractionQuestion,
   type OrchestrationAssignment,
+  type ObservedRunEvent,
+  type ObservedRunEventConfidence,
+  type ObservedRunEventKind,
+  type ObservedRunEventSource,
+  type ObservedRunLifecycleStatus,
+  type ObservedRunLivenessHealth,
+  type ObservedRunPhase,
+  type ObservedRunSnapshot,
+  type ObservedRunSourceSurface,
+  type ObservedRunUsageSource,
   type WorkRun,
   type WorkRunActionInput,
   type WorkboardAnswerInputRequestInput,
@@ -95,6 +107,8 @@ import {
   conversationParticipants,
   conversations,
   conversationTurns,
+  observedRunEvents,
+  observedRuns,
   workRequestAgentSessions,
   workRequests,
   workRunDependencies,
@@ -141,6 +155,66 @@ export type PreparedWorkRun = {
   providerSessionRef: string | null
 }
 
+export type ObservedRunUpsertInput = {
+  sourceSurface: ObservedRunSourceSurface
+  sourceItemId: string
+  sourceItemTitle: string
+  assignedAgentId: string
+  assignedAgentName: string
+  assignedAgentRole: string
+  providerId: WorkRun['providerId']
+  model: string
+  lifecycleStatus: ObservedRunLifecycleStatus
+  livenessHealth: ObservedRunLivenessHealth
+  currentPhase: ObservedRunPhase
+  latestActivity: string
+  latestActivityAt?: string | null
+  queuedAt?: string | null
+  startedAt?: string | null
+  firstActivityAt?: string | null
+  lastActivityAt?: string | null
+  completedAt?: string | null
+  inputTokens?: number | null
+  outputTokens?: number | null
+  totalTokens?: number | null
+  usageSource?: ObservedRunUsageSource
+  sanitizedInvocation?: Record<string, unknown>
+  logRef: string
+}
+
+export type ObservedRunPatchInput = {
+  id: string
+  lifecycleStatus?: ObservedRunLifecycleStatus
+  livenessHealth?: ObservedRunLivenessHealth
+  currentPhase?: ObservedRunPhase
+  latestActivity?: string
+  latestActivityAt?: string | null
+  firstActivityAt?: string | null
+  lastActivityAt?: string | null
+  completedAt?: string | null
+  inputTokens?: number | null
+  outputTokens?: number | null
+  totalTokens?: number | null
+  usageSource?: ObservedRunUsageSource
+  sanitizedInvocation?: Record<string, unknown>
+}
+
+export type ObservedRunEventCreateInput = {
+  observedRunId: string
+  kind: ObservedRunEventKind
+  source: ObservedRunEventSource
+  confidence: ObservedRunEventConfidence
+  phase?: ObservedRunPhase | null
+  lifecycleStatus?: ObservedRunLifecycleStatus | null
+  summary: string
+  payload?: Record<string, unknown>
+}
+
+export type ObservedRunInternal = ObservedRunSnapshot & {
+  logRef: string
+  sanitizedInvocation: Record<string, unknown>
+}
+
 export type QueuedWorkRunResume = {
   inputRequestId: string
   message: string
@@ -172,6 +246,8 @@ export class OrdinusDatabase {
         conversationParticipants,
         conversations,
         conversationTurns,
+        observedRunEvents,
+        observedRuns,
         workRequestAgentSessions,
         workRequests,
         workRunDependencies,
@@ -1577,6 +1653,217 @@ export class OrdinusDatabase {
       .map(parseWorkRunEvent)
   }
 
+  upsertObservedRun(input: ObservedRunUpsertInput): ObservedRunInternal {
+    const now = new Date().toISOString()
+    const existing = this.db
+      .select()
+      .from(observedRuns)
+      .where(
+        and(
+          eq(observedRuns.sourceSurface, input.sourceSurface),
+          eq(observedRuns.sourceItemId, input.sourceItemId)
+        )
+      )
+      .get()
+    const row = {
+      sourceSurface: input.sourceSurface,
+      sourceItemId: input.sourceItemId,
+      sourceItemTitle: input.sourceItemTitle,
+      assignedAgentId: input.assignedAgentId,
+      assignedAgentName: input.assignedAgentName,
+      assignedAgentRole: input.assignedAgentRole,
+      providerId: input.providerId,
+      model: input.model,
+      lifecycleStatus: input.lifecycleStatus,
+      livenessHealth: input.livenessHealth,
+      currentPhase: input.currentPhase,
+      latestActivity: input.latestActivity,
+      latestActivityAt: input.latestActivityAt ?? null,
+      queuedAt: input.queuedAt ?? null,
+      startedAt: input.startedAt ?? null,
+      firstActivityAt: input.firstActivityAt ?? null,
+      lastActivityAt: input.lastActivityAt ?? null,
+      completedAt: input.completedAt ?? null,
+      inputTokens: input.inputTokens ?? null,
+      outputTokens: input.outputTokens ?? null,
+      totalTokens: input.totalTokens ?? null,
+      usageSource: input.usageSource ?? 'unavailable',
+      sanitizedInvocation: JSON.stringify(input.sanitizedInvocation ?? {}),
+      logRef: input.logRef,
+      updatedAt: now
+    }
+
+    if (existing) {
+      this.db.update(observedRuns).set(row).where(eq(observedRuns.id, existing.id)).run()
+      return this.getObservedRunInternal(existing.id)
+    }
+
+    const id = createObservedRunId()
+    this.db
+      .insert(observedRuns)
+      .values({
+        id,
+        ...row,
+        createdAt: now
+      })
+      .run()
+
+    return this.getObservedRunInternal(id)
+  }
+
+  patchObservedRun(input: ObservedRunPatchInput): ObservedRunInternal {
+    this.getObservedRunInternal(input.id)
+    const row: Partial<typeof observedRuns.$inferInsert> = {
+      updatedAt: new Date().toISOString()
+    }
+
+    if (input.lifecycleStatus !== undefined) row.lifecycleStatus = input.lifecycleStatus
+    if (input.livenessHealth !== undefined) row.livenessHealth = input.livenessHealth
+    if (input.currentPhase !== undefined) row.currentPhase = input.currentPhase
+    if (input.latestActivity !== undefined) row.latestActivity = input.latestActivity
+    if (input.latestActivityAt !== undefined) row.latestActivityAt = input.latestActivityAt
+    if (input.firstActivityAt !== undefined) row.firstActivityAt = input.firstActivityAt
+    if (input.lastActivityAt !== undefined) row.lastActivityAt = input.lastActivityAt
+    if (input.completedAt !== undefined) row.completedAt = input.completedAt
+    if (input.inputTokens !== undefined) row.inputTokens = input.inputTokens
+    if (input.outputTokens !== undefined) row.outputTokens = input.outputTokens
+    if (input.totalTokens !== undefined) row.totalTokens = input.totalTokens
+    if (input.usageSource !== undefined) row.usageSource = input.usageSource
+    if (input.sanitizedInvocation !== undefined) {
+      row.sanitizedInvocation = JSON.stringify(input.sanitizedInvocation)
+    }
+
+    this.db.update(observedRuns).set(row).where(eq(observedRuns.id, input.id)).run()
+
+    return this.getObservedRunInternal(input.id)
+  }
+
+  appendObservedRunEvent(input: ObservedRunEventCreateInput): ObservedRunEvent {
+    this.getObservedRunInternal(input.observedRunId)
+    const latestEvent = this.db
+      .select({ sequence: observedRunEvents.sequence })
+      .from(observedRunEvents)
+      .where(eq(observedRunEvents.observedRunId, input.observedRunId))
+      .orderBy(desc(observedRunEvents.sequence))
+      .get()
+    const now = new Date().toISOString()
+    const eventId = createObservedRunEventId()
+    const sequence = (latestEvent?.sequence ?? 0) + 1
+
+    this.db
+      .insert(observedRunEvents)
+      .values({
+        id: eventId,
+        observedRunId: input.observedRunId,
+        sequence,
+        timestamp: now,
+        kind: input.kind,
+        source: input.source,
+        confidence: input.confidence,
+        phase: input.phase ?? null,
+        lifecycleStatus: input.lifecycleStatus ?? null,
+        summary: input.summary,
+        payload: JSON.stringify(input.payload ?? {}),
+        createdAt: now
+      })
+      .run()
+
+    return ObservedRunEventSchema.parse({
+      id: eventId,
+      observedRunId: input.observedRunId,
+      sequence,
+      timestamp: now,
+      kind: input.kind,
+      source: input.source,
+      confidence: input.confidence,
+      phase: input.phase ?? null,
+      lifecycleStatus: input.lifecycleStatus ?? null,
+      summary: input.summary,
+      payload: input.payload ?? {}
+    })
+  }
+
+  listWorkboardObservedRuns(): ObservedRunSnapshot[] {
+    return this.db
+      .select()
+      .from(observedRuns)
+      .where(eq(observedRuns.sourceSurface, 'workboard'))
+      .orderBy(desc(observedRuns.updatedAt))
+      .all()
+      .map(parseObservedRunSnapshot)
+  }
+
+  listConversationObservedRuns(conversationId: string): ObservedRunSnapshot[] {
+    this.getConversation({ conversationId })
+    const turnIds = this.db
+      .select({ id: conversationTurns.id })
+      .from(conversationTurns)
+      .where(eq(conversationTurns.conversationId, conversationId))
+      .all()
+      .map((turn) => turn.id)
+
+    if (turnIds.length === 0) {
+      return []
+    }
+
+    return this.db
+      .select()
+      .from(observedRuns)
+      .where(
+        and(
+          eq(observedRuns.sourceSurface, 'conversation'),
+          inArray(observedRuns.sourceItemId, turnIds)
+        )
+      )
+      .orderBy(desc(observedRuns.updatedAt))
+      .all()
+      .map(parseObservedRunSnapshot)
+  }
+
+  getObservedRunBySource(
+    sourceSurface: ObservedRunSourceSurface,
+    sourceItemId: string
+  ): ObservedRunSnapshot | null {
+    const run = this.db
+      .select()
+      .from(observedRuns)
+      .where(
+        and(
+          eq(observedRuns.sourceSurface, sourceSurface),
+          eq(observedRuns.sourceItemId, sourceItemId)
+        )
+      )
+      .get()
+
+    return run ? parseObservedRunSnapshot(run) : null
+  }
+
+  listObservedRunEvents(observedRunId: string): ObservedRunEvent[] {
+    this.getObservedRunInternal(observedRunId)
+
+    return this.db
+      .select()
+      .from(observedRunEvents)
+      .where(eq(observedRunEvents.observedRunId, observedRunId))
+      .orderBy(asc(observedRunEvents.sequence))
+      .all()
+      .map(parseObservedRunEvent)
+  }
+
+  getObservedRunInternal(observedRunId: string): ObservedRunInternal {
+    const run = this.db
+      .select()
+      .from(observedRuns)
+      .where(eq(observedRuns.id, observedRunId))
+      .get()
+
+    if (!run) {
+      throw new Error('Observed run was not found.')
+    }
+
+    return parseObservedRunInternal(run)
+  }
+
   listWorkRunDependencies(runId: string): WorkRunDependency[] {
     const parsed = WorkRunActionInputSchema.parse({ runId })
     this.getWorkRun(parsed.runId)
@@ -2907,6 +3194,14 @@ function createWorkRunInputRequestId(): string {
   return `wir-${randomUUID()}`
 }
 
+function createObservedRunId(): string {
+  return `obs-${randomUUID()}`
+}
+
+function createObservedRunEventId(): string {
+  return `obe-${randomUUID()}`
+}
+
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values))
 }
@@ -3017,6 +3312,177 @@ function isDatabaseWorkRunEvent(value: unknown): value is {
   payload: string
 } {
   return typeof value === 'object' && value !== null && 'payload' in value
+}
+
+function parseObservedRunSnapshot(value: unknown): ObservedRunSnapshot {
+  return ObservedRunSnapshotSchema.parse({
+    ...parseObservedRunBase(value),
+    elapsedMs: calculateObservedElapsedMs(value),
+    idleMs: calculateObservedIdleMs(value)
+  })
+}
+
+function parseObservedRunInternal(value: unknown): ObservedRunInternal {
+  if (!isDatabaseObservedRun(value)) {
+    throw new Error('Observed run row was invalid.')
+  }
+
+  return {
+    ...parseObservedRunSnapshot(value),
+    logRef: value.logRef,
+    sanitizedInvocation: parseJsonObjectSafe(value.sanitizedInvocation)
+  }
+}
+
+function parseObservedRunBase(value: unknown): Record<string, unknown> {
+  if (!isDatabaseObservedRun(value)) {
+    throw new Error('Observed run row was invalid.')
+  }
+
+  return {
+    id: value.id,
+    sourceSurface: value.sourceSurface,
+    sourceItemId: value.sourceItemId,
+    sourceItemTitle: value.sourceItemTitle,
+    assignedAgentId: value.assignedAgentId,
+    assignedAgentName: value.assignedAgentName,
+    assignedAgentRole: value.assignedAgentRole,
+    providerId: value.providerId,
+    model: value.model,
+    lifecycleStatus: value.lifecycleStatus,
+    livenessHealth: value.livenessHealth,
+    currentPhase: value.currentPhase,
+    latestActivity: value.latestActivity,
+    latestActivityAt: value.latestActivityAt,
+    queuedAt: value.queuedAt,
+    startedAt: value.startedAt,
+    firstActivityAt: value.firstActivityAt,
+    lastActivityAt: value.lastActivityAt,
+    completedAt: value.completedAt,
+    inputTokens: value.inputTokens,
+    outputTokens: value.outputTokens,
+    totalTokens: value.totalTokens,
+    usageSource: value.usageSource,
+    updatedAt: value.updatedAt
+  }
+}
+
+function isDatabaseObservedRun(value: unknown): value is {
+  id: string
+  sourceSurface: string
+  sourceItemId: string
+  sourceItemTitle: string
+  assignedAgentId: string
+  assignedAgentName: string
+  assignedAgentRole: string
+  providerId: string
+  model: string
+  lifecycleStatus: string
+  livenessHealth: string
+  currentPhase: string
+  latestActivity: string
+  latestActivityAt: string | null
+  queuedAt: string | null
+  startedAt: string | null
+  firstActivityAt: string | null
+  lastActivityAt: string | null
+  completedAt: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  totalTokens: number | null
+  usageSource: string
+  sanitizedInvocation: string
+  logRef: string
+  updatedAt: string
+} {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    'sourceSurface' in value &&
+    'sourceItemId' in value &&
+    'sanitizedInvocation' in value &&
+    'logRef' in value
+  )
+}
+
+function parseObservedRunEvent(value: unknown): ObservedRunEvent {
+  if (!isDatabaseObservedRunEvent(value)) {
+    throw new Error('Observed run event row was invalid.')
+  }
+
+  return ObservedRunEventSchema.parse({
+    id: value.id,
+    observedRunId: value.observedRunId,
+    sequence: value.sequence,
+    timestamp: value.timestamp,
+    kind: value.kind,
+    source: value.source,
+    confidence: value.confidence,
+    phase: value.phase,
+    lifecycleStatus: value.lifecycleStatus,
+    summary: value.summary,
+    payload: parseJsonObjectSafe(value.payload)
+  })
+}
+
+function isDatabaseObservedRunEvent(value: unknown): value is {
+  id: string
+  observedRunId: string
+  sequence: number
+  timestamp: string
+  kind: string
+  source: string
+  confidence: string
+  phase: string | null
+  lifecycleStatus: string | null
+  summary: string
+  payload: string
+} {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    'observedRunId' in value &&
+    'payload' in value
+  )
+}
+
+function calculateObservedElapsedMs(value: unknown): number {
+  if (!isDatabaseObservedRun(value)) {
+    return 0
+  }
+
+  const start = Date.parse(value.startedAt ?? value.queuedAt ?? value.updatedAt)
+  if (Number.isNaN(start)) {
+    return 0
+  }
+
+  const end = getObservedEndTime(value)
+
+  return Math.max(0, end - start)
+}
+
+function calculateObservedIdleMs(value: unknown): number | null {
+  if (!isDatabaseObservedRun(value) || !value.lastActivityAt) {
+    return null
+  }
+
+  const lastActivity = Date.parse(value.lastActivityAt)
+  if (Number.isNaN(lastActivity)) {
+    return null
+  }
+
+  const end = getObservedEndTime(value)
+
+  return Math.max(0, end - lastActivity)
+}
+
+function getObservedEndTime(value: {
+  completedAt: string | null
+}): number {
+  const completedAt = value.completedAt ? Date.parse(value.completedAt) : Number.NaN
+  return Number.isNaN(completedAt) ? Date.now() : completedAt
 }
 
 function isTerminalWorkRunStatus(status: WorkRun['status']): boolean {
@@ -3144,6 +3610,14 @@ function parseJsonObject(value: string): Record<string, unknown> {
     throw new Error('Expected a JSON object.')
   }
   return parsed as Record<string, unknown>
+}
+
+function parseJsonObjectSafe(value: string): Record<string, unknown> {
+  try {
+    return parseJsonObject(value)
+  } catch {
+    return {}
+  }
 }
 
 function validateInputRequestAnswers(

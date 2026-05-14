@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 export const appMeta = sqliteTable('app_meta', {
   id: integer('id').primaryKey(),
@@ -185,3 +185,66 @@ export const workRunInputRequests = sqliteTable('work_run_input_requests', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
+
+export const observedRuns = sqliteTable(
+  'observed_runs',
+  {
+    id: text('id').primaryKey(),
+    sourceSurface: text('source_surface').notNull(),
+    sourceItemId: text('source_item_id').notNull(),
+    sourceItemTitle: text('source_item_title').notNull().default(''),
+    assignedAgentId: text('assigned_agent_id').notNull().default(''),
+    assignedAgentName: text('assigned_agent_name').notNull().default(''),
+    assignedAgentRole: text('assigned_agent_role').notNull().default(''),
+    providerId: text('provider_id').notNull(),
+    model: text('model').notNull(),
+    lifecycleStatus: text('lifecycle_status').notNull(),
+    livenessHealth: text('liveness_health').notNull(),
+    currentPhase: text('current_phase').notNull(),
+    latestActivity: text('latest_activity').notNull().default(''),
+    latestActivityAt: text('latest_activity_at'),
+    queuedAt: text('queued_at'),
+    startedAt: text('started_at'),
+    firstActivityAt: text('first_activity_at'),
+    lastActivityAt: text('last_activity_at'),
+    completedAt: text('completed_at'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    totalTokens: integer('total_tokens'),
+    usageSource: text('usage_source').notNull().default('unavailable'),
+    sanitizedInvocation: text('sanitized_invocation').notNull().default('{}'),
+    logRef: text('log_ref').notNull().default(''),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    sourceUnique: uniqueIndex('observed_runs_source_unique').on(
+      table.sourceSurface,
+      table.sourceItemId
+    )
+  })
+)
+
+export const observedRunEvents = sqliteTable(
+  'observed_run_events',
+  {
+    id: text('id').primaryKey(),
+    observedRunId: text('observed_run_id').notNull(),
+    sequence: integer('sequence').notNull(),
+    timestamp: text('timestamp').notNull(),
+    kind: text('kind').notNull(),
+    source: text('source').notNull(),
+    confidence: text('confidence').notNull(),
+    phase: text('phase'),
+    lifecycleStatus: text('lifecycle_status'),
+    summary: text('summary').notNull().default(''),
+    payload: text('payload').notNull().default('{}'),
+    createdAt: text('created_at').notNull()
+  },
+  (table) => ({
+    runSequenceIdx: index('observed_run_events_run_sequence_idx').on(
+      table.observedRunId,
+      table.sequence
+    )
+  })
+)
