@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   AlertTriangle,
   Bot,
@@ -12,7 +14,6 @@ import {
   MessageSquareText,
   Pencil,
   Plus,
-  Route,
   SendHorizontal,
   Square,
   TerminalSquare,
@@ -84,6 +85,8 @@ type MentionPickerState = {
   query: string
 }
 
+type ObservationDrawerTab = 'activity' | 'diagnostics'
+
 type AnswerDraft =
   | { type: 'option'; optionId: string }
   | { type: 'custom'; text: string }
@@ -97,6 +100,24 @@ type InputRequestProgress = {
   answeredCount: number
   canContinue: boolean
 }
+
+const composerTextareaMaxHeight = 160
+
+const agentMarkdownClassName = [
+  'min-w-0 select-text text-sm leading-6 text-foreground [overflow-wrap:anywhere]',
+  '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
+  '[&_p]:my-2 [&_strong]:font-semibold',
+  '[&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-lg [&_h1]:font-semibold',
+  '[&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-base [&_h2]:font-semibold',
+  '[&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-semibold',
+  '[&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1',
+  '[&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-primary/30 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground',
+  '[&_code]:rounded-sm [&_code]:bg-card [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs',
+  '[&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:bg-card [&_pre]:p-3',
+  '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-xs',
+  '[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:bg-card [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td]:border [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top',
+  '[&_hr]:my-4 [&_hr]:border-border'
+].join(' ')
 
 export function ConversationsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
@@ -541,17 +562,13 @@ export function ConversationsScreen(): React.JSX.Element {
                 participantName={participant?.agentName ?? ''}
                 runningTurns={runningTurns}
                 cancelling={cancelling}
-                deleting={deletingConversation}
-                updatingRoutingMode={updatingRoutingMode}
                 openingFolder={openingConversationFolder}
                 onCancelTurns={(turnIds) => void handleCancelTurns(turnIds)}
-                onDeleteConversation={() => void openDeleteConversation(detail.id)}
                 onOpenFolder={() => void handleOpenConversationFolder()}
                 onOpenRename={() => {
                   setRenameError('')
                   setRenameOpen(true)
                 }}
-                onRoutingModeChange={(orchestrated) => void handleRoutingModeChange(orchestrated)}
               />
               <ScrollArea className="min-h-0 flex-1">
                 <CardContent className="grid gap-3 p-4">
@@ -615,7 +632,10 @@ export function ConversationsScreen(): React.JSX.Element {
                 )}
                 disabled={composerBlocked}
                 sending={sending}
+                routingDisabled={Boolean(runningTurn)}
+                updatingRoutingMode={updatingRoutingMode}
                 onChange={handleMessageChange}
+                onRoutingModeChange={(orchestrated) => void handleRoutingModeChange(orchestrated)}
                 onSelectMention={(mention) =>
                   setDraftMentions((mentions) => mergeDraftMention(mentions, mention))
                 }
@@ -798,92 +818,54 @@ function ConversationHeader({
   participantName,
   runningTurns,
   cancelling,
-  deleting,
-  updatingRoutingMode,
   openingFolder,
   onCancelTurns,
-  onDeleteConversation,
   onOpenFolder,
-  onOpenRename,
-  onRoutingModeChange
+  onOpenRename
 }: {
   detail: ConversationDetail
   participantName: string
   runningTurns: ConversationTurn[]
   cancelling: boolean
-  deleting: boolean
-  updatingRoutingMode: boolean
   openingFolder: boolean
   onCancelTurns: (turnIds: string[]) => void
-  onDeleteConversation: () => void
   onOpenFolder: () => void
   onOpenRename: () => void
-  onRoutingModeChange: (orchestrated: boolean) => void
 }): React.JSX.Element {
-  const orchestrated = usesOrchestrator(detail)
-
   return (
-    <CardHeader className="border-b bg-accent/50">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <CardTitle className="truncate">{detail.title}</CardTitle>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0 text-muted-foreground"
-              title="Rename conversation"
-              aria-label="Rename conversation"
-              onClick={onOpenRename}
-            >
-              <Pencil className="size-4" />
-            </Button>
-          </div>
-          <CardDescription className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="rounded-full border bg-card px-2 py-0.5 text-xs capitalize">
-              {detail.mode}
-            </span>
-            <span>{getParticipantSummary(detail.participants, participantName)}</span>
+    <CardHeader className="border-b bg-accent/50 px-4 py-3">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <CardTitle className="truncate text-base leading-6">{detail.title}</CardTitle>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 text-muted-foreground"
+            title="Rename conversation"
+            aria-label="Rename conversation"
+            onClick={onOpenRename}
+          >
+            <Pencil className="size-4" />
+          </Button>
+          <CardDescription className="hidden min-w-0 truncate sm:block">
+            {getParticipantSummary(detail.participants, participantName)}
           </CardDescription>
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="shrink-0">Workspace folder</span>
-            <code className="max-w-full truncate rounded-md bg-card px-2 py-1 font-mono text-xs text-foreground">
-              {detail.workingRoot}
-            </code>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0 text-muted-foreground"
-              title="Open conversation folder"
-              aria-label="Open conversation folder"
-              disabled={openingFolder}
-              onClick={onOpenFolder}
-            >
-              {openingFolder ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen />}
-            </Button>
-          </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <StatusPill status={detail.status} />
-          {detail.participants.length > 1 ? (
-            <Button
-              type="button"
-              variant={orchestrated ? 'default' : 'outline'}
-              size="sm"
-              disabled={updatingRoutingMode || detail.status === 'running'}
-              title={
-                orchestrated
-                  ? 'Ordinus routes every message before agents run.'
-                  : 'Messages go directly to mentioned agents.'
-              }
-              onClick={() => onRoutingModeChange(!orchestrated)}
-            >
-              {updatingRoutingMode ? <Loader2 className="animate-spin" /> : <Route />}
-              Orchestrator
-            </Button>
-          ) : null}
+          {detail.status !== 'active' ? <StatusPill status={detail.status} /> : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 text-muted-foreground"
+            title={`Open conversation folder: ${detail.workingRoot}`}
+            aria-label="Open conversation folder"
+            disabled={openingFolder}
+            onClick={onOpenFolder}
+          >
+            {openingFolder ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen />}
+          </Button>
           {runningTurns.length > 0 ? (
             <Button
               type="button"
@@ -896,22 +878,6 @@ function ConversationHeader({
               {runningTurns.length > 1 ? 'Stop all' : 'Stop'}
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="text-status-attention hover:text-status-attention"
-            disabled={deleting || detail.status === 'running'}
-            title={
-              detail.status === 'running'
-                ? 'Stop this conversation before deleting it.'
-                : 'Delete conversation'
-            }
-            onClick={onDeleteConversation}
-          >
-            {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            Delete
-          </Button>
         </div>
       </div>
     </CardHeader>
@@ -1133,7 +1099,9 @@ function TurnCard({
     <article
       className={cn(
         'grid w-full min-w-0 max-w-full gap-2 overflow-hidden rounded-lg border bg-card p-4',
-        isUser && 'ml-auto w-full max-w-[86%] bg-accent/60'
+        isUser
+          ? 'ml-auto w-fit border-primary/20 bg-primary-soft/70 sm:max-w-[86%] dark:border-primary/30 dark:bg-primary-soft/45'
+          : 'mr-auto border-border bg-surface-subtle/70 border-l-4 border-l-primary/30 sm:max-w-[82%] dark:bg-surface-subtle/55 dark:border-l-primary/45'
       )}
     >
       <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1150,13 +1118,15 @@ function TurnCard({
       {turn.status === 'running' ? (
         null
       ) : turn.status === 'failed' ? (
-        <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm text-status-attention [overflow-wrap:anywhere]">
+        <p className="select-text rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm text-status-attention [overflow-wrap:anywhere]">
           {turn.error || 'This turn failed.'}
         </p>
-      ) : (
-        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+      ) : isUser ? (
+        <p className="min-w-0 select-text whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
           {turn.content}
         </p>
+      ) : (
+        <AgentMarkdown content={turn.content} />
       )}
       {turn.truncated ? (
         <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
@@ -1171,6 +1141,46 @@ function TurnCard({
   )
 }
 
+function AgentMarkdown({ content }: { content: string }): React.JSX.Element {
+  return (
+    <div className={agentMarkdownClassName}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children, href }) =>
+            isSafeMarkdownHref(href) ? (
+              <a
+                className="font-medium text-primary underline-offset-2 hover:underline"
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {children}
+              </a>
+            ) : (
+              <span className="font-medium text-primary" title={href}>
+                {children}
+              </span>
+            )
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+function isSafeMarkdownHref(value: string | undefined): value is string {
+  if (!value) return false
+
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function TurnObservabilityPanel({
   observedRun,
   turnStatus
@@ -1178,7 +1188,7 @@ function TurnObservabilityPanel({
   observedRun: ObservedRunSnapshot | null
   turnStatus: ConversationTurnStatus
 }): React.JSX.Element | null {
-  const [dialogTab, setDialogTab] = useState<'activity' | 'diagnostics' | null>(null)
+  const [drawerTab, setDrawerTab] = useState<ObservationDrawerTab | null>(null)
 
   if (!observedRun) {
     return turnStatus === 'running' ? (
@@ -1195,83 +1205,107 @@ function TurnObservabilityPanel({
 
   return (
     <div className="min-w-0 max-w-full overflow-hidden border-t pt-2">
-      <div className="flex min-w-0 max-w-full items-center justify-between gap-2 text-xs text-muted-foreground">
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-          {running ? (
-            <Loader2 className="size-3.5 shrink-0 animate-spin text-status-running" />
-          ) : (
-            <Activity className="size-3.5 shrink-0" />
-          )}
-          <span className="shrink-0 font-medium text-foreground">
-            {running ? 'Thinking' : formatObservedPhase(observedRun.currentPhase)}
-          </span>
-          {showActivityLabel ? (
-            <span className="min-w-0 flex-1 truncate">{activityLabel}</span>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            title="Activity"
-            aria-label="Open activity"
-            onClick={() => setDialogTab('activity')}
-          >
-            <Activity />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            title="Diagnostics"
-            aria-label="Open diagnostics"
-            onClick={() => setDialogTab('diagnostics')}
-          >
-            <TerminalSquare />
-          </Button>
-        </div>
-      </div>
-      <Dialog open={dialogTab !== null} onOpenChange={(open) => !open && setDialogTab(null)}>
-        <DialogContent className="max-h-[82vh] max-w-3xl overflow-hidden">
-          <DialogHeader>
-            <DialogTitle>{dialogTab === 'diagnostics' ? 'Diagnostics' : 'Activity'}</DialogTitle>
-            <DialogDescription>
+      <button
+        type="button"
+        className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        title="Open run details"
+        onClick={() => setDrawerTab('activity')}
+      >
+        {running ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-status-running" />
+        ) : (
+          <Activity className="size-3.5 shrink-0" />
+        )}
+        <span className="shrink-0 font-medium text-foreground">
+          {running ? 'Thinking' : formatObservedPhase(observedRun.currentPhase)}
+        </span>
+        {showActivityLabel ? (
+          <span className="min-w-0 flex-1 truncate">{activityLabel}</span>
+        ) : null}
+      </button>
+      <TurnObservationDrawer
+        openTab={drawerTab}
+        observedRun={observedRun}
+        onTabChange={setDrawerTab}
+        onClose={() => setDrawerTab(null)}
+      />
+    </div>
+  )
+}
+
+function TurnObservationDrawer({
+  openTab,
+  observedRun,
+  onTabChange,
+  onClose
+}: {
+  openTab: ObservationDrawerTab | null
+  observedRun: ObservedRunSnapshot
+  onTabChange: (tab: ObservationDrawerTab) => void
+  onClose: () => void
+}): React.JSX.Element | null {
+  if (!openTab) return null
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <button
+        type="button"
+        className="absolute inset-0 bg-background/60 backdrop-blur-[1px]"
+        aria-label="Close run details"
+        onClick={onClose}
+      />
+      <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-background shadow-2xl sm:w-[86vw] sm:max-w-[620px] xl:w-[44vw] xl:max-w-[680px]">
+        <header className="flex items-start justify-between gap-4 border-b p-4">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-semibold leading-6">
+              {openTab === 'diagnostics' ? 'Diagnostics' : 'Activity'}
+            </h2>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
               {observedRun.assignedAgentName} / {formatObservedPhase(observedRun.currentPhase)} /{' '}
               {formatLivenessHealth(observedRun.livenessHealth)}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant={dialogTab === 'activity' ? 'secondary' : 'outline'}
-              size="sm"
-              onClick={() => setDialogTab('activity')}
-            >
-              <Activity />
-              Activity
-            </Button>
-            <Button
-              type="button"
-              variant={dialogTab === 'diagnostics' ? 'secondary' : 'outline'}
-              size="sm"
-              onClick={() => setDialogTab('diagnostics')}
-            >
-              <TerminalSquare />
-              Diagnostics
-            </Button>
+            </p>
           </div>
-          <ScrollArea className="max-h-[58vh] pr-3">
-            {dialogTab === 'diagnostics' ? (
-              <TurnDiagnosticsPanel observedRun={observedRun} />
-            ) : (
-              <TurnActivityTimeline observedRun={observedRun} />
-            )}
-          </ScrollArea>
-        </DialogContent>
-      </Dialog>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="Close run details"
+            onClick={onClose}
+          >
+            <XCircle className="size-4" />
+          </Button>
+        </header>
+
+        <div className="flex gap-2 border-b px-4 py-3">
+          <Button
+            type="button"
+            variant={openTab === 'activity' ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => onTabChange('activity')}
+          >
+            <Activity />
+            Activity
+          </Button>
+          <Button
+            type="button"
+            variant={openTab === 'diagnostics' ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => onTabChange('diagnostics')}
+          >
+            <TerminalSquare />
+            Diagnostics
+          </Button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 ordinus-scrollbar">
+          {openTab === 'diagnostics' ? (
+            <TurnDiagnosticsPanel observedRun={observedRun} />
+          ) : (
+            <TurnActivityTimeline observedRun={observedRun} />
+          )}
+        </div>
+      </aside>
     </div>
   )
 }
@@ -1808,7 +1842,10 @@ function Composer({
   blockedReason,
   disabled,
   sending,
+  routingDisabled,
+  updatingRoutingMode,
   onChange,
+  onRoutingModeChange,
   onSelectMention,
   onSend
 }: {
@@ -1819,7 +1856,10 @@ function Composer({
   blockedReason: string
   disabled: boolean
   sending: boolean
+  routingDisabled: boolean
+  updatingRoutingMode: boolean
   onChange: (value: string) => void
+  onRoutingModeChange: (orchestrated: boolean) => void
   onSelectMention: (mention: DraftMention) => void
   onSend: () => void
 }): React.JSX.Element {
@@ -1835,10 +1875,15 @@ function Composer({
   const selectedMentionIds = selectedMentions.map((mention) =>
     getMentionOptionId(mention.participantIds)
   )
+  const orchestrated = routingMode === 'orchestrated'
   const placeholder =
-    routingMode === 'orchestrated'
+    orchestrated
       ? 'Describe the work. Mentions are routing hints for Orchestrator.'
       : 'Ask this agent to inspect, explain, plan, or change something in the workspace.'
+
+  useEffect(() => {
+    resizeComposerTextarea(textareaRef.current)
+  }, [value])
 
   function selectMention(
     option: MentionOption,
@@ -1913,20 +1958,13 @@ function Composer({
   }
 
   return (
-    <div className="border-t bg-card p-4">
+    <div className="border-t bg-background p-4">
       {blockedReason ? (
         <p className="mb-3 rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
           {blockedReason}
         </p>
       ) : null}
-      <div className="grid gap-3">
-        {participants.length > 1 ? (
-          <MentionShortcutChips
-            participants={participants}
-            selectedMentionIds={selectedMentionIds}
-            onSelect={selectMention}
-          />
-        ) : null}
+      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
         <div className="relative">
           {showMentionPicker ? (
             <MentionPicker
@@ -1942,7 +1980,7 @@ function Composer({
           ) : null}
           <textarea
             ref={textareaRef}
-            className="ordinus-scrollbar max-h-52 min-h-28 w-full resize-y overflow-y-auto rounded-lg border bg-card p-3 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="ordinus-scrollbar max-h-40 min-h-14 w-full resize-none overflow-y-hidden bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0"
             placeholder={placeholder}
             value={value}
             onChange={handleTextareaChange}
@@ -1955,14 +1993,87 @@ function Composer({
             }}
           />
         </div>
-        <div className="flex justify-end">
-          <Button type="button" disabled={disabled} onClick={onSend}>
+        <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            {participants.length > 1 ? (
+              <>
+                <RoutingModeSwitch
+                  orchestrated={orchestrated}
+                  disabled={routingDisabled || updatingRoutingMode || sending}
+                  onChange={onRoutingModeChange}
+                />
+                <MentionShortcutChips
+                  participants={participants}
+                  selectedMentionIds={selectedMentionIds}
+                  onSelect={selectMention}
+                />
+              </>
+            ) : null}
+          </div>
+          <Button type="button" size="sm" disabled={disabled} onClick={onSend}>
             {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
             Send
           </Button>
         </div>
-      </div>
+      </section>
     </div>
+  )
+}
+
+function resizeComposerTextarea(textarea: HTMLTextAreaElement | null): void {
+  if (!textarea) return
+
+  textarea.style.height = '0px'
+  const nextHeight = Math.min(textarea.scrollHeight, composerTextareaMaxHeight)
+  textarea.style.height = `${nextHeight}px`
+  textarea.style.overflowY =
+    textarea.scrollHeight > composerTextareaMaxHeight ? 'auto' : 'hidden'
+}
+
+function RoutingModeSwitch({
+  orchestrated,
+  disabled,
+  onChange
+}: {
+  orchestrated: boolean
+  disabled: boolean
+  onChange: (orchestrated: boolean) => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={orchestrated}
+      disabled={disabled}
+      title={
+        orchestrated
+          ? 'Ordinus routes every message before agents run.'
+          : 'Messages go directly to mentioned agents.'
+      }
+      className={cn(
+        'inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors disabled:pointer-events-none',
+        orchestrated
+          ? 'border-primary/30 bg-primary-soft text-foreground'
+          : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+      )}
+      onClick={() => onChange(!orchestrated)}
+    >
+      <span
+        className={cn(
+          'flex h-4 w-7 items-center rounded-full border p-0.5 transition-colors',
+          orchestrated ? 'border-primary bg-primary' : 'border-border bg-card'
+        )}
+        aria-hidden="true"
+      >
+        <span
+          className={cn(
+            'size-2.5 rounded-full bg-background transition-transform duration-150 ease-out',
+            orchestrated && 'translate-x-3'
+          )}
+        />
+      </span>
+      <span className="shrink-0">Orchestrator</span>
+    </button>
   )
 }
 

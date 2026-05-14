@@ -170,14 +170,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function buildConversationOutcomeInstructions(): string {
-  return `Return JSON only. Do not include markdown fences, prose, or comments.
+  return `Return JSON only. Do not wrap the JSON response in markdown fences, prose, or comments.
 
 Your response must match exactly one of these shapes:
 
 For a normal answer:
 {
   "outcome": "final_response",
-  "content": "Concise summary of the completed work.",
+  "content": "Concise GitHub-flavored Markdown summary of the completed work.",
   "artifactRefs": ["workspace-relative/path/to/user-facing-output.md"],
   "changedFiles": ["workspace-relative/path/to/created-or-modified-file.md"]
 }
@@ -215,6 +215,10 @@ Input request rules:
 
 Final response rules:
 - Keep content as a concise result summary, not a full copied report when files were created.
+- Format content as GitHub-flavored Markdown.
+- Use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose when presenting multiple points.
+- Use fenced code blocks for code, commands, diffs, logs, or structured snippets.
+- Do not use raw HTML in content.
 - Use artifactRefs for user-facing deliverables such as reports, PDFs, spreadsheets, images, or final documents.
 - Use changedFiles for every file you created or modified, including artifacts.
 - All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..".
