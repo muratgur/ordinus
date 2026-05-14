@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Clock3,
   Columns3,
-  FolderOpen,
   GitBranch,
   Loader2,
   Search,
@@ -38,6 +37,10 @@ import {
   formatObservedPhase,
   mergeDiagnostics
 } from '@renderer/components/observability-details'
+import {
+  FileReferenceList,
+  getFileReferences
+} from '@renderer/components/file-reference-list'
 import {
   Dialog,
   DialogContent,
@@ -1585,24 +1588,17 @@ function RunFilesTab({
   run: WorkboardRun
   onRevealPath: (path: string) => void
 }): React.JSX.Element {
-  const hasFiles = run.artifactRefs.length > 0 || run.changedFiles.length > 0
+  const files = getFileReferences(run.artifactRefs, run.changedFiles)
 
-  if (!hasFiles) {
+  if (files.length === 0) {
     return <EmptyDetailState>No files reported.</EmptyDetailState>
   }
 
   return (
     <div className="grid gap-3">
-      {run.artifactRefs.length > 0 ? (
-        <DetailBlock label="Artifacts">
-          <PathList paths={run.artifactRefs} onReveal={onRevealPath} />
-        </DetailBlock>
-      ) : null}
-      {run.changedFiles.length > 0 ? (
-        <DetailBlock label="Changed files">
-          <PathList paths={run.changedFiles} onReveal={onRevealPath} />
-        </DetailBlock>
-      ) : null}
+      <DetailBlock label="Files">
+        <FileReferenceList files={files} onRevealPath={onRevealPath} />
+      </DetailBlock>
     </div>
   )
 }
@@ -2096,38 +2092,6 @@ function EmptyDetailState({ children }: { children: React.ReactNode }): React.JS
   return (
     <div className="rounded-lg border border-dashed bg-card p-4 text-sm text-muted-foreground">
       {children}
-    </div>
-  )
-}
-
-function PathList({
-  paths,
-  onReveal
-}: {
-  paths: string[]
-  onReveal: (path: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="grid gap-2">
-      {paths.map((path) => (
-        <div
-          key={path}
-          className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5"
-        >
-          <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground">
-            {path}
-          </code>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            onClick={() => onReveal(path)}
-          >
-            <FolderOpen />
-            <span className="sr-only">Show in Finder</span>
-          </Button>
-        </div>
-      ))}
     </div>
   )
 }

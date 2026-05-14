@@ -6,12 +6,15 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   ClipboardList,
   Activity,
   FolderOpen,
   Loader2,
   MessageSquareText,
+  MoreHorizontal,
   Pencil,
   Plus,
   SendHorizontal,
@@ -46,6 +49,11 @@ import {
   formatObservedPhase,
   mergeDiagnostics
 } from '@renderer/components/observability-details'
+import {
+  FileReferenceList,
+  getFileReferences,
+  type FileReference
+} from '@renderer/components/file-reference-list'
 import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
@@ -83,6 +91,12 @@ type MentionPickerState = {
   start: number
   end: number
   query: string
+}
+
+type PendingSend = {
+  conversationId: string
+  message: string
+  orchestrated: boolean
 }
 
 type ObservationDrawerTab = 'activity' | 'diagnostics'
@@ -128,6 +142,7 @@ export function ConversationsScreen(): React.JSX.Element {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [draftMentions, setDraftMentions] = useState<DraftMention[]>([])
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null)
   const [sending, setSending] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [answeringRequestId, setAnsweringRequestId] = useState('')
@@ -147,7 +162,9 @@ export function ConversationsScreen(): React.JSX.Element {
   const [renameError, setRenameError] = useState('')
   const [openingConversationFolder, setOpeningConversationFolder] = useState(false)
   const [observedRuns, setObservedRuns] = useState<ObservedRunSnapshot[]>([])
+  const messagesScrollAreaRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const shouldFollowMessagesRef = useRef(true)
 
   const runningTurns = detail?.turns.filter((turn) => turn.status === 'running') ?? []
   const runningTurn = runningTurns[0] ?? null
@@ -161,8 +178,7 @@ export function ConversationsScreen(): React.JSX.Element {
     Boolean(pendingInputRequest) ||
     sending ||
     !participant ||
-    !message.trim() ||
-    (requiresMentionTarget(detail) && draftMentions.length === 0)
+    !message.trim()
   const latestTurn = detail?.turns.at(-1)
   const latestTurnSignature = latestTurn
     ? `${detail?.id}:${latestTurn.id}:${latestTurn.status}:${latestTurn.content}`
@@ -171,6 +187,7 @@ export function ConversationsScreen(): React.JSX.Element {
     () => new Map(observedRuns.map((run) => [run.sourceItemId, run])),
     [observedRuns]
   )
+  const activePendingSend = pendingSend?.conversationId === detail?.id ? pendingSend : null
 
   function updateInputDraft(requestId: string, questionId: string, draft: AnswerDraft): void {
     setInputDrafts((current) => ({
@@ -291,7 +308,15 @@ export function ConversationsScreen(): React.JSX.Element {
   }, [runningTurn, selectedConversationId])
 
   useEffect(() => {
-    if (!detail || detail.turns.length === 0) {
+    shouldFollowMessagesRef.current = true
+  }, [selectedConversationId])
+
+  useEffect(() => {
+    if (!detail || (detail.turns.length === 0 && !activePendingSend)) {
+      return
+    }
+
+    if (!shouldFollowMessagesRef.current) {
       return
     }
 
@@ -300,7 +325,24 @@ export function ConversationsScreen(): React.JSX.Element {
     })
 
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [detail, latestTurnSignature])
+  }, [activePendingSend, detail, latestTurnSignature])
+
+  useEffect(() => {
+    const viewport = getScrollAreaViewport(messagesScrollAreaRef.current)
+    if (!viewport) {
+      return
+    }
+    const scrollViewport = viewport
+
+    function handleScroll(): void {
+      shouldFollowMessagesRef.current = isScrollViewportNearBottom(scrollViewport)
+    }
+
+    scrollViewport.addEventListener('scroll', handleScroll, { passive: true })
+    handleScroll()
+
+    return () => scrollViewport.removeEventListener('scroll', handleScroll)
+  }, [detail?.id])
 
   async function selectConversation(conversationId: string): Promise<void> {
     setMessage('')
@@ -332,21 +374,34 @@ export function ConversationsScreen(): React.JSX.Element {
       return
     }
 
+    shouldFollowMessagesRef.current = true
+    const sentMessage = message
+    const sentMentions = draftMentions
+    const sentConversationId = detail.id
+    const sentViaOrchestrator = usesOrchestrator(detail)
+
     try {
       setSending(true)
       setError('')
-      const nextDetail = await window.ordinus.conversations.sendTurn({
-        conversationId: detail.id,
-        targetParticipantIds: sendsMentionTargets(detail)
-          ? getDraftMentionParticipantIds(draftMentions)
-          : undefined,
-        message
+      setPendingSend({
+        conversationId: sentConversationId,
+        message: sentMessage,
+        orchestrated: sentViaOrchestrator
       })
       setMessage('')
       setDraftMentions([])
+      const nextDetail = await window.ordinus.conversations.sendTurn({
+        conversationId: sentConversationId,
+        targetParticipantIds: getSendTargetParticipantIds(detail, sentMentions),
+        message: sentMessage
+      })
+      setPendingSend(null)
       setDetail(nextDetail)
       await loadConversations(nextDetail.id)
     } catch (sendError) {
+      setPendingSend(null)
+      setMessage(sentMessage)
+      setDraftMentions(sentMentions)
       setError(getErrorMessage(sendError, 'Message could not be sent.'))
     } finally {
       setSending(false)
@@ -570,42 +625,35 @@ export function ConversationsScreen(): React.JSX.Element {
                   setRenameOpen(true)
                 }}
               />
-              <ScrollArea className="min-h-0 flex-1">
+              <ScrollArea ref={messagesScrollAreaRef} className="min-h-0 flex-1">
                 <CardContent className="grid gap-3 p-4">
-                  {detail.turns.length > 0 ? (
+                  {detail.turns.length > 0 || activePendingSend ? (
                     detail.turns.map((turn, index) => {
-                      const turnInputRequests = detail.inputRequests.filter(
-                        (request) => request.turnId === turn.id
+                      const turnInputRequest = detail.inputRequests.find(
+                        (request) => request.turnId === turn.id && request.status === 'pending'
                       )
+                      const turnInputRequestDisabled = turnInputRequest
+                        ? hasRunningTurnForParticipant(detail.turns, turnInputRequest.participantId)
+                        : false
+                      const answeringTurnInputRequest = turnInputRequest
+                        ? answeringRequestId === turnInputRequest.id
+                        : false
 
                       return (
-                        <div key={turn.id} className="grid gap-3">
-                          <TurnCard
-                            turn={turn}
-                            participantName={getTurnParticipantLabel(detail, turn, index)}
-                            observedRun={observedRunByTurnId.get(turn.id) ?? null}
-                            onRevealPath={(path) => void handleRevealPath(turn.id, path)}
-                          />
-                          {turnInputRequests.map((request) => (
-                            <InputRequestCard
-                              key={request.id}
-                              request={request}
-                              participantName={getParticipantName(
-                                detail.participants,
-                                request.participantId
-                              )}
-                              disabled={hasRunningTurnForParticipant(
-                                detail.turns,
-                                request.participantId
-                              )}
-                              drafts={inputDrafts[request.id] ?? {}}
-                              answering={answeringRequestId === request.id}
-                              cancelling={cancellingRequestId === request.id}
-                              onOpen={() => setActiveInputRequestId(request.id)}
-                              onCancel={() => void handleCancelInputRequest(request.id)}
-                            />
-                          ))}
-                        </div>
+                        <TurnCard
+                          key={turn.id}
+                          turn={turn}
+                          participantName={getTurnParticipantLabel(detail, turn, index)}
+                          observedRun={observedRunByTurnId.get(turn.id) ?? null}
+                          inputRequest={turnInputRequest ?? null}
+                          inputRequestDrafts={
+                            turnInputRequest ? (inputDrafts[turnInputRequest.id] ?? {}) : {}
+                          }
+                          answeringInputRequest={answeringTurnInputRequest}
+                          inputRequestDisabled={turnInputRequestDisabled}
+                          onOpenInputRequest={(requestId) => setActiveInputRequestId(requestId)}
+                          onRevealPath={(path) => void handleRevealPath(turn.id, path)}
+                        />
                       )
                     })
                   ) : (
@@ -615,6 +663,9 @@ export function ConversationsScreen(): React.JSX.Element {
                       detail="Send the first request to start this agent session."
                     />
                   )}
+                  {activePendingSend ? (
+                    <PendingSendTimeline pendingSend={activePendingSend} />
+                  ) : null}
                   <div ref={messagesEndRef} aria-hidden="true" />
                 </CardContent>
               </ScrollArea>
@@ -627,8 +678,7 @@ export function ConversationsScreen(): React.JSX.Element {
                   detail,
                   participant,
                   runningTurn,
-                  pendingInputRequest,
-                  draftMentions
+                  pendingInputRequest
                 )}
                 disabled={composerBlocked}
                 sending={sending}
@@ -1085,15 +1135,28 @@ function TurnCard({
   turn,
   participantName,
   observedRun,
+  inputRequest,
+  inputRequestDrafts,
+  answeringInputRequest,
+  inputRequestDisabled,
+  onOpenInputRequest,
   onRevealPath
 }: {
   turn: ConversationTurn
   participantName: string
   observedRun: ObservedRunSnapshot | null
+  inputRequest: ConversationInputRequest | null
+  inputRequestDrafts: Record<string, AnswerDraft>
+  answeringInputRequest: boolean
+  inputRequestDisabled: boolean
+  onOpenInputRequest: (requestId: string) => void
   onRevealPath: (path: string) => void
 }): React.JSX.Element {
   const isUser = turn.speaker === 'user'
   const Icon = isUser ? UserRound : Bot
+  const showStatus = shouldShowTurnStatus(turn, inputRequest)
+  const showInputRequestAction =
+    !isUser && turn.status === 'waiting_for_user' && inputRequest?.status === 'pending'
 
   return (
     <article
@@ -1101,7 +1164,9 @@ function TurnCard({
         'grid w-full min-w-0 max-w-full gap-2 overflow-hidden rounded-lg border bg-card p-4',
         isUser
           ? 'ml-auto w-fit border-primary/20 bg-primary-soft/70 sm:max-w-[86%] dark:border-primary/30 dark:bg-primary-soft/45'
-          : 'mr-auto border-border bg-surface-subtle/70 border-l-4 border-l-primary/30 sm:max-w-[82%] dark:bg-surface-subtle/55 dark:border-l-primary/45'
+          : 'mr-auto border-border bg-surface-subtle/70 border-l-4 border-l-primary/30 sm:max-w-[82%] dark:bg-surface-subtle/55 dark:border-l-primary/45',
+        showInputRequestAction &&
+          'border-status-blocked/30 bg-status-blocked/10 dark:border-status-blocked/35 dark:bg-status-blocked/10'
       )}
     >
       <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1113,7 +1178,17 @@ function TurnCard({
               : participantName || 'Agent'}
           </p>
         </div>
-        {turn.status !== 'completed' ? <TurnStatus status={turn.status} /> : null}
+        {showInputRequestAction ? (
+          <InputRequestTurnAction
+            request={inputRequest}
+            drafts={inputRequestDrafts}
+            disabled={inputRequestDisabled || answeringInputRequest}
+            answering={answeringInputRequest}
+            onOpen={() => onOpenInputRequest(inputRequest.id)}
+          />
+        ) : showStatus ? (
+          <TurnStatus status={turn.status} />
+        ) : null}
       </div>
       {turn.status === 'running' ? (
         null
@@ -1134,10 +1209,61 @@ function TurnCard({
       {!isUser && turn.status === 'completed' ? (
         <TurnFiles turn={turn} onRevealPath={onRevealPath} />
       ) : null}
-      {!isUser ? (
+      {!isUser && !showInputRequestAction ? (
         <TurnObservabilityPanel observedRun={observedRun} turnStatus={turn.status} />
       ) : null}
     </article>
+  )
+}
+
+function InputRequestTurnAction({
+  request,
+  drafts,
+  disabled,
+  answering,
+  onOpen
+}: {
+  request: ConversationInputRequest
+  drafts: Record<string, AnswerDraft>
+  disabled: boolean
+  answering: boolean
+  onOpen: () => void
+}): React.JSX.Element {
+  const progress = getInputRequestProgress(request, drafts)
+
+  return (
+    <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={onOpen}>
+      {answering ? <Loader2 className="animate-spin" /> : <ClipboardList />}
+      {progress.canContinue ? 'Review' : 'Answer'}
+    </Button>
+  )
+}
+
+function PendingSendTimeline({ pendingSend }: { pendingSend: PendingSend }): React.JSX.Element {
+  return (
+    <div className="grid gap-3">
+      <article className="ml-auto grid w-fit max-w-full gap-2 overflow-hidden rounded-lg border border-primary/20 bg-primary-soft/70 p-4 dark:border-primary/30 dark:bg-primary-soft/45 sm:max-w-[86%]">
+        <div className="flex min-w-0 items-center gap-2">
+          <UserRound className="size-4 shrink-0 text-primary" />
+          <p className="truncate text-sm font-semibold">You</p>
+        </div>
+        <p className="min-w-0 select-text whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+          {pendingSend.message}
+        </p>
+      </article>
+      {pendingSend.orchestrated ? <OrchestratorPlanningRow /> : null}
+    </div>
+  )
+}
+
+function OrchestratorPlanningRow(): React.JSX.Element {
+  return (
+    <div className="mr-auto flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-dashed bg-surface-subtle/60 px-3 py-2 text-xs text-muted-foreground sm:max-w-[82%]">
+      <Activity className="size-3.5 shrink-0 text-primary" />
+      <span className="shrink-0 font-medium text-foreground">Orchestrator</span>
+      <span className="min-w-0 truncate">is planning the route</span>
+      <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-status-running" />
+    </div>
   )
 }
 
@@ -1200,6 +1326,10 @@ function TurnObservabilityPanel({
   }
 
   const running = isConversationObservationRunning(turnStatus, observedRun)
+  if (!shouldShowConversationObservability(turnStatus, observedRun, running)) {
+    return null
+  }
+
   const activityLabel = getConversationActivityLabel(observedRun)
   const showActivityLabel = shouldShowConversationActivityLabel(observedRun, running)
 
@@ -1451,136 +1581,31 @@ function TurnFiles({
   turn: ConversationTurn
   onRevealPath: (path: string) => void
 }): React.JSX.Element | null {
-  const hasFiles = turn.artifactRefs.length > 0 || turn.changedFiles.length > 0
+  const files = getFileReferences(turn.artifactRefs, turn.changedFiles)
 
-  if (!hasFiles) {
+  if (files.length === 0) {
     return null
   }
 
   return (
     <div className="grid gap-2 border-t pt-2">
-      {turn.artifactRefs.length > 0 ? (
-        <TurnFileSection label="Artifacts" paths={turn.artifactRefs} onReveal={onRevealPath} />
-      ) : null}
-      {turn.changedFiles.length > 0 ? (
-        <TurnFileSection label="Changed files" paths={turn.changedFiles} onReveal={onRevealPath} />
-      ) : null}
+      <TurnFileSection files={files} onReveal={onRevealPath} />
     </div>
   )
 }
 
 function TurnFileSection({
-  label,
-  paths,
+  files,
   onReveal
 }: {
-  label: string
-  paths: string[]
+  files: FileReference[]
   onReveal: (path: string) => void
 }): React.JSX.Element {
   return (
     <div className="grid gap-1.5">
-      <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
-      <PathList paths={paths} onReveal={onReveal} />
+      <p className="text-xs font-medium uppercase text-muted-foreground">Files</p>
+      <FileReferenceList files={files} onRevealPath={onReveal} />
     </div>
-  )
-}
-
-function PathList({
-  paths,
-  onReveal
-}: {
-  paths: string[]
-  onReveal: (path: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="grid gap-2">
-      {paths.map((path) => (
-        <div
-          key={path}
-          className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5"
-        >
-          <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground">
-            {path}
-          </code>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            onClick={() => onReveal(path)}
-          >
-            <FolderOpen />
-            <span className="sr-only">Show in Finder</span>
-          </Button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function InputRequestCard({
-  request,
-  participantName,
-  disabled,
-  drafts,
-  answering,
-  cancelling,
-  onOpen,
-  onCancel
-}: {
-  request: ConversationInputRequest
-  participantName: string
-  disabled: boolean
-  drafts: Record<string, AnswerDraft>
-  answering: boolean
-  cancelling: boolean
-  onOpen: () => void
-  onCancel: () => void
-}): React.JSX.Element {
-  const progress = getInputRequestProgress(request, drafts)
-  const actionDisabled = disabled || answering || cancelling
-
-  return (
-    <article className="mr-auto grid w-full max-w-[92%] gap-3 rounded-lg border border-status-blocked/30 bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 rounded-md border border-status-blocked/20 bg-status-blocked/10 p-2 text-status-blocked">
-            <ClipboardList className="size-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">{participantName || 'Agent'} needs your input</p>
-            <p className="mt-1 text-sm font-medium text-foreground">{request.title}</p>
-          </div>
-        </div>
-        <TurnStatus status={getTurnStatusForInputRequest(request.status)} />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={progress.canContinue ? 'completed' : 'blocked'}>
-          {progress.answeredCount}/{request.questions.length} answered
-        </Badge>
-        {request.detail ? (
-          <span className="line-clamp-1 text-xs text-muted-foreground">{request.detail}</span>
-        ) : null}
-      </div>
-
-      {request.status === 'resolved' && request.answers && request.answers.length > 0 ? (
-        <AnsweredRequestSummary request={request} />
-      ) : null}
-
-      {request.status === 'pending' ? (
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="secondary" disabled={actionDisabled} onClick={onCancel}>
-            {cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}
-            Cancel
-          </Button>
-          <Button type="button" disabled={actionDisabled} onClick={onOpen}>
-            {answering ? <Loader2 className="animate-spin" /> : <ClipboardList />}
-            {progress.canContinue ? 'Review answers' : 'Answer'}
-          </Button>
-        </div>
-      ) : null}
-    </article>
   )
 }
 
@@ -1609,51 +1634,133 @@ function InputRequestDialog({
 }): React.JSX.Element {
   const progress = getInputRequestProgress(request, drafts)
   const formDisabled = disabled || request.status !== 'pending' || answering || cancelling
-  const actionDisabled = disabled || answering || cancelling
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0)
+  const activeQuestion = request.questions[activeQuestionIndex] ?? null
+  const currentQuestionAnswered = activeQuestion ? hasAnswer(activeQuestion, drafts) : true
+  const canMoveBack = activeQuestionIndex > 0
+  const isLastQuestion = activeQuestionIndex >= request.questions.length - 1
+  const canMoveForward = Boolean(activeQuestion) && !formDisabled && currentQuestionAnswered
+
+  useEffect(() => {
+    setActiveQuestionIndex(0)
+  }, [request.id])
+
+  useEffect(() => {
+    if (activeQuestionIndex >= request.questions.length) {
+      setActiveQuestionIndex(Math.max(0, request.questions.length - 1))
+    }
+  }, [activeQuestionIndex, request.questions.length])
+
+  function moveForward(): void {
+    if (!activeQuestion || !canMoveForward) return
+
+    advanceOrAnswer(progress)
+  }
+
+  function handleQuestionDraftChange(question: InteractionQuestion, draft: AnswerDraft): void {
+    onDraftChange(question.id, draft)
+
+    if (!shouldAdvanceAfterDraft(question, draft)) {
+      return
+    }
+
+    advanceOrAnswer(getInputRequestProgress(request, getDraftsWithQuestionDraft(question, draft)))
+  }
+
+  function submitQuestionDraft(question: InteractionQuestion, draft: AnswerDraft): void {
+    onDraftChange(question.id, draft)
+
+    const nextDrafts = getDraftsWithQuestionDraft(question, draft)
+    if (!hasAnswer(question, nextDrafts)) {
+      return
+    }
+
+    advanceOrAnswer(getInputRequestProgress(request, nextDrafts))
+  }
+
+  function advanceOrAnswer(nextProgress: InputRequestProgress): void {
+    if (isLastQuestion) {
+      if (nextProgress.canContinue) {
+        onAnswer(nextProgress.answers)
+      }
+      return
+    }
+
+    setActiveQuestionIndex((current) => Math.min(current + 1, request.questions.length - 1))
+  }
+
+  function getDraftsWithQuestionDraft(
+    question: InteractionQuestion,
+    draft: AnswerDraft
+  ): Record<string, AnswerDraft> {
+    return { ...drafts, [question.id]: draft }
+  }
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl p-0">
+      <DialogContent className="max-w-xl p-0">
         <DialogHeader className="border-b px-6 py-5">
           <div className="flex items-start justify-between gap-4 pr-8">
             <div className="min-w-0">
               <DialogTitle>{participantName || 'Agent'} needs your input</DialogTitle>
-              <DialogDescription className="mt-2">{request.title}</DialogDescription>
+              <DialogDescription className="mt-2">
+                {request.detail || request.title}
+              </DialogDescription>
             </div>
-            <Badge variant={progress.canContinue ? 'completed' : 'blocked'}>
-              {progress.answeredCount}/{request.questions.length} answered
-            </Badge>
-          </div>
-          {request.detail ? (
-            <p className="mt-3 text-sm leading-6 text-muted-foreground">{request.detail}</p>
-          ) : null}
-        </DialogHeader>
-        <ScrollArea className="max-h-[min(680px,calc(100vh-14rem))]">
-          <div className="grid gap-5 px-6 py-5">
-            {request.questions.map((question, index) => (
-              <QuestionInput
-                key={question.id}
-                index={index}
-                question={question}
-                draft={drafts[question.id]}
-                disabled={formDisabled}
-                onChange={(draft) => onDraftChange(question.id, draft)}
+            <div className="flex shrink-0 items-center gap-2">
+              <InputRequestActionsMenu
+                cancelling={cancelling}
+                disabled={disabled || answering || cancelling}
+                onCancel={onCancel}
               />
-            ))}
+            </div>
+          </div>
+        </DialogHeader>
+        <ScrollArea className="max-h-[min(520px,calc(100vh-14rem))]">
+          <div className="px-6 py-5">
+            {activeQuestion ? (
+              <QuestionInput
+                key={activeQuestion.id}
+                question={activeQuestion}
+                draft={drafts[activeQuestion.id]}
+                disabled={formDisabled}
+                onChange={(draft) => handleQuestionDraftChange(activeQuestion, draft)}
+                onSubmit={(draft) => submitQuestionDraft(activeQuestion, draft)}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                This request does not include any questions.
+              </p>
+            )}
           </div>
         </ScrollArea>
-        <DialogFooter className="border-t px-6 py-4">
-          <Button type="button" variant="secondary" disabled={actionDisabled} onClick={onCancel}>
-            {cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}
-            Cancel request
-          </Button>
+        <DialogFooter className="flex-row items-center justify-center border-t px-6 py-3 sm:justify-center">
           <Button
             type="button"
-            disabled={actionDisabled || !progress.canContinue}
-            onClick={() => onAnswer(progress.answers)}
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            disabled={formDisabled || !canMoveBack}
+            aria-label="Previous question"
+            onClick={() => setActiveQuestionIndex((current) => Math.max(0, current - 1))}
           >
-            {answering ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
-            Continue
+            <ChevronLeft />
+          </Button>
+          <span className="min-w-10 text-center text-xs font-medium text-muted-foreground">
+            {request.questions.length > 0
+              ? `${activeQuestionIndex + 1}/${request.questions.length}`
+              : '0/0'}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            disabled={!canMoveForward || (isLastQuestion && !progress.canContinue)}
+            aria-label={isLastQuestion ? 'Send answers' : 'Next question'}
+            onClick={moveForward}
+          >
+            {answering ? <Loader2 className="animate-spin" /> : <ChevronRight />}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1661,45 +1768,102 @@ function InputRequestDialog({
   )
 }
 
-function AnsweredRequestSummary({
-  request
+function InputRequestActionsMenu({
+  cancelling,
+  disabled,
+  onCancel
 }: {
-  request: ConversationInputRequest
+  cancelling: boolean
+  disabled: boolean
+  onCancel: () => void
 }): React.JSX.Element {
-  const summaries = getAnsweredRequestSummaries(request)
+  const [open, setOpen] = useState(false)
+  const [confirming, setConfirming] = useState(false)
 
   return (
-    <div className="grid gap-1 rounded-md border bg-accent/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
-      {summaries.map((summary) => (
-        <p key={summary.questionId} className="line-clamp-1">
-          <span className="font-medium text-foreground">{summary.label}:</span> {summary.answer}
-        </p>
-      ))}
+    <div className="relative">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-8"
+        disabled={disabled}
+        aria-expanded={open}
+        aria-label="Request options"
+        onClick={() => {
+          setOpen((current) => !current)
+          setConfirming(false)
+        }}
+      >
+        <MoreHorizontal />
+      </Button>
+      {open ? (
+        <div className="absolute right-0 top-10 z-50 grid w-64 gap-2 rounded-lg border bg-card p-2 text-card-foreground shadow-lg">
+          {confirming ? (
+            <>
+              <p className="px-2 pt-1 text-xs leading-5 text-muted-foreground">
+                This cancels the agent request, not just this window.
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={cancelling}
+                  onClick={() => setConfirming(false)}
+                >
+                  Keep
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="border-status-failed/30 text-status-failed hover:bg-status-failed/10"
+                  disabled={cancelling}
+                  onClick={onCancel}
+                >
+                  {cancelling ? <Loader2 className="animate-spin" /> : <XCircle />}
+                  Cancel request
+                </Button>
+              </div>
+            </>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="justify-start text-status-failed hover:bg-status-failed/10 hover:text-status-failed"
+              onClick={() => setConfirming(true)}
+            >
+              <XCircle />
+              Cancel request
+            </Button>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }
 
 function QuestionInput({
-  index,
   question,
   draft,
   disabled,
-  onChange
+  onChange,
+  onSubmit
 }: {
-  index: number
   question: InteractionQuestion
   draft: AnswerDraft | undefined
   disabled: boolean
   onChange: (draft: AnswerDraft) => void
+  onSubmit: (draft: AnswerDraft) => void
 }): React.JSX.Element {
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-4">
       <div>
-        <p className="text-sm font-medium">
-          {index + 1}. {question.label}
-        </p>
+        <p className="text-base font-semibold leading-7">{question.label}</p>
         {question.detail ? (
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">{question.detail}</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">{question.detail}</p>
         ) : null}
       </div>
 
@@ -1709,23 +1873,24 @@ function QuestionInput({
           draft={draft}
           disabled={disabled}
           onChange={onChange}
+          onSubmit={onSubmit}
         />
       ) : question.kind === 'boolean' ? (
-        <div className="flex flex-wrap gap-2">
-          <OptionButton
+        <div className="grid gap-2">
+          <AnswerOptionRow
             selected={draft?.type === 'boolean' && draft.value}
             disabled={disabled}
             onClick={() => onChange({ type: 'boolean', value: true })}
           >
             {question.trueLabel}
-          </OptionButton>
-          <OptionButton
+          </AnswerOptionRow>
+          <AnswerOptionRow
             selected={draft?.type === 'boolean' && !draft.value}
             disabled={disabled}
             onClick={() => onChange({ type: 'boolean', value: false })}
           >
             {question.falseLabel}
-          </OptionButton>
+          </AnswerOptionRow>
         </div>
       ) : (
         <textarea
@@ -1734,6 +1899,9 @@ function QuestionInput({
           value={draft?.type === 'text' ? draft.text : ''}
           disabled={disabled}
           onChange={(event) => onChange({ type: 'text', text: event.target.value })}
+          onKeyDown={(event) =>
+            handleAnswerTextareaKeyDown(event, { type: 'text', text: event.currentTarget.value }, onSubmit)
+          }
         />
       )}
     </div>
@@ -1744,12 +1912,14 @@ function ChoiceQuestionInput({
   question,
   draft,
   disabled,
-  onChange
+  onChange,
+  onSubmit
 }: {
   question: Extract<InteractionQuestion, { kind: 'choice' }>
   draft: AnswerDraft | undefined
   disabled: boolean
   onChange: (draft: AnswerDraft) => void
+  onSubmit: (draft: AnswerDraft) => void
 }): React.JSX.Element {
   const customSelected = draft?.type === 'custom'
   const singleCustomEntry = question.options.length === 1 && question.allowCustom !== false
@@ -1762,34 +1932,43 @@ function ChoiceQuestionInput({
         value={draft?.type === 'custom' ? draft.text : ''}
         disabled={disabled}
         onChange={(event) => onChange({ type: 'custom', text: event.target.value })}
+        onKeyDown={(event) =>
+          handleAnswerTextareaKeyDown(
+            event,
+            { type: 'custom', text: event.currentTarget.value },
+            onSubmit
+          )
+        }
       />
     )
   }
 
   return (
     <div className="grid gap-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2">
         {question.options.map((option) => (
-          <OptionButton
+          <AnswerOptionRow
             key={option.id}
             selected={draft?.type === 'option' && draft.optionId === option.id}
             disabled={disabled}
             onClick={() => onChange({ type: 'option', optionId: option.id })}
+            meta={
+              question.options.length > 1 && question.recommendedOptionId === option.id
+                ? 'Recommended'
+                : undefined
+            }
           >
-            <span>{option.label}</span>
-            {question.options.length > 1 && question.recommendedOptionId === option.id ? (
-              <span className="text-[11px] text-status-completed">Recommended</span>
-            ) : null}
-          </OptionButton>
+            {option.label}
+          </AnswerOptionRow>
         ))}
         {question.allowCustom !== false ? (
-          <OptionButton
+          <AnswerOptionRow
             selected={customSelected}
             disabled={disabled}
             onClick={() => onChange({ type: 'custom', text: '' })}
           >
             Custom
-          </OptionButton>
+          </AnswerOptionRow>
         ) : null}
       </div>
       {customSelected ? (
@@ -1799,21 +1978,45 @@ function ChoiceQuestionInput({
           value={draft.text}
           disabled={disabled}
           onChange={(event) => onChange({ type: 'custom', text: event.target.value })}
+          onKeyDown={(event) =>
+            handleAnswerTextareaKeyDown(
+              event,
+              { type: 'custom', text: event.currentTarget.value },
+              onSubmit
+            )
+          }
         />
       ) : null}
     </div>
   )
 }
 
-function OptionButton({
+function handleAnswerTextareaKeyDown(
+  event: React.KeyboardEvent<HTMLTextAreaElement>,
+  draft: Extract<AnswerDraft, { type: 'custom' | 'text' }>,
+  onSubmit: (draft: AnswerDraft) => void
+): void {
+  if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+    return
+  }
+
+  event.preventDefault()
+  if (draft.text.trim()) {
+    onSubmit(draft)
+  }
+}
+
+function AnswerOptionRow({
   selected,
   disabled,
   onClick,
+  meta,
   children
 }: {
   selected: boolean
   disabled: boolean
   onClick: () => void
+  meta?: string
   children: React.ReactNode
 }): React.JSX.Element {
   return (
@@ -1822,14 +2025,28 @@ function OptionButton({
       aria-pressed={selected}
       disabled={disabled}
       className={cn(
-        'inline-flex min-h-9 items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
+        'flex min-h-11 w-full items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:pointer-events-none disabled:opacity-50',
         selected
-          ? 'border-primary/40 bg-primary-soft text-foreground'
+          ? 'border-primary/50 bg-primary-soft text-foreground shadow-sm'
           : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground'
       )}
       onClick={onClick}
     >
-      {children}
+      <span
+        className={cn(
+          'flex size-4 shrink-0 items-center justify-center rounded-full border',
+          selected ? 'border-primary text-primary' : 'border-muted-foreground/40'
+        )}
+        aria-hidden="true"
+      >
+        {selected ? <CheckCircle2 className="size-3.5" /> : null}
+      </span>
+      <span className="min-w-0 flex-1 font-medium leading-5">{children}</span>
+      {meta ? (
+        <span className="shrink-0 rounded-full bg-status-completed/10 px-2 py-0.5 text-[11px] font-medium text-status-completed">
+          {meta}
+        </span>
+      ) : null}
     </button>
   )
 }
@@ -2400,6 +2617,34 @@ function TurnStatus({ status }: { status: ConversationTurnStatus }): React.JSX.E
   )
 }
 
+function shouldShowTurnStatus(
+  turn: ConversationTurn,
+  inputRequest: ConversationInputRequest | null
+): boolean {
+  if (turn.status === 'running') {
+    return false
+  }
+
+  if (turn.status === 'completed') {
+    return false
+  }
+
+  if (turn.status === 'waiting_for_user' && inputRequest?.status === 'pending') {
+    return false
+  }
+
+  return true
+}
+
+function getScrollAreaViewport(root: HTMLDivElement | null): HTMLDivElement | null {
+  return root?.querySelector<HTMLDivElement>('[data-radix-scroll-area-viewport]') ?? null
+}
+
+function isScrollViewportNearBottom(viewport: HTMLDivElement): boolean {
+  const remainingScroll = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+  return remainingScroll < 80
+}
+
 function isConversationObservationRunning(
   turnStatus: ConversationTurnStatus,
   observedRun: ObservedRunSnapshot
@@ -2407,14 +2652,33 @@ function isConversationObservationRunning(
   return turnStatus === 'running' || observedRun.lifecycleStatus === 'running'
 }
 
+function shouldShowConversationObservability(
+  turnStatus: ConversationTurnStatus,
+  observedRun: ObservedRunSnapshot,
+  running: boolean
+): boolean {
+  if (running) {
+    return true
+  }
+
+  return (
+    turnStatus === 'failed' ||
+    turnStatus === 'cancelled' ||
+    turnStatus === 'waiting_for_user' ||
+    observedRun.lifecycleStatus === 'failed' ||
+    observedRun.lifecycleStatus === 'cancelled' ||
+    observedRun.lifecycleStatus === 'waiting_for_user'
+  )
+}
+
 function shouldShowConversationActivityLabel(
   observedRun: ObservedRunSnapshot,
   running: boolean
 ): boolean {
   return (
-    running ||
-    observedRun.lifecycleStatus === 'failed' ||
-    observedRun.lifecycleStatus === 'waiting_for_user'
+    !running &&
+    (observedRun.lifecycleStatus === 'failed' ||
+      observedRun.lifecycleStatus === 'waiting_for_user')
   )
 }
 
@@ -2431,8 +2695,7 @@ function getBlockedReason(
   detail: ConversationDetail,
   participant: ConversationDetail['participants'][number] | null,
   runningTurn: ConversationTurn | null,
-  pendingInputRequest: ConversationInputRequest | undefined,
-  draftMentions: DraftMention[]
+  pendingInputRequest: ConversationInputRequest | undefined
 ): string {
   if (runningTurn) {
     return 'This conversation is running. Stop it or wait for the agent response.'
@@ -2450,10 +2713,6 @@ function getBlockedReason(
     return 'This conversation was cancelled. Send a new message to continue.'
   }
 
-  if (requiresMentionTarget(detail) && draftMentions.length === 0) {
-    return 'Choose a participant mention before sending.'
-  }
-
   return ''
 }
 
@@ -2467,16 +2726,6 @@ function formatEntryCount(count: number, label: string): string {
 
 function hasRunningTurnForParticipant(turns: ConversationTurn[], participantId: string): boolean {
   return turns.some((turn) => turn.participantId === participantId && turn.status === 'running')
-}
-
-function getTurnStatusForInputRequest(
-  status: ConversationInputRequest['status']
-): ConversationTurnStatus {
-  if (status === 'pending') {
-    return 'waiting_for_user'
-  }
-
-  return status === 'cancelled' ? 'cancelled' : 'completed'
 }
 
 function getInputRequestProgress(
@@ -2541,53 +2790,37 @@ function hasAnswer(question: InteractionQuestion, drafts: Record<string, AnswerD
   return true
 }
 
-function formatInteractionAnswer(question: InteractionQuestion, answer: InteractionAnswer): string {
-  if (answer.type === 'option' && question.kind === 'choice') {
-    return (
-      question.options.find((option) => option.id === answer.optionId)?.label ?? answer.optionId
-    )
+function shouldAdvanceAfterDraft(question: InteractionQuestion, draft: AnswerDraft): boolean {
+  if (question.kind === 'boolean') {
+    return draft.type === 'boolean'
   }
 
-  if (answer.type === 'custom' || answer.type === 'text') {
-    return answer.text
+  if (question.kind === 'choice') {
+    return draft.type === 'option'
   }
 
-  if (answer.type === 'boolean' && question.kind === 'boolean') {
-    return answer.value ? question.trueLabel : question.falseLabel
-  }
-
-  return ''
-}
-
-function getAnsweredRequestSummaries(
-  request: ConversationInputRequest
-): Array<{ questionId: string; label: string; answer: string }> {
-  return (request.answers ?? []).slice(0, 3).flatMap((answer) => {
-    const question = request.questions.find((item) => item.id === answer.questionId)
-    if (!question) {
-      return []
-    }
-
-    return [
-      {
-        questionId: answer.questionId,
-        label: question.label,
-        answer: formatInteractionAnswer(question, answer)
-      }
-    ]
-  })
+  return false
 }
 
 function usesOrchestrator(detail: ConversationDetail): boolean {
   return detail.routingMode === 'orchestrated'
 }
 
-function requiresMentionTarget(detail: ConversationDetail): boolean {
-  return detail.routingMode === 'manual' && detail.mode === 'manual'
-}
+function getSendTargetParticipantIds(
+  detail: ConversationDetail,
+  mentions: DraftMention[]
+): string[] | undefined {
+  const mentionedParticipantIds = getDraftMentionParticipantIds(mentions)
 
-function sendsMentionTargets(detail: ConversationDetail): boolean {
-  return detail.mode === 'manual' || usesOrchestrator(detail)
+  if (mentionedParticipantIds.length > 0) {
+    return mentionedParticipantIds
+  }
+
+  if (detail.mode === 'manual' && !usesOrchestrator(detail)) {
+    return detail.participants.map((participant) => participant.id)
+  }
+
+  return undefined
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
