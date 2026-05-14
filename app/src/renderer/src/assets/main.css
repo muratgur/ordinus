@@ -79,12 +79,12 @@ body,
 
 html {
   scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 html::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
 }
 
 html::-webkit-scrollbar-track {
@@ -131,12 +131,12 @@ a {
 @layer utilities {
   .ordinus-scrollbar {
     scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
-    scrollbar-width: thin;
+    scrollbar-width: auto;
   }
 
   .ordinus-scrollbar::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 14px;
+    height: 14px;
   }
 
   .ordinus-scrollbar::-webkit-scrollbar-track {
