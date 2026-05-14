@@ -25,6 +25,9 @@ import {
   ConversationSendTurnInputSchema,
   ConversationUpdateTitleInputSchema,
   ConversationUpdateRoutingModeInputSchema,
+  ObservedConversationRunsInputSchema,
+  ObservedRunDiagnosticsInputSchema,
+  ObservedRunListEventsInputSchema,
   OrchestrationPlanSchema,
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
@@ -56,6 +59,8 @@ import { ipcChannels } from '@shared/ipc'
 import type { OrdinusDatabase, PreparedConversationTurn, PreparedWorkRun } from '../db/database'
 import { getSystemPaths } from '../paths'
 import type { RuntimeService } from '../runtime'
+import type { ObservabilityService } from '../observability/service'
+import type { SanitizedInvocationSummary } from '../observability/types'
 import {
   createAgentSkill,
   deleteAgentHome,
@@ -82,7 +87,11 @@ type ReportedWorkspaceFileRefs = WorkspaceWorkingFolderContext & {
   changedFiles: string[]
 }
 
-export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeService): void {
+export function registerIpcHandlers(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  observability: ObservabilityService
+): void {
   ipcMain.handle(ipcChannels.appGetInfo, () =>
     AppInfoSchema.parse({
       name: 'Ordinus',
@@ -268,14 +277,16 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     }
 
     const prepared = await prepareConversationTurn(database, runtime, current, input)
-    startPreparedConversationTurns(database, runtime, prepared)
+    startPreparedConversationTurns(database, runtime, observability, prepared)
 
     return database.getConversation({ conversationId: prepared.conversationId })
   })
   ipcMain.handle(ipcChannels.conversationsCancelTurn, (_event, payload) => {
     const input = ConversationCancelTurnInputSchema.parse(payload)
     runtime.cancelConversationTurn(input.turnId)
-    return database.cancelConversationTurn(input)
+    const detail = database.cancelConversationTurn(input)
+    observability.markConversationCancelled(input.turnId)
+    return detail
   })
   ipcMain.handle(ipcChannels.conversationsRevealPath, (_event, payload) => {
     const input = ConversationRevealPathInputSchema.parse(payload)
@@ -332,13 +343,18 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.conversationsAnswerInputRequest, async (_event, payload) => {
     const input = ConversationAnswerInputRequestInputSchema.parse(payload)
     const prepared = database.answerConversationInputRequest(input)
-    startPreparedConversationTurns(database, runtime, prepared)
+    startPreparedConversationTurns(database, runtime, observability, prepared)
 
     return database.getConversation({ conversationId: prepared.conversationId })
   })
   ipcMain.handle(ipcChannels.conversationsCancelInputRequest, (_event, payload) => {
     const input = ConversationCancelInputRequestInputSchema.parse(payload)
-    return database.cancelConversationInputRequest(input)
+    const detail = database.cancelConversationInputRequest(input)
+    const request = detail.inputRequests.find((item) => item.id === input.requestId)
+    if (request) {
+      observability.markConversationCancelled(request.turnId)
+    }
+    return detail
   })
   ipcMain.handle(ipcChannels.workboardList, () => database.getWorkboardData())
   ipcMain.handle(ipcChannels.workboardGeneratePlan, async (_event, payload) => {
@@ -348,7 +364,7 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.workboardStartRequest, (_event, payload) => {
     const input = WorkboardStartRequestInputSchema.parse(payload)
     const request = database.createWorkRequest(input)
-    startWorkRequestRuns(database, runtime, request.id)
+    startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()
   })
   ipcMain.handle(ipcChannels.workboardDirectStart, async (_event, payload) => {
@@ -361,7 +377,7 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
       originalRequest: input.request,
       plan
     })
-    startWorkRequestRuns(database, runtime, request.id)
+    startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()
   })
   ipcMain.handle(ipcChannels.workboardGenerateFollowUpPlan, async (_event, payload) => {
@@ -371,16 +387,17 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
   ipcMain.handle(ipcChannels.workboardStartFollowUp, (_event, payload) => {
     const input = WorkboardStartFollowUpInputSchema.parse(payload)
     const request = database.createWorkRequestFollowUp(input)
-    startWorkRequestRuns(database, runtime, request.id)
+    startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()
   })
   ipcMain.handle(ipcChannels.workboardCancelRun, (_event, payload) => {
     const input = WorkRunActionInputSchema.parse(payload)
     runtime.cancelConversationTurn(input.runId)
     const run = database.cancelWorkRun(input)
+    observability.markWorkboardCancelled(run.id)
     const requestId = getOptionalWorkRequestId(run)
     if (requestId) {
-      startWorkRequestRuns(database, runtime, requestId)
+      startWorkRequestRuns(database, runtime, observability, requestId)
     }
     return database.getWorkboardData()
   })
@@ -388,11 +405,11 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     const input = WorkboardAnswerInputRequestInputSchema.parse(payload)
     const prepared = database.answerWorkRunInputRequest(input)
     if (prepared.run.status === 'running') {
-      startPreparedWorkRun(database, runtime, prepared)
+      startPreparedWorkRun(database, runtime, observability, prepared)
     } else {
       const requestId = getOptionalWorkRequestId(prepared.run)
       if (requestId) {
-        startWorkRequestRuns(database, runtime, requestId)
+        startWorkRequestRuns(database, runtime, observability, requestId)
       }
     }
     return database.getWorkboardData()
@@ -406,6 +423,21 @@ export function registerIpcHandlers(database: OrdinusDatabase, runtime: RuntimeS
     }
 
     revealWorkspacePath(database, input.relativePath)
+  })
+  ipcMain.handle(ipcChannels.observabilityListWorkboard, () =>
+    observability.listWorkboardRuns()
+  )
+  ipcMain.handle(ipcChannels.observabilityListConversation, (_event, payload) => {
+    const input = ObservedConversationRunsInputSchema.parse(payload)
+    return observability.listConversationRuns(input.conversationId)
+  })
+  ipcMain.handle(ipcChannels.observabilityListEvents, (_event, payload) => {
+    const input = ObservedRunListEventsInputSchema.parse(payload)
+    return observability.listEvents(input.observedRunId)
+  })
+  ipcMain.handle(ipcChannels.observabilityGetDiagnostics, (_event, payload) => {
+    const input = ObservedRunDiagnosticsInputSchema.parse(payload)
+    return observability.getDiagnostics(input)
   })
   ipcMain.handle(ipcChannels.runtimeGetProviders, () => runtime.getProviderStatuses())
   ipcMain.handle(ipcChannels.runtimeConnectProvider, (_event, payload) => {
@@ -704,6 +736,7 @@ function validateWorkboardPlanAgents(
 function startWorkRequestRuns(
   database: OrdinusDatabase,
   runtime: RuntimeService,
+  observability: ObservabilityService,
   requestId: string
 ): void {
   const availableSlots =
@@ -725,6 +758,7 @@ function startWorkRequestRuns(
     startPreparedWorkRun(
       database,
       runtime,
+      observability,
       {
         run: startedRun,
         agent: database.getAgent(startedRun.assignedAgentId),
@@ -739,6 +773,7 @@ function startWorkRequestRuns(
 function startPreparedWorkRun(
   database: OrdinusDatabase,
   runtime: RuntimeService,
+  observability: ObservabilityService,
   prepared: PreparedWorkRun,
   requiredInputs = database.getRequiredInputSummaries(prepared.run.id)
 ): void {
@@ -748,6 +783,18 @@ function startPreparedWorkRun(
     database.prepareWorkRunProviderSession(prepared.run.id) ?? prepared.providerSessionRef
   const logRef = join('work-requests', requestId, prepared.run.id)
   const logDir = join(getSystemPaths().logs, logRef)
+  const startedAt = new Date().toISOString()
+  const observationSink = observability.startWorkboardRun({
+    run: prepared.run,
+    agent: prepared.agent,
+    logRef,
+    invocation: buildProviderInvocationSummary({
+      providerId: prepared.run.providerId,
+      sandbox: prepared.run.sandbox,
+      workspaceRoot: workspaceContext.workspaceRoot,
+      startedAt
+    })
+  })
   mkdirSync(logDir, { recursive: true })
   ensureWorkspaceRelativeDirectory(workspaceContext.workspaceRoot, workspaceContext.workingRoot)
 
@@ -771,7 +818,8 @@ function startPreparedWorkRun(
       resumeMessage: prepared.message || undefined,
       logRef,
       eventLogPath: join(logDir, 'events.jsonl'),
-      lastMessagePath: join(logDir, 'last-message.txt')
+      lastMessagePath: join(logDir, 'last-message.txt'),
+      observability: observationSink
     })
     .then((result) => {
       try {
@@ -785,6 +833,7 @@ function startPreparedWorkRun(
             providerSessionRef: result.providerSessionRef,
             outcome: result.outcome
           })
+          observability.markWorkboardWaitingForUser(prepared.run.id, result.outcome.title)
           return
         }
 
@@ -802,16 +851,49 @@ function startPreparedWorkRun(
           artifactRefs: fileRefs.artifactRefs,
           changedFiles: fileRefs.changedFiles
         })
+        observability.markWorkboardCompleted(prepared.run.id, result.outcome.content)
       } catch (error) {
         saveWorkRunFailure(database, prepared.run.id, error)
+        observability.markWorkboardFailed(prepared.run.id, getWorkRunErrorMessage(error))
       } finally {
-        startWorkRequestRuns(database, runtime, requestId)
+        startWorkRequestRuns(database, runtime, observability, requestId)
       }
     })
     .catch((error) => {
       saveWorkRunFailure(database, prepared.run.id, error)
-      startWorkRequestRuns(database, runtime, requestId)
+      observability.markWorkboardFailed(prepared.run.id, getWorkRunErrorMessage(error))
+      startWorkRequestRuns(database, runtime, observability, requestId)
     })
+}
+
+function buildProviderInvocationSummary(input: {
+  providerId: string
+  sandbox: string
+  workspaceRoot: string
+  startedAt: string
+}): SanitizedInvocationSummary {
+  return {
+    provider: input.providerId,
+    executable: input.providerId,
+    args: [
+      'exec',
+      '--json',
+      '-',
+      '--skip-git-repo-check',
+      '--sandbox',
+      input.sandbox,
+      '-C',
+      '<workspace>',
+      '--output-last-message',
+      '<run-log>/last-message.txt'
+    ],
+    cwd: input.workspaceRoot,
+    startedAt: input.startedAt
+  }
+}
+
+function getWorkRunErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Work Item failed.'
 }
 
 function assertReportedFileRefsExist(missingRefs: string[]): void {
@@ -936,6 +1018,7 @@ async function prepareConversationTurn(
 function startPreparedConversationTurns(
   database: OrdinusDatabase,
   runtime: RuntimeService,
+  observability: ObservabilityService,
   prepared: PreparedConversationTurn
 ): void {
   const workspace = database.getWorkspaceConfig()
@@ -948,6 +1031,21 @@ function startPreparedConversationTurns(
   prepared.agentTurns.forEach((agentTurn) => {
     const logRef = join('conversations', prepared.conversationId, agentTurn.agentTurnId)
     const logDir = join(getSystemPaths().logs, logRef)
+    const turn = database.getConversationTurn(agentTurn.agentTurnId)
+    const startedAt = new Date().toISOString()
+    const observationSink = observability.startConversationTurn({
+      turn,
+      conversationId: prepared.conversationId,
+      conversationTitle: conversation.title,
+      agent: agentTurn.agent,
+      logRef,
+      invocation: buildProviderInvocationSummary({
+        providerId: agentTurn.agent.providerId,
+        sandbox: agentTurn.agent.sandbox,
+        workspaceRoot: workspace.workspaceRoot,
+        startedAt
+      })
+    })
     mkdirSync(logDir, { recursive: true })
 
     void runtime
@@ -966,13 +1064,14 @@ function startPreparedConversationTurns(
         message: agentTurn.message,
         logRef,
         eventLogPath: join(logDir, 'events.jsonl'),
-        lastMessagePath: join(logDir, 'last-message.txt')
+        lastMessagePath: join(logDir, 'last-message.txt'),
+        observability: observationSink
       })
       .then((result) => {
-        saveConversationTurnCompletion(database, agentTurn.agentTurnId, result)
+        saveConversationTurnCompletion(database, observability, agentTurn.agentTurnId, result)
       })
       .catch((error) => {
-        saveConversationTurnFailure(database, agentTurn.agentTurnId, error, logRef)
+        saveConversationTurnFailure(database, observability, agentTurn.agentTurnId, error, logRef)
       })
   })
 }
@@ -1002,6 +1101,7 @@ async function getOrchestratorRuntimeConfig(
 
 function saveConversationTurnCompletion(
   database: OrdinusDatabase,
+  observability: ObservabilityService,
   turnId: string,
   result: Awaited<ReturnType<RuntimeService['sendConversationTurn']>>
 ): void {
@@ -1013,8 +1113,13 @@ function saveConversationTurnCompletion(
       outcome,
       logRef: result.logRef
     })
+    if (outcome.outcome === 'needs_input') {
+      observability.markConversationWaitingForUser(turnId, outcome.title)
+    } else {
+      observability.markConversationCompleted(turnId, outcome.content)
+    }
   } catch (error) {
-    saveConversationTurnFailure(database, turnId, error, result.logRef)
+    saveConversationTurnFailure(database, observability, turnId, error, result.logRef)
   }
 }
 
@@ -1044,16 +1149,19 @@ function resolveConversationTurnOutcome(
 
 function saveConversationTurnFailure(
   database: OrdinusDatabase,
+  observability: ObservabilityService,
   turnId: string,
   error: unknown,
   logRef: string
 ): void {
   try {
+    const message = error instanceof Error ? error.message : 'Conversation turn failed.'
     database.failConversationTurn({
       turnId,
-      error: error instanceof Error ? error.message : 'Conversation turn failed.',
+      error: message,
       logRef
     })
+    observability.markConversationFailed(turnId, message)
   } catch (failError) {
     console.warn('Conversation turn failure could not be saved.', failError)
   }

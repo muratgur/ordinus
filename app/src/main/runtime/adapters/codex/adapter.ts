@@ -67,6 +67,7 @@ import type {
   RuntimeWorkboardPlanInput,
   ProviderRuntimeContext
 } from '../types'
+import type { RuntimeObservation } from '../../../observability/types'
 
 export const codexProviderAdapter: ProviderAdapter = {
   id: 'codex',
@@ -135,7 +136,8 @@ async function sendCodexConversationTurn(
     context,
     env: getCodexEnvironment(),
     stdin: prompt,
-    streamErrorMessage: 'Codex process streams could not be opened.'
+    streamErrorMessage: 'Codex process streams could not be opened.',
+    observeStdoutLine: observeCodexStdoutLine
   })
 
   if (result.cancelled) {
@@ -600,6 +602,162 @@ function extractCodexSessionRef(value: string): string {
   }
 
   return ''
+}
+
+function observeCodexStdoutLine(line: string): RuntimeObservation[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return []
+  }
+
+  const type = getEventType(parsed)
+  if (type === 'thread.started') {
+    return [codexObservation({ kind: 'status', phase: 'starting', summary: 'Codex session started.' })]
+  }
+
+  if (type === 'turn.started') {
+    return [codexObservation({ kind: 'phase', phase: 'running', summary: 'Codex is working.' })]
+  }
+
+  if (type === 'turn.completed') {
+    return [
+      codexObservation({ kind: 'phase', phase: 'running', summary: 'Preparing response.' })
+    ]
+  }
+
+  const item = isRecord(parsed) && isRecord(parsed.item) ? parsed.item : null
+  if (!item) {
+    return []
+  }
+
+  const itemType = getStringPath(item, ['type'])
+  const label = getCodexActivityItemLabel(item)
+  if (type === 'item.started') {
+    if (isCommandLikeItem(itemType, item)) {
+      return [
+        codexObservation({
+          kind: 'command',
+          phase: 'running',
+          summary: label ? `Running command: ${label}` : 'Running command.',
+          payload: { label }
+        })
+      ]
+    }
+
+    if (isToolLikeItem(itemType, item)) {
+      return [
+        codexObservation({
+          kind: 'tool',
+          phase: getToolPhase(label),
+          summary: label ? `Using tool: ${label}` : 'Using tool.',
+          payload: { label }
+        })
+      ]
+    }
+  }
+
+  if (type === 'item.completed') {
+    if (itemType === 'agent_message') {
+      return [
+        codexObservation({
+          kind: 'message',
+          phase: 'running',
+          summary: 'Preparing response.'
+        })
+      ]
+    }
+
+    if (isCommandLikeItem(itemType, item)) {
+      return [
+        codexObservation({
+          kind: 'command',
+          phase: 'running',
+          summary: label ? `Command completed: ${label}` : 'Command completed.',
+          payload: { label }
+        })
+      ]
+    }
+
+    if (isToolLikeItem(itemType, item)) {
+      return [
+        codexObservation({
+          kind: 'tool',
+          phase: getToolPhase(label),
+          summary: label ? `Tool completed: ${label}` : 'Tool completed.',
+          payload: { label }
+        })
+      ]
+    }
+  }
+
+  return []
+}
+
+function codexObservation(
+  event: Pick<RuntimeObservation, 'kind' | 'phase' | 'summary'> &
+    Pick<Partial<RuntimeObservation>, 'payload'>
+): RuntimeObservation {
+  return {
+    source: 'provider',
+    confidence: 'reported',
+    lifecycleStatus: 'running',
+    ...event
+  }
+}
+
+function isCommandLikeItem(itemType: string, item: Record<string, unknown>): boolean {
+  return (
+    itemType.includes('command') ||
+    itemType.includes('shell') ||
+    typeof item.command === 'string'
+  )
+}
+
+function isToolLikeItem(itemType: string, item: Record<string, unknown>): boolean {
+  return (
+    itemType.includes('tool') ||
+    typeof item.name === 'string' ||
+    typeof item.tool_name === 'string'
+  )
+}
+
+function getCodexActivityItemLabel(item: Record<string, unknown>): string {
+  return (
+    getStringPath(item, ['command']) ||
+    getStringPath(item, ['name']) ||
+    getStringPath(item, ['tool_name']) ||
+    getStringPath(item, ['title']) ||
+    getStringPath(item, ['call', 'function', 'name']) ||
+    getStringPath(item, ['function', 'name']) ||
+    getStringPath(item, ['type'])
+  )
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180)
+}
+
+function getToolPhase(label: string): RuntimeObservation['phase'] {
+  const normalized = label.toLowerCase()
+  if (
+    normalized.includes('read') ||
+    normalized.includes('search') ||
+    normalized.includes('list') ||
+    normalized.includes('grep')
+  ) {
+    return 'reading'
+  }
+  if (
+    normalized.includes('write') ||
+    normalized.includes('edit') ||
+    normalized.includes('patch') ||
+    normalized.includes('apply')
+  ) {
+    return 'editing'
+  }
+
+  return 'running'
 }
 
 function getEventType(value: unknown): string {

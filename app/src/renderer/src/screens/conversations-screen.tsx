@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock3,
   ClipboardList,
+  Activity,
   FolderOpen,
   Loader2,
   MessageSquareText,
@@ -14,6 +15,7 @@ import {
   Route,
   SendHorizontal,
   Square,
+  TerminalSquare,
   Trash2,
   UserRound,
   XCircle
@@ -37,6 +39,12 @@ import {
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import {
+  DiagnosticBlock,
+  formatLivenessHealth,
+  formatObservedPhase,
+  mergeDiagnostics
+} from '@renderer/components/observability-details'
 import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
@@ -49,7 +57,10 @@ import type {
   InteractionAnswer,
   InteractionQuestion,
   ConversationTurn,
-  ConversationTurnStatus
+  ConversationTurnStatus,
+  ObservedRunDiagnostics,
+  ObservedRunEvent,
+  ObservedRunSnapshot
 } from '@shared/contracts'
 import { appRoutePaths } from '@renderer/app/routes'
 
@@ -114,6 +125,7 @@ export function ConversationsScreen(): React.JSX.Element {
   const [renamingConversation, setRenamingConversation] = useState(false)
   const [renameError, setRenameError] = useState('')
   const [openingConversationFolder, setOpeningConversationFolder] = useState(false)
+  const [observedRuns, setObservedRuns] = useState<ObservedRunSnapshot[]>([])
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   const runningTurns = detail?.turns.filter((turn) => turn.status === 'running') ?? []
@@ -134,6 +146,10 @@ export function ConversationsScreen(): React.JSX.Element {
   const latestTurnSignature = latestTurn
     ? `${detail?.id}:${latestTurn.id}:${latestTurn.status}:${latestTurn.content}`
     : detail?.id
+  const observedRunByTurnId = useMemo(
+    () => new Map(observedRuns.map((run) => [run.sourceItemId, run])),
+    [observedRuns]
+  )
 
   function updateInputDraft(requestId: string, questionId: string, draft: AnswerDraft): void {
     setInputDrafts((current) => ({
@@ -165,9 +181,15 @@ export function ConversationsScreen(): React.JSX.Element {
     setSelectedConversationId(conversationId)
 
     if (conversationId) {
-      setDetail(await window.ordinus.conversations.get({ conversationId }))
+      const [nextDetail, nextObservedRuns] = await Promise.all([
+        window.ordinus.conversations.get({ conversationId }),
+        window.ordinus.observability.listConversation({ conversationId })
+      ])
+      setDetail(nextDetail)
+      setObservedRuns(nextObservedRuns)
     } else {
       setDetail(null)
+      setObservedRuns([])
     }
   }
 
@@ -187,9 +209,18 @@ export function ConversationsScreen(): React.JSX.Element {
         setConversations(nextConversations)
         const conversationId = nextConversations[0]?.id ?? ''
         setSelectedConversationId(conversationId)
-        setDetail(
-          conversationId ? await window.ordinus.conversations.get({ conversationId }) : null
-        )
+        if (conversationId) {
+          const [nextDetail, nextObservedRuns] = await Promise.all([
+            window.ordinus.conversations.get({ conversationId }),
+            window.ordinus.observability.listConversation({ conversationId })
+          ])
+          if (!mounted) return
+          setDetail(nextDetail)
+          setObservedRuns(nextObservedRuns)
+        } else {
+          setDetail(null)
+          setObservedRuns([])
+        }
         setError('')
       } catch (loadError) {
         if (!mounted) return
@@ -209,6 +240,16 @@ export function ConversationsScreen(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    return window.ordinus.observability.onRunChanged((snapshot) => {
+      if (snapshot.sourceSurface !== 'conversation') return
+      setObservedRuns((current) => {
+        const withoutSnapshot = current.filter((item) => item.id !== snapshot.id)
+        return [snapshot, ...withoutSnapshot]
+      })
+    })
+  }, [])
+
+  useEffect(() => {
     if (!selectedConversationId || !runningTurn) {
       return
     }
@@ -216,10 +257,12 @@ export function ConversationsScreen(): React.JSX.Element {
     const timer = window.setInterval(() => {
       void Promise.all([
         window.ordinus.conversations.get({ conversationId: selectedConversationId }),
-        window.ordinus.conversations.list()
-      ]).then(([nextDetail, nextConversations]) => {
+        window.ordinus.conversations.list(),
+        window.ordinus.observability.listConversation({ conversationId: selectedConversationId })
+      ]).then(([nextDetail, nextConversations, nextObservedRuns]) => {
         setDetail(nextDetail)
         setConversations(nextConversations)
+        setObservedRuns(nextObservedRuns)
       })
     }, 1500)
 
@@ -242,7 +285,12 @@ export function ConversationsScreen(): React.JSX.Element {
     setMessage('')
     setDraftMentions([])
     setSelectedConversationId(conversationId)
-    setDetail(await window.ordinus.conversations.get({ conversationId }))
+    const [nextDetail, nextObservedRuns] = await Promise.all([
+      window.ordinus.conversations.get({ conversationId }),
+      window.ordinus.observability.listConversation({ conversationId })
+    ])
+    setDetail(nextDetail)
+    setObservedRuns(nextObservedRuns)
   }
 
   async function handleCreateConversation(agentIds: string[], title: string): Promise<void> {
@@ -518,6 +566,7 @@ export function ConversationsScreen(): React.JSX.Element {
                           <TurnCard
                             turn={turn}
                             participantName={getTurnParticipantLabel(detail, turn, index)}
+                            observedRun={observedRunByTurnId.get(turn.id) ?? null}
                             onRevealPath={(path) => void handleRevealPath(turn.id, path)}
                           />
                           {turnInputRequests.map((request) => (
@@ -1069,10 +1118,12 @@ function DeleteConversationDialog({
 function TurnCard({
   turn,
   participantName,
+  observedRun,
   onRevealPath
 }: {
   turn: ConversationTurn
   participantName: string
+  observedRun: ObservedRunSnapshot | null
   onRevealPath: (path: string) => void
 }): React.JSX.Element {
   const isUser = turn.speaker === 'user'
@@ -1081,11 +1132,11 @@ function TurnCard({
   return (
     <article
       className={cn(
-        'grid min-w-0 gap-2 rounded-lg border bg-card p-4',
+        'grid w-full min-w-0 max-w-full gap-2 overflow-hidden rounded-lg border bg-card p-4',
         isUser && 'ml-auto w-full max-w-[86%] bg-accent/60'
       )}
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Icon className="size-4 shrink-0 text-primary" />
           <p className="truncate text-sm font-semibold">
@@ -1097,16 +1148,13 @@ function TurnCard({
         {turn.status !== 'completed' ? <TurnStatus status={turn.status} /> : null}
       </div>
       {turn.status === 'running' ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          Working on this turn
-        </div>
+        null
       ) : turn.status === 'failed' ? (
-        <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm text-status-attention">
+        <p className="rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm text-status-attention [overflow-wrap:anywhere]">
           {turn.error || 'This turn failed.'}
         </p>
       ) : (
-        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+        <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
           {turn.content}
         </p>
       )}
@@ -1116,7 +1164,249 @@ function TurnCard({
       {!isUser && turn.status === 'completed' ? (
         <TurnFiles turn={turn} onRevealPath={onRevealPath} />
       ) : null}
+      {!isUser ? (
+        <TurnObservabilityPanel observedRun={observedRun} turnStatus={turn.status} />
+      ) : null}
     </article>
+  )
+}
+
+function TurnObservabilityPanel({
+  observedRun,
+  turnStatus
+}: {
+  observedRun: ObservedRunSnapshot | null
+  turnStatus: ConversationTurnStatus
+}): React.JSX.Element | null {
+  const [dialogTab, setDialogTab] = useState<'activity' | 'diagnostics' | null>(null)
+
+  if (!observedRun) {
+    return turnStatus === 'running' ? (
+      <div className="flex min-w-0 items-center gap-2 border-t pt-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" />
+        <span className="truncate">Thinking</span>
+      </div>
+    ) : null
+  }
+
+  const running = isConversationObservationRunning(turnStatus, observedRun)
+  const activityLabel = getConversationActivityLabel(observedRun)
+  const showActivityLabel = shouldShowConversationActivityLabel(observedRun, running)
+
+  return (
+    <div className="min-w-0 max-w-full overflow-hidden border-t pt-2">
+      <div className="flex min-w-0 max-w-full items-center justify-between gap-2 text-xs text-muted-foreground">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          {running ? (
+            <Loader2 className="size-3.5 shrink-0 animate-spin text-status-running" />
+          ) : (
+            <Activity className="size-3.5 shrink-0" />
+          )}
+          <span className="shrink-0 font-medium text-foreground">
+            {running ? 'Thinking' : formatObservedPhase(observedRun.currentPhase)}
+          </span>
+          {showActivityLabel ? (
+            <span className="min-w-0 flex-1 truncate">{activityLabel}</span>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            title="Activity"
+            aria-label="Open activity"
+            onClick={() => setDialogTab('activity')}
+          >
+            <Activity />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            title="Diagnostics"
+            aria-label="Open diagnostics"
+            onClick={() => setDialogTab('diagnostics')}
+          >
+            <TerminalSquare />
+          </Button>
+        </div>
+      </div>
+      <Dialog open={dialogTab !== null} onOpenChange={(open) => !open && setDialogTab(null)}>
+        <DialogContent className="max-h-[82vh] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{dialogTab === 'diagnostics' ? 'Diagnostics' : 'Activity'}</DialogTitle>
+            <DialogDescription>
+              {observedRun.assignedAgentName} / {formatObservedPhase(observedRun.currentPhase)} /{' '}
+              {formatLivenessHealth(observedRun.livenessHealth)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={dialogTab === 'activity' ? 'secondary' : 'outline'}
+              size="sm"
+              onClick={() => setDialogTab('activity')}
+            >
+              <Activity />
+              Activity
+            </Button>
+            <Button
+              type="button"
+              variant={dialogTab === 'diagnostics' ? 'secondary' : 'outline'}
+              size="sm"
+              onClick={() => setDialogTab('diagnostics')}
+            >
+              <TerminalSquare />
+              Diagnostics
+            </Button>
+          </div>
+          <ScrollArea className="max-h-[58vh] pr-3">
+            {dialogTab === 'diagnostics' ? (
+              <TurnDiagnosticsPanel observedRun={observedRun} />
+            ) : (
+              <TurnActivityTimeline observedRun={observedRun} />
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function TurnActivityTimeline({
+  observedRun
+}: {
+  observedRun: ObservedRunSnapshot
+}): React.JSX.Element {
+  const [events, setEvents] = useState<ObservedRunEvent[]>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let mounted = true
+    const observedRunId = observedRun.id
+
+    async function loadEvents(): Promise<void> {
+      try {
+        const nextEvents = await window.ordinus.observability.listEvents({ observedRunId })
+        if (!mounted) return
+        setEvents(nextEvents)
+        setError('')
+      } catch (loadError) {
+        if (!mounted) return
+        setError(getErrorMessage(loadError, 'Activity could not be loaded.'))
+      }
+    }
+
+    void loadEvents()
+    const timer = window.setInterval(() => void loadEvents(), 2000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [observedRun.id, observedRun.updatedAt])
+
+  if (error) {
+    return <ObservationEmptyState>{error}</ObservationEmptyState>
+  }
+
+  if (events.length === 0) {
+    return <ObservationEmptyState>No timeline events yet.</ObservationEmptyState>
+  }
+
+  return (
+    <div className="grid gap-2">
+      {events.map((event) => (
+        <div key={event.id} className="flex min-w-0 gap-3 rounded-md border bg-background p-3">
+          <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary/70" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-medium">{event.summary}</p>
+              <Badge variant="secondary">{event.kind}</Badge>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {new Date(event.timestamp).toLocaleTimeString()} / {event.source} /{' '}
+              {event.confidence}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TurnDiagnosticsPanel({
+  observedRun
+}: {
+  observedRun: ObservedRunSnapshot
+}): React.JSX.Element {
+  const [diagnostics, setDiagnostics] = useState<ObservedRunDiagnostics | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let mounted = true
+    const observedRunId = observedRun.id
+
+    async function loadDiagnostics(): Promise<void> {
+      try {
+        const nextDiagnostics = await window.ordinus.observability.getDiagnostics({
+          observedRunId,
+          stdoutOffset: diagnostics?.stdout.nextOffset,
+          stderrOffset: diagnostics?.stderr.nextOffset
+        })
+        if (!mounted) return
+        setDiagnostics((current) => mergeDiagnostics(current, nextDiagnostics))
+        setError('')
+      } catch (loadError) {
+        if (!mounted) return
+        setError(getErrorMessage(loadError, 'Diagnostics could not be loaded.'))
+      }
+    }
+
+    void loadDiagnostics()
+    const timer = window.setInterval(() => void loadDiagnostics(), 2000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [observedRun.id, diagnostics?.stdout.nextOffset, diagnostics?.stderr.nextOffset])
+
+  if (error) {
+    return <ObservationEmptyState>{error}</ObservationEmptyState>
+  }
+
+  if (!diagnostics) {
+    return <ObservationEmptyState>Loading diagnostics...</ObservationEmptyState>
+  }
+
+  return (
+    <div className="grid gap-2">
+      <DiagnosticBlock label="Invocation">
+        {[
+          `Provider: ${diagnostics.invocation.provider || observedRun.providerId}`,
+          `Executable: ${diagnostics.invocation.executable || observedRun.providerId}`,
+          `Args: ${diagnostics.invocation.args.join(' ') || 'Not available'}`,
+          `Cwd: ${diagnostics.invocation.cwd || 'Not available'}`,
+          `Started: ${diagnostics.invocation.startedAt || 'Not available'}`
+        ].join('\n')}
+      </DiagnosticBlock>
+      <DiagnosticBlock label="stdout">
+        {diagnostics.stdout.text || 'No stdout output yet.'}
+      </DiagnosticBlock>
+      <DiagnosticBlock label="stderr">
+        {diagnostics.stderr.text || 'No stderr output yet.'}
+      </DiagnosticBlock>
+    </div>
+  )
+}
+
+function ObservationEmptyState({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className="rounded-md border border-dashed bg-background px-3 py-2 text-sm text-muted-foreground">
+      {children}
+    </div>
   )
 }
 
@@ -1997,6 +2287,33 @@ function TurnStatus({ status }: { status: ConversationTurnStatus }): React.JSX.E
       {formatStatusLabel(status)}
     </span>
   )
+}
+
+function isConversationObservationRunning(
+  turnStatus: ConversationTurnStatus,
+  observedRun: ObservedRunSnapshot
+): boolean {
+  return turnStatus === 'running' || observedRun.lifecycleStatus === 'running'
+}
+
+function shouldShowConversationActivityLabel(
+  observedRun: ObservedRunSnapshot,
+  running: boolean
+): boolean {
+  return (
+    running ||
+    observedRun.lifecycleStatus === 'failed' ||
+    observedRun.lifecycleStatus === 'waiting_for_user'
+  )
+}
+
+function getConversationActivityLabel(observedRun: ObservedRunSnapshot): string {
+  const summary = observedRun.latestActivity.trim()
+  if (!summary || summary === 'Provider emitted output.') {
+    return formatObservedPhase(observedRun.currentPhase)
+  }
+
+  return summary
 }
 
 function getBlockedReason(

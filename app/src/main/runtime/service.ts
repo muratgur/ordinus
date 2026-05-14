@@ -182,7 +182,8 @@ export function createRuntimeService(): RuntimeService {
           message: buildWorkRunMessage(input),
           logRef: input.logRef,
           eventLogPath: input.eventLogPath,
-          lastMessagePath: input.lastMessagePath
+          lastMessagePath: input.lastMessagePath,
+          observability: input.observability
         },
         context
       )

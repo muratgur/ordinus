@@ -13,12 +13,16 @@ import {
   Play,
   RefreshCcw,
   Send,
+  TerminalSquare,
   XCircle
 } from 'lucide-react'
 import type {
   Agent,
   InteractionAnswer,
   InteractionQuestion,
+  ObservedRunDiagnostics,
+  ObservedRunEvent,
+  ObservedRunSnapshot,
   WorkRunInputRequestStatus,
   WorkboardData,
   WorkboardDraftItem,
@@ -28,6 +32,12 @@ import type {
 } from '@shared/contracts'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
+import {
+  DiagnosticBlock,
+  formatLivenessHealth,
+  formatObservedPhase,
+  mergeDiagnostics
+} from '@renderer/components/observability-details'
 import {
   Dialog,
   DialogContent,
@@ -84,6 +94,7 @@ export function WorkboardScreen(): React.JSX.Element {
     dependencies: [],
     inputRequests: []
   })
+  const [observedRuns, setObservedRuns] = useState<ObservedRunSnapshot[]>([])
   const [request, setRequest] = useState('')
   const [composerTarget, setComposerTarget] = useState<WorkComposerTarget>(newWorkComposerTarget)
   const [reviewBeforeStart, setReviewBeforeStart] = useState(true)
@@ -103,8 +114,10 @@ export function WorkboardScreen(): React.JSX.Element {
         window.ordinus.workboard.list(),
         window.ordinus.agents.list()
       ])
+      const nextObservedRuns = await window.ordinus.observability.listWorkboard()
       setData(nextData)
       setAgents(nextAgents)
+      setObservedRuns(nextObservedRuns)
       setError('')
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Workboard could not be loaded.')
@@ -122,8 +135,22 @@ export function WorkboardScreen(): React.JSX.Element {
     }
   }, [])
 
+  useEffect(() => {
+    return window.ordinus.observability.onRunChanged((snapshot) => {
+      if (snapshot.sourceSurface !== 'workboard') return
+      setObservedRuns((current) => {
+        const withoutSnapshot = current.filter((item) => item.id !== snapshot.id)
+        return [snapshot, ...withoutSnapshot]
+      })
+    })
+  }, [])
+
   const enabledAgents = agents.filter((agent) => agent.enabled)
   const selectedRun = data.runs.find((run) => run.id === selectedRunId) ?? null
+  const observedRunByWorkRunId = useMemo(
+    () => new Map(observedRuns.map((run) => [run.sourceItemId, run])),
+    [observedRuns]
+  )
   const baseFilteredRuns = data.runs.filter((run) => {
     if (requestFilter === 'all') return true
     if (requestFilter === 'active') {
@@ -393,6 +420,7 @@ export function WorkboardScreen(): React.JSX.Element {
       <WorkColumns
         runs={filteredRuns}
         inputRequests={data.inputRequests}
+        observedRuns={observedRunByWorkRunId}
         onSelectRun={setSelectedRunId}
       />
 
@@ -421,6 +449,7 @@ export function WorkboardScreen(): React.JSX.Element {
         run={selectedRun}
         dependencies={data.dependencies}
         runs={data.runs}
+        observedRun={selectedRun ? (observedRunByWorkRunId.get(selectedRun.id) ?? null) : null}
         inputRequest={getVisibleWorkRunInputRequest(data.inputRequests, selectedRun?.id)}
         busy={busy}
         onClose={() => setSelectedRunId('')}
@@ -441,10 +470,11 @@ type RequestFilterStat = {
   createdAt: string
 }
 
-type RunDetailTab = 'overview' | 'output' | 'files' | 'runtime'
+type RunDetailTab = 'overview' | 'activity' | 'output' | 'files' | 'runtime'
 
 const runDetailTabs: Array<{ id: RunDetailTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
+  { id: 'activity', label: 'Activity' },
   { id: 'output', label: 'Output' },
   { id: 'files', label: 'Files' },
   { id: 'runtime', label: 'Runtime' }
@@ -653,10 +683,12 @@ function FilterChip({
 function WorkColumns({
   runs,
   inputRequests,
+  observedRuns,
   onSelectRun
 }: {
   runs: WorkboardRun[]
   inputRequests: WorkRunInputRequest[]
+  observedRuns: Map<string, ObservedRunSnapshot>
   onSelectRun: (runId: string) => void
 }): React.JSX.Element {
   return (
@@ -692,6 +724,7 @@ function WorkColumns({
                       const inputBadge = getWorkRunInputBadge(
                         getVisibleWorkRunInputRequest(inputRequests, run.id)
                       )
+                      const observedRun = observedRuns.get(run.id)
 
                       return (
                         <button
@@ -710,12 +743,7 @@ function WorkColumns({
                             </div>
                           </div>
                           <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
-                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {run.error ||
-                              run.resultSummary ||
-                              run.expectedOutput ||
-                              run.instruction}
-                          </p>
+                          <RunCardActivity run={run} observedRun={observedRun} />
                           <p className="mt-2 truncate text-[11px] text-muted-foreground">
                             {run.requestTitle}
                           </p>
@@ -730,6 +758,37 @@ function WorkColumns({
         </div>
       </div>
     </div>
+  )
+}
+
+function RunCardActivity({
+  run,
+  observedRun
+}: {
+  run: WorkboardRun
+  observedRun?: ObservedRunSnapshot
+}): React.JSX.Element {
+  if (observedRun && run.status === 'running') {
+    return (
+      <div className="mt-2 grid gap-1 rounded-md border border-status-running/25 bg-status-running/10 px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-status-running">
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+          <span className="truncate">{formatObservedPhase(observedRun.currentPhase)}</span>
+          <span className="shrink-0 text-muted-foreground">
+            {formatLivenessHealth(observedRun.livenessHealth)}
+          </span>
+        </div>
+        <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
+          {observedRun.latestActivity || 'Provider is running.'}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+      {run.error || run.resultSummary || run.expectedOutput || run.instruction}
+    </p>
   )
 }
 
@@ -1176,6 +1235,7 @@ function RunDetailDrawer({
   run,
   dependencies,
   runs,
+  observedRun,
   inputRequest,
   busy,
   onClose,
@@ -1187,6 +1247,7 @@ function RunDetailDrawer({
   run: WorkboardRun | null
   dependencies: WorkboardData['dependencies']
   runs: WorkboardRun[]
+  observedRun: ObservedRunSnapshot | null
   inputRequest?: WorkRunInputRequest
   busy: string
   onClose: () => void
@@ -1259,6 +1320,7 @@ function RunDetailDrawer({
         <RunDetailHeader
           run={run}
           waitsFor={waitsFor}
+          observedRun={observedRun}
           inputRequest={inputRequest}
           onClose={onClose}
         />
@@ -1273,6 +1335,7 @@ function RunDetailDrawer({
             activeTab={activeTab}
             run={run}
             waitsFor={waitsFor}
+            observedRun={observedRun}
             inputRequest={inputRequest}
             answers={answers}
             onAnswerChange={updateAnswer}
@@ -1305,11 +1368,13 @@ function RunDetailDrawer({
 function RunDetailHeader({
   run,
   waitsFor,
+  observedRun,
   inputRequest,
   onClose
 }: {
   run: WorkboardRun
   waitsFor: WorkboardRun[]
+  observedRun: ObservedRunSnapshot | null
   inputRequest?: WorkRunInputRequest
   onClose: () => void
 }): React.JSX.Element {
@@ -1334,7 +1399,7 @@ function RunDetailHeader({
       </div>
 
       <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted-foreground">
-        {getRunStateSummary(run, waitsFor, inputRequest)}
+        {getRunStateSummary(run, waitsFor, inputRequest, observedRun)}
       </p>
     </header>
   )
@@ -1374,6 +1439,7 @@ function RunDetailTabContent({
   activeTab,
   run,
   waitsFor,
+  observedRun,
   inputRequest,
   answers,
   onAnswerChange,
@@ -1383,6 +1449,7 @@ function RunDetailTabContent({
   activeTab: RunDetailTab
   run: WorkboardRun
   waitsFor: WorkboardRun[]
+  observedRun: ObservedRunSnapshot | null
   inputRequest?: WorkRunInputRequest
   answers: Record<string, InteractionAnswer>
   onAnswerChange: (answer: InteractionAnswer) => void
@@ -1391,6 +1458,10 @@ function RunDetailTabContent({
 }): React.JSX.Element {
   if (activeTab === 'overview') {
     return <RunOverviewTab run={run} waitsFor={waitsFor} />
+  }
+
+  if (activeTab === 'activity') {
+    return <RunActivityTab observedRun={observedRun} />
   }
 
   if (activeTab === 'output') {
@@ -1409,7 +1480,7 @@ function RunDetailTabContent({
     return <RunFilesTab run={run} onRevealPath={onRevealPath} />
   }
 
-  return <RunRuntimeTab run={run} />
+  return <RunRuntimeTab run={run} observedRun={observedRun} />
 }
 
 function RunOverviewTab({
@@ -1536,7 +1607,100 @@ function RunFilesTab({
   )
 }
 
-function RunRuntimeTab({ run }: { run: WorkboardRun }): React.JSX.Element {
+function RunActivityTab({
+  observedRun
+}: {
+  observedRun: ObservedRunSnapshot | null
+}): React.JSX.Element {
+  const [events, setEvents] = useState<ObservedRunEvent[]>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let mounted = true
+    if (!observedRun) {
+      setEvents([])
+      setError('')
+      return
+    }
+    const observedRunId = observedRun.id
+
+    async function loadEvents(): Promise<void> {
+      try {
+        const nextEvents = await window.ordinus.observability.listEvents({
+          observedRunId
+        })
+        if (!mounted) return
+        setEvents(nextEvents)
+        setError('')
+      } catch (loadError) {
+        if (!mounted) return
+        setError(loadError instanceof Error ? loadError.message : 'Activity could not be loaded.')
+      }
+    }
+
+    void loadEvents()
+    const timer = window.setInterval(() => void loadEvents(), 2000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [observedRun?.id, observedRun?.updatedAt])
+
+  if (!observedRun) {
+    return <EmptyDetailState>No activity has been recorded for this Work Item yet.</EmptyDetailState>
+  }
+
+  return (
+    <div className="grid gap-3">
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Current activity</p>
+            <p className="mt-1 truncate text-sm font-medium">
+              {observedRun.latestActivity || 'No activity yet.'}
+            </p>
+          </div>
+          <Badge variant={observedRun.livenessHealth === 'stalled' ? 'attention' : 'outline'}>
+            {formatLivenessHealth(observedRun.livenessHealth)}
+          </Badge>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {formatObservedPhase(observedRun.currentPhase)} · {formatElapsedMs(observedRun.elapsedMs)}
+        </p>
+      </div>
+      {error ? <DetailBlock label="Activity error">{error}</DetailBlock> : null}
+      {events.length > 0 ? (
+        <div className="grid gap-2">
+          {events.map((event) => (
+            <div key={event.id} className="flex min-w-0 gap-3 rounded-lg border bg-card p-3">
+              <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary/70" />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium">{event.summary}</p>
+                  <Badge variant="secondary">{event.kind}</Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {new Date(event.timestamp).toLocaleTimeString()} · {event.source} ·{' '}
+                  {event.confidence}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyDetailState>No timeline events yet.</EmptyDetailState>
+      )}
+    </div>
+  )
+}
+
+function RunRuntimeTab({
+  run,
+  observedRun
+}: {
+  run: WorkboardRun
+  observedRun: ObservedRunSnapshot | null
+}): React.JSX.Element {
   return (
     <div className="grid gap-3">
       <DetailBlock label="Agent">
@@ -1551,6 +1715,99 @@ function RunRuntimeTab({ run }: { run: WorkboardRun }): React.JSX.Element {
       <DetailBlock label="Created">{formatOptionalDate(run.createdAt)}</DetailBlock>
       <DetailBlock label="Started">{formatOptionalDate(run.startedAt)}</DetailBlock>
       <DetailBlock label="Completed">{formatOptionalDate(run.completedAt)}</DetailBlock>
+      <RunDiagnosticsPanel observedRun={observedRun} />
+    </div>
+  )
+}
+
+function RunDiagnosticsPanel({
+  observedRun
+}: {
+  observedRun: ObservedRunSnapshot | null
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [diagnostics, setDiagnostics] = useState<ObservedRunDiagnostics | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!open || !observedRun) {
+      return
+    }
+
+    let mounted = true
+    const observedRunId = observedRun.id
+
+    async function loadDiagnostics(): Promise<void> {
+      try {
+        const nextDiagnostics = await window.ordinus.observability.getDiagnostics({
+          observedRunId,
+          stdoutOffset: diagnostics?.stdout.nextOffset,
+          stderrOffset: diagnostics?.stderr.nextOffset
+        })
+        if (!mounted) return
+        setDiagnostics((current) => mergeDiagnostics(current, nextDiagnostics))
+        setError('')
+      } catch (loadError) {
+        if (!mounted) return
+        setError(
+          loadError instanceof Error ? loadError.message : 'Diagnostics could not be loaded.'
+        )
+      }
+    }
+
+    void loadDiagnostics()
+    const timer = window.setInterval(() => void loadDiagnostics(), 2000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [open, observedRun?.id, diagnostics?.stdout.nextOffset, diagnostics?.stderr.nextOffset])
+
+  if (!observedRun) {
+    return <EmptyDetailState>Diagnostics are available after this Work Item starts.</EmptyDetailState>
+  }
+
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase text-muted-foreground">Diagnostics</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Inspect sanitized provider invocation and recent output.
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => setOpen((value) => !value)}>
+          <TerminalSquare />
+          {open ? 'Hide' : 'Inspect'}
+        </Button>
+      </div>
+
+      {open ? (
+        <div className="mt-3 grid gap-3">
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {diagnostics ? (
+            <>
+              <DiagnosticBlock label="Invocation">
+                {[
+                  `Provider: ${diagnostics.invocation.provider || observedRun.providerId}`,
+                  `Executable: ${diagnostics.invocation.executable || observedRun.providerId}`,
+                  `Args: ${diagnostics.invocation.args.join(' ') || 'Not available'}`,
+                  `Cwd: ${diagnostics.invocation.cwd || 'Not available'}`,
+                  `Started: ${diagnostics.invocation.startedAt || 'Not available'}`
+                ].join('\n')}
+              </DiagnosticBlock>
+              <DiagnosticBlock label="stdout">
+                {diagnostics.stdout.text || 'No stdout output yet.'}
+              </DiagnosticBlock>
+              <DiagnosticBlock label="stderr">
+                {diagnostics.stderr.text || 'No stderr output yet.'}
+              </DiagnosticBlock>
+            </>
+          ) : (
+            <EmptyDetailState>Loading diagnostics...</EmptyDetailState>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1633,6 +1890,10 @@ function getSubmitButtonLabel(target: WorkComposerTarget, reviewBeforeStart: boo
 }
 
 function defaultRunDetailTab(run: WorkboardRun): RunDetailTab {
+  if (run.status === 'running') {
+    return 'activity'
+  }
+
   if (run.status === 'completed' || run.status === 'failed' || run.status === 'waiting_for_user') {
     return 'output'
   }
@@ -1659,7 +1920,8 @@ function statusBadgeVariant(
 function getRunStateSummary(
   run: WorkboardRun,
   waitsFor: WorkboardRun[],
-  inputRequest: WorkRunInputRequest | undefined
+  inputRequest: WorkRunInputRequest | undefined,
+  observedRun?: ObservedRunSnapshot | null
 ): string {
   if (inputRequest?.status === 'queued_for_resume') {
     return 'Answer received. This Work Item will continue when the agent is available.'
@@ -1676,7 +1938,7 @@ function getRunStateSummary(
   }
 
   if (run.status === 'running') {
-    return `Running with ${run.agentName}.`
+    return observedRun?.latestActivity || `Running with ${run.agentName}.`
   }
 
   if (run.status === 'queued') {
@@ -1738,6 +2000,16 @@ function formatOptionalDate(value: string | null): string {
   }
 
   return new Date(value).toLocaleString()
+}
+
+function formatElapsedMs(value: number): string {
+  const totalSeconds = Math.max(0, Math.floor(value / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes === 0) {
+    return `${seconds}s`
+  }
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
 }
 
 function matchesWorkSearch(run: WorkboardRun, search: string): boolean {

@@ -30,6 +30,12 @@ import type {
   ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
+  ObservedConversationRunsInput,
+  ObservedRunDiagnostics,
+  ObservedRunDiagnosticsInput,
+  ObservedRunEvent,
+  ObservedRunListEventsInput,
+  ObservedRunSnapshot,
   ProviderActionInput,
   ProviderConnectInput,
   ProviderConnectResult,
@@ -109,6 +115,13 @@ export type OrdinusApi = {
     cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
     answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
     revealPath: (input: WorkboardRevealPathInput) => Promise<void>
+  }
+  observability: {
+    listWorkboard: () => Promise<ObservedRunSnapshot[]>
+    listConversation: (input: ObservedConversationRunsInput) => Promise<ObservedRunSnapshot[]>
+    listEvents: (input: ObservedRunListEventsInput) => Promise<ObservedRunEvent[]>
+    getDiagnostics: (input: ObservedRunDiagnosticsInput) => Promise<ObservedRunDiagnostics>
+    onRunChanged: (callback: (snapshot: ObservedRunSnapshot) => void) => () => void
   }
   runtime: {
     getProviders: () => Promise<ProviderStatus[]>
