@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -51,6 +51,11 @@ import {
 } from '@renderer/components/ui/dialog'
 import { SelectControl } from '@renderer/components/select-control'
 import { cn } from '@renderer/lib/utils'
+import {
+  emptyWorkboardDraftReviewState,
+  type WorkComposerTarget,
+  type WorkboardDraftReviewState
+} from './workboard-draft-review'
 
 const columns: Array<{
   id: WorkboardRun['status']
@@ -67,29 +72,15 @@ const columns: Array<{
   { id: 'cancelled', label: 'Cancel', fullLabel: 'Cancelled', icon: XCircle }
 ]
 
-type WorkComposerTarget =
-  | { mode: 'new' }
-  | {
-      mode: 'request'
-      requestId: string
-      requestTitle: string
-    }
-  | {
-      mode: 'item'
-      requestId: string
-      requestTitle: string
-      anchorRunId: string
-      anchorRunTitle: string
-    }
-
-type DraftPlanContext = {
-  target: WorkComposerTarget
-  request: string
-}
-
 const newWorkComposerTarget: WorkComposerTarget = { mode: 'new' }
 
-export function WorkboardScreen(): React.JSX.Element {
+export function WorkboardScreen({
+  draftReview,
+  onDraftReviewChange
+}: {
+  draftReview: WorkboardDraftReviewState
+  onDraftReviewChange: Dispatch<SetStateAction<WorkboardDraftReviewState>>
+}): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [data, setData] = useState<WorkboardData>({
     requests: [],
@@ -101,9 +92,6 @@ export function WorkboardScreen(): React.JSX.Element {
   const [request, setRequest] = useState('')
   const [composerTarget, setComposerTarget] = useState<WorkComposerTarget>(newWorkComposerTarget)
   const [reviewBeforeStart, setReviewBeforeStart] = useState(true)
-  const [draftPlan, setDraftPlan] = useState<WorkboardDraftPlan | null>(null)
-  const [draftContext, setDraftContext] = useState<DraftPlanContext | null>(null)
-  const [selectedDraftId, setSelectedDraftId] = useState('')
   const [selectedRunId, setSelectedRunId] = useState('')
   const [requestFilter, setRequestFilter] = useState('all')
   const [workSearch, setWorkSearch] = useState('')
@@ -166,6 +154,9 @@ export function WorkboardScreen(): React.JSX.Element {
   const allRunCount = data.runs.length
   const activeRunCount = data.runs.filter((run) => !isTerminalRunStatus(run.status)).length
 
+  const draftPlan = draftReview.plan
+  const draftContext = draftReview.context
+  const selectedDraftId = draftReview.selectedItemId
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
   const canSubmit = request.trim().length >= 12 && enabledAgents.length > 0 && !busy
   const composerIsContinuation = composerTarget.mode !== 'new'
@@ -230,13 +221,32 @@ export function WorkboardScreen(): React.JSX.Element {
     }
   }
 
+  function setDraftPlan(plan: WorkboardDraftPlan | null): void {
+    onDraftReviewChange((current) => ({
+      ...current,
+      plan,
+      selectedItemId: plan?.items.some((item) => item.tempId === current.selectedItemId)
+        ? current.selectedItemId
+        : (plan?.items[0]?.tempId ?? '')
+    }))
+  }
+
+  function setSelectedDraftId(selectedItemId: string): void {
+    onDraftReviewChange((current) => ({ ...current, selectedItemId }))
+  }
+
   function updateDraftItem(tempId: string, patch: Partial<WorkboardDraftItem>): void {
-    setDraftPlan((current) => {
-      if (!current) return current
+    onDraftReviewChange((current) => {
+      if (!current.plan) return current
 
       return {
         ...current,
-        items: current.items.map((item) => (item.tempId === tempId ? { ...item, ...patch } : item))
+        plan: {
+          ...current.plan,
+          items: current.plan.items.map((item) =>
+            item.tempId === tempId ? { ...item, ...patch } : item
+          )
+        }
       }
     })
   }
@@ -246,9 +256,11 @@ export function WorkboardScreen(): React.JSX.Element {
     target: WorkComposerTarget,
     originalRequest: string
   ): void {
-    setDraftPlan(plan)
-    setDraftContext({ target, request: originalRequest })
-    setSelectedDraftId(plan.items[0]?.tempId ?? '')
+    onDraftReviewChange({
+      plan,
+      context: { target, request: originalRequest },
+      selectedItemId: plan.items[0]?.tempId ?? ''
+    })
   }
 
   async function startDraftPlan(
@@ -262,9 +274,7 @@ export function WorkboardScreen(): React.JSX.Element {
     setData(nextData)
     setRequestFilter(startedRequest?.id ?? 'all')
     setSelectedRunId('')
-    setDraftPlan(null)
-    setDraftContext(null)
-    setSelectedDraftId('')
+    onDraftReviewChange(emptyWorkboardDraftReviewState)
     setRequest('')
     setComposerTarget(newWorkComposerTarget)
   }
@@ -442,9 +452,7 @@ export function WorkboardScreen(): React.JSX.Element {
         onStart={() => void handleStartDraft()}
         onRegenerate={() => void handleRegenerateDraft()}
         onDiscard={() => {
-          setDraftPlan(null)
-          setDraftContext(null)
-          setSelectedDraftId('')
+          onDraftReviewChange(emptyWorkboardDraftReviewState)
         }}
       />
 
@@ -1614,8 +1622,6 @@ function RunActivityTab({
   useEffect(() => {
     let mounted = true
     if (!observedRun) {
-      setEvents([])
-      setError('')
       return
     }
     const observedRunId = observedRun.id

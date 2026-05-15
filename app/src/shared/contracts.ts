@@ -634,7 +634,7 @@ export const WorkRunFailInputSchema = WorkRunActionInputSchema.extend({
 })
 
 export const WorkboardDraftItemSchema = z.object({
-  tempId: z.string().trim().min(1).max(80),
+  tempId: z.string().trim().regex(/^item-[0-9]+$/).max(80),
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(64_000),
   expectedOutput: z.string().trim().min(1).max(2_000),
@@ -832,6 +832,11 @@ export function validateWorkboardDraftPlanDependencies(
   if (tempIds.size !== items.length) {
     throw new Error('The generated plan contains duplicate Work Item ids.')
   }
+  items.forEach((item, index) => {
+    if (item.tempId !== `item-${index + 1}`) {
+      throw new Error('The generated plan must use sequential Work Item ids.')
+    }
+  })
 
   items.forEach((item) => {
     item.dependsOnTempIds.forEach((dependsOnTempId) => {
