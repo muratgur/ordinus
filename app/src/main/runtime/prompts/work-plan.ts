@@ -157,6 +157,8 @@ Each instruction must be:
 
 For references to prior work:
 - If the planning input references prior artifacts or changed files, tell the assigned agent which paths to inspect rather than copying large prior content into the plan.
+- When the referenced paths are Markdown files, tell the assigned agent to inspect frontmatter and headings first before reading the full body.
+- If the work should create a Markdown output based on upstream files, tell the assigned agent to include those sources in a final References section.
 - If the continuation depends on prior text-only output with no file reference, include the relevant available excerpt directly in the instruction. Do not instruct the agent to fetch output that isn't available.
 
 expectedOutput must describe the concrete artifact or answer the user can inspect (e.g. "A markdown summary of...", "A patch to file X that...", "A list of...").

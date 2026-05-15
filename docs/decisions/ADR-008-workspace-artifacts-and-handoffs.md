@@ -53,6 +53,40 @@ Agents may read or modify other files inside the workspace when the task require
 project files should be changed in their natural locations. New supporting files should usually be
 placed under the suggested module working folder when that fits the work.
 
+### Markdown Frontmatter And References
+
+New user-facing Markdown documents created by Ordinus agents should begin with short,
+human-readable YAML frontmatter. The frontmatter is a navigation aid for agents and users, not a
+hidden technical manifest or a second database. It should stay concise and use plain product
+language.
+
+The standard fields are:
+
+```yaml
+---
+title: Human-readable document title
+summary: One concise sentence describing what this document contains.
+created_by: Agent or user-facing author name
+created_at: 2026-05-15
+project: Human-readable conversation or work title
+upstream:
+  - workspace-relative/source-or-input.md
+tags:
+  - ordinus
+---
+```
+
+Agents should include only fields that fit the document. `upstream` records known inputs at creation
+time. Do not store `downstream` in frontmatter; downstream relationships should be inferred from
+backlinks, later documents' `upstream` fields, or Ordinus runtime state. Do not add Ordinus
+frontmatter to existing project Markdown files, source files, logs, generated exports, binary
+artifacts, or non-Markdown files unless the user explicitly asks.
+
+When a new Markdown document uses upstream sources, agents should also add a final `## References`
+section for human navigation and Obsidian graph links. Markdown sources should be Obsidian
+wikilinks, for example `[[source-note]]`. Non-Markdown sources should be workspace-relative paths in
+backticks, for example `data/source-spreadsheet.xlsx`.
+
 Workspace-relative module folders are not the only directories a provider runtime may need. When an
 agent needs an app-owned support directory outside the workspace, such as an agent-specific skill,
 reference, template, script, or private working folder, the main process must grant that directory to
@@ -119,6 +153,13 @@ artifacts when it fits the task.
 If the task requires changing existing project files, edit them in their natural locations.
 Report every created or modified file using workspace-relative paths only.
 Do not return absolute paths.
+For new user-facing Markdown documents, include concise frontmatter with title, summary, created_by,
+created_at, project, upstream, and tags when those fields fit.
+If a new Markdown document uses upstream sources, add a final "## References" section. Use Obsidian
+wikilinks for Markdown references and workspace-relative paths in backticks for non-Markdown
+references.
+When inspecting Markdown files, read frontmatter and headings first to decide whether the full body
+is relevant.
 ```
 
 The provider CLI should not normally be executed with the suggested module folder as `cwd`, because
@@ -247,6 +288,8 @@ exception, not the default.
 - Future modules can add their own suggested working folders through the centralized path policy.
 - Runtime prompts and completion contracts must consistently require workspace-relative file
   references.
+- User-facing Markdown artifacts become easier to scan, search, link, and reuse in Obsidian without
+  adding separate manifest files or changing binary artifact behavior.
 
 ## Implementation Notes
 
@@ -260,6 +303,9 @@ exception, not the default.
   reported files.
 - Conversation turns and Workboard runs should persist reported artifacts and changed files as
   workspace-relative references.
+- Runtime prompts should tell agents to add the standard frontmatter only to newly created
+  user-facing Markdown outputs, add final `## References` sections for upstream sources, and inspect
+  Markdown frontmatter and headings before reading full document bodies when judging relevance.
 - Provider adapters should centralize extra-directory grants for agent-owned support directories
   instead of spreading provider-specific path arguments through module code.
 - Provider logs and internal transport files may stay in AppData, but user-facing artifacts and
