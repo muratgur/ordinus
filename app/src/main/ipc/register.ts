@@ -424,9 +424,7 @@ export function registerIpcHandlers(
 
     revealWorkspacePath(database, input.relativePath)
   })
-  ipcMain.handle(ipcChannels.observabilityListWorkboard, () =>
-    observability.listWorkboardRuns()
-  )
+  ipcMain.handle(ipcChannels.observabilityListWorkboard, () => observability.listWorkboardRuns())
   ipcMain.handle(ipcChannels.observabilityListConversation, (_event, payload) => {
     const input = ObservedConversationRunsInputSchema.parse(payload)
     return observability.listConversationRuns(input.conversationId)
@@ -872,6 +870,29 @@ function buildProviderInvocationSummary(input: {
   workspaceRoot: string
   startedAt: string
 }): SanitizedInvocationSummary {
+  if (input.providerId === 'claude') {
+    return {
+      provider: input.providerId,
+      executable: input.providerId,
+      args: [
+        '-p',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--json-schema',
+        '<schema>',
+        '--permission-mode',
+        getClaudePermissionModeSummary(input.sandbox),
+        '--append-system-prompt-file',
+        '<run-log>/system-prompt.txt',
+        '--name',
+        '<agent>'
+      ],
+      cwd: input.workspaceRoot,
+      startedAt: input.startedAt
+    }
+  }
+
   return {
     provider: input.providerId,
     executable: input.providerId,
@@ -890,6 +911,18 @@ function buildProviderInvocationSummary(input: {
     cwd: input.workspaceRoot,
     startedAt: input.startedAt
   }
+}
+
+function getClaudePermissionModeSummary(sandbox: string): string {
+  if (sandbox === 'read-only') {
+    return 'plan'
+  }
+
+  if (sandbox === 'workspace-write') {
+    return 'acceptEdits'
+  }
+
+  return 'bypassPermissions'
 }
 
 function getWorkRunErrorMessage(error: unknown): string {
