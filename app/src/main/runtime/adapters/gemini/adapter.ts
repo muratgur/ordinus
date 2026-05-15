@@ -43,6 +43,8 @@ import {
   disconnectCliProvider,
   getCliVersion,
   getStringValue,
+  isInvalidProviderSessionMessage,
+  ProviderSessionInvalidError,
   readCliFailureMessage,
   runConversationProcess,
   scheduleLoginCleanup,
@@ -152,15 +154,19 @@ async function sendGeminiConversationTurn(
   }
 
   if (result.code !== 0) {
-    throw new Error(
-      readCliFailureMessage({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        jsonFallbackKeys: ['result', 'response', 'message'],
-        ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
-        defaultMessage: 'Gemini conversation turn failed.'
-      })
-    )
+    const message = readCliFailureMessage({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      jsonFallbackKeys: ['result', 'response', 'message'],
+      ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+      defaultMessage: 'Gemini conversation turn failed.'
+    })
+
+    if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
+      throw new ProviderSessionInvalidError(message)
+    }
+
+    throw new Error(message)
   }
 
   const parsed = readGeminiConversationOutput(result.stdout)
@@ -550,11 +556,7 @@ function getGeminiEnvironment(): NodeJS.ProcessEnv {
 async function findGeminiExecutable(): Promise<CliExecutable | null> {
   return findCliExecutable('gemini', 'GEMINI_BIN', {
     nodeScriptCandidates: (executable) => [
-      getCliSiblingNodeModuleScript(
-        executable,
-        ['@google', 'gemini-cli'],
-        ['bundle', 'gemini.js']
-      )
+      getCliSiblingNodeModuleScript(executable, ['@google', 'gemini-cli'], ['bundle', 'gemini.js'])
     ]
   })
 }

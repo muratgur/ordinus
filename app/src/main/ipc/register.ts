@@ -56,7 +56,12 @@ import {
   type WorkRun
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
-import type { OrdinusDatabase, PreparedConversationTurn, PreparedWorkRun } from '../db/database'
+import type {
+  OrdinusDatabase,
+  PreparedConversationAgentTurn,
+  PreparedConversationTurn,
+  PreparedWorkRun
+} from '../db/database'
 import { getSystemPaths } from '../paths'
 import type { RuntimeService } from '../runtime'
 import type { ObservabilityService } from '../observability/service'
@@ -1101,7 +1106,7 @@ function startPreparedConversationTurns(
         observability: observationSink
       })
       .then((result) => {
-        saveConversationTurnCompletion(database, observability, agentTurn.agentTurnId, result)
+        saveConversationTurnCompletion(database, observability, agentTurn, result)
       })
       .catch((error) => {
         saveConversationTurnFailure(database, observability, agentTurn.agentTurnId, error, logRef)
@@ -1135,13 +1140,16 @@ async function getOrchestratorRuntimeConfig(
 function saveConversationTurnCompletion(
   database: OrdinusDatabase,
   observability: ObservabilityService,
-  turnId: string,
+  agentTurn: PreparedConversationAgentTurn,
   result: Awaited<ReturnType<RuntimeService['sendConversationTurn']>>
 ): void {
   try {
+    const turnId = agentTurn.agentTurnId
     const outcome = resolveConversationTurnOutcome(database, turnId, result.outcome)
     database.completeConversationTurn({
       turnId,
+      providerId: agentTurn.agent.providerId,
+      model: agentTurn.agent.model,
       providerSessionRef: result.providerSessionRef,
       outcome,
       logRef: result.logRef
@@ -1152,7 +1160,13 @@ function saveConversationTurnCompletion(
       observability.markConversationCompleted(turnId, outcome.content)
     }
   } catch (error) {
-    saveConversationTurnFailure(database, observability, turnId, error, result.logRef)
+    saveConversationTurnFailure(
+      database,
+      observability,
+      agentTurn.agentTurnId,
+      error,
+      result.logRef
+    )
   }
 }
 

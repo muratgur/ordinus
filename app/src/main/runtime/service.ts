@@ -17,6 +17,7 @@ import {
 } from '@shared/contracts'
 import { providerIds, type RuntimeEventListener, type RuntimeProviderCapabilities } from './types'
 import { getProviderAdapter, listProviderAdapters } from './adapters/registry'
+import { isProviderSessionInvalidError } from './adapters/shared'
 import { buildWorkspaceWorkingFolderInstructions } from './prompts/workspace'
 import type {
   ProviderRuntimeContext,
@@ -156,7 +157,7 @@ export function createRuntimeService(): RuntimeService {
         throw new Error(`Direct conversations are not available for ${adapter.label} yet.`)
       }
 
-      return adapter.sendConversationTurn(input, context)
+      return sendConversationTurnWithFreshSessionFallback(adapter, input, context)
     },
     async sendWorkRun(input) {
       WorkspaceRelativePathSchema.parse(input.workingRoot)
@@ -166,7 +167,8 @@ export function createRuntimeService(): RuntimeService {
         throw new Error(`Work execution is not available for ${adapter.label} yet.`)
       }
 
-      return adapter.sendConversationTurn(
+      return sendConversationTurnWithFreshSessionFallback(
+        adapter,
         {
           turnId: input.runId,
           conversationId: input.workRequestId,
@@ -212,6 +214,43 @@ export function createRuntimeService(): RuntimeService {
         listeners.delete(listener)
       }
     }
+  }
+}
+
+async function sendConversationTurnWithFreshSessionFallback(
+  adapter: ReturnType<typeof getProviderAdapter>,
+  input: RuntimeConversationTurnInput,
+  context: ProviderRuntimeContext
+): Promise<RuntimeConversationTurnResult> {
+  if (!adapter.sendConversationTurn) {
+    throw new Error(`Direct conversations are not available for ${adapter.label} yet.`)
+  }
+
+  try {
+    return await adapter.sendConversationTurn(input, context)
+  } catch (error) {
+    if (!input.providerSessionRef || !isProviderSessionInvalidError(error)) {
+      throw error
+    }
+
+    input.observability?.record({
+      kind: 'status',
+      source: 'runtime',
+      confidence: 'reported',
+      phase: 'starting',
+      summary: 'Started a new provider session after the stored session was unavailable.',
+      payload: {
+        reason: 'invalid_provider_session'
+      }
+    })
+
+    return adapter.sendConversationTurn(
+      {
+        ...input,
+        providerSessionRef: null
+      },
+      context
+    )
   }
 }
 

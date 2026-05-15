@@ -62,6 +62,35 @@ export type RunConversationProcessOptions = {
   observeStdoutLine?: (line: string) => RuntimeObservation[]
 }
 
+const invalidSessionPatterns = [
+  /\binvalid session identifier\b/i,
+  /\binvalid session id\b/i,
+  /\bsession (?:id )?(?:was )?not found\b/i,
+  /\bno session (?:was )?found\b/i,
+  /\bunknown session\b/i,
+  /\bconversation (?:was )?not found\b/i,
+  /\bno conversation found\b/i,
+  /\bthread (?:id )?(?:was )?not found\b/i,
+  /\binvalid thread\b/i
+]
+
+export class ProviderSessionInvalidError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProviderSessionInvalidError'
+  }
+}
+
+export function isProviderSessionInvalidError(
+  error: unknown
+): error is ProviderSessionInvalidError {
+  return error instanceof ProviderSessionInvalidError
+}
+
+export function isInvalidProviderSessionMessage(message: string): boolean {
+  return invalidSessionPatterns.some((pattern) => pattern.test(message))
+}
+
 export function runConversationProcess({
   executable,
   args,
@@ -279,9 +308,8 @@ function readCliTextFailureMessage(value: string, ignoredDiagnosticPatterns: Reg
     value
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .find(
-        (line) => line && !ignoredDiagnosticPatterns.some((pattern) => pattern.test(line))
-      ) ?? ''
+      .find((line) => line && !ignoredDiagnosticPatterns.some((pattern) => pattern.test(line))) ??
+    ''
   )
 }
 

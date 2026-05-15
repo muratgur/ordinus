@@ -898,6 +898,7 @@ export class OrdinusDatabase {
         const providerSessionRef =
           anchorRun &&
           anchorRun.assignedAgentId === agent.id &&
+          anchorRun.providerId === agent.providerId &&
           requiredRunIds.includes(anchorRun.id)
             ? anchorRun.providerSessionRef
             : null
@@ -1159,7 +1160,7 @@ export class OrdinusDatabase {
       return run.providerSessionRef
     }
 
-    const providerSessionRef = session.providerSessionRef ?? run.providerSessionRef
+    const providerSessionRef = this.getCompatibleProviderSessionRefForRun(run, session)
     const now = new Date().toISOString()
     this.db
       .update(workRequestAgentSessions)
@@ -1174,7 +1175,7 @@ export class OrdinusDatabase {
       .where(eq(workRequestAgentSessions.id, session.id))
       .run()
 
-    if (providerSessionRef && run.providerSessionRef !== providerSessionRef) {
+    if (run.providerSessionRef !== providerSessionRef) {
       this.db
         .update(workRuns)
         .set({
@@ -1851,11 +1852,7 @@ export class OrdinusDatabase {
   }
 
   getObservedRunInternal(observedRunId: string): ObservedRunInternal {
-    const run = this.db
-      .select()
-      .from(observedRuns)
-      .where(eq(observedRuns.id, observedRunId))
-      .get()
+    const run = this.db.select().from(observedRuns).where(eq(observedRuns.id, observedRunId)).get()
 
     if (!run) {
       throw new Error('Observed run was not found.')
@@ -2176,14 +2173,19 @@ export class OrdinusDatabase {
     const userTurnId = createConversationTurnId()
     const nextSequence = this.getNextConversationTurnSequence(detail.id)
 
-    const agentTurns = targetParticipants.map((participant, index) => ({
-      conversationId: detail.id,
-      participantId: participant.id,
-      agentTurnId: createConversationTurnId(),
-      agent: targetAgents[index],
-      providerSessionRef: participant.providerSessionRef,
-      message: buildAssignedConversationMessage(userMessage, assignments[index].instruction)
-    }))
+    const agentTurns = targetParticipants.map((participant, index) => {
+      const agent = targetAgents[index]
+
+      return {
+        conversationId: detail.id,
+        participantId: participant.id,
+        agentTurnId: createConversationTurnId(),
+        agent,
+        providerSessionRef:
+          participant.providerId === agent.providerId ? participant.providerSessionRef : null,
+        message: buildAssignedConversationMessage(userMessage, assignments[index].instruction)
+      }
+    })
 
     this.db.transaction((tx) => {
       tx.insert(conversationTurns)
@@ -2232,18 +2234,15 @@ export class OrdinusDatabase {
         .where(eq(conversations.id, detail.id))
         .run()
 
-      tx.update(conversationParticipants)
-        .set({
-          status: 'running',
-          updatedAt: now
-        })
-        .where(
-          inArray(
-            conversationParticipants.id,
-            targetParticipants.map((participant) => participant.id)
-          )
-        )
-        .run()
+      targetParticipants.forEach((participant) => {
+        tx.update(conversationParticipants)
+          .set({
+            status: 'running',
+            updatedAt: now
+          })
+          .where(eq(conversationParticipants.id, participant.id))
+          .run()
+      })
     })
 
     return {
@@ -2254,6 +2253,8 @@ export class OrdinusDatabase {
 
   completeConversationTurn(input: {
     turnId: string
+    providerId: Agent['providerId']
+    model: string
     providerSessionRef: string
     outcome: AgentTurnOutcome
     logRef: string
@@ -2300,6 +2301,8 @@ export class OrdinusDatabase {
           .run()
         tx.update(conversationParticipants)
           .set({
+            providerId: input.providerId,
+            model: input.model,
             providerSessionRef: input.providerSessionRef,
             status: 'waiting_for_user',
             updatedAt: now
@@ -2341,6 +2344,8 @@ export class OrdinusDatabase {
     this.db
       .update(conversationParticipants)
       .set({
+        providerId: input.providerId,
+        model: input.model,
         providerSessionRef: input.providerSessionRef,
         status: 'ready',
         updatedAt: now
@@ -2389,6 +2394,8 @@ export class OrdinusDatabase {
     const agentTurnId = createConversationTurnId()
     const nextSequence = this.getNextConversationTurnSequence(request.conversationId)
     const agentMessage = buildInputRequestContinuationMessage(request, answers)
+    const providerSessionRef =
+      participant.providerId === agent.providerId ? participant.providerSessionRef : null
 
     this.db.transaction((tx) => {
       tx.update(conversationInputRequests)
@@ -2465,7 +2472,7 @@ export class OrdinusDatabase {
           participantId: request.participantId,
           agentTurnId,
           agent,
-          providerSessionRef: participant.providerSessionRef,
+          providerSessionRef,
           message: agentMessage
         }
       ]
@@ -2831,7 +2838,12 @@ export class OrdinusDatabase {
     const now = new Date().toISOString()
     const providerSessionRef =
       run.providerSessionRef ??
-      this.getLatestProviderSessionRefForRequestAgent(requestId, run.assignedAgentId)
+      this.getLatestProviderSessionRefForRequestAgent(
+        requestId,
+        run.assignedAgentId,
+        run.providerId,
+        run.id
+      )
     const session: WorkRequestAgentSession = {
       id: createWorkRequestAgentSessionId(),
       requestId,
@@ -2850,9 +2862,37 @@ export class OrdinusDatabase {
     return session
   }
 
+  private getCompatibleProviderSessionRefForRun(
+    run: WorkRun,
+    session: WorkRequestAgentSession
+  ): string | null {
+    const requestId = run.source?.type === workRequestSourceType ? run.source.id : ''
+    const sessionRef =
+      session.providerId === run.providerId
+        ? session.providerSessionRef || run.providerSessionRef
+        : null
+
+    if (sessionRef) {
+      return sessionRef
+    }
+
+    if (!requestId) {
+      return null
+    }
+
+    return this.getLatestProviderSessionRefForRequestAgent(
+      requestId,
+      run.assignedAgentId,
+      run.providerId,
+      run.id
+    )
+  }
+
   private getLatestProviderSessionRefForRequestAgent(
     requestId: string,
-    agentId: string
+    agentId: string,
+    providerId: WorkRun['providerId'],
+    excludeRunId?: string
   ): string | null {
     return (
       this.db
@@ -2862,7 +2902,9 @@ export class OrdinusDatabase {
           and(
             eq(workRuns.sourceType, workRequestSourceType),
             eq(workRuns.sourceId, requestId),
-            eq(workRuns.assignedAgentId, agentId)
+            eq(workRuns.assignedAgentId, agentId),
+            eq(workRuns.providerId, providerId),
+            excludeRunId ? ne(workRuns.id, excludeRunId) : undefined
           )
         )
         .orderBy(desc(workRuns.updatedAt), desc(workRuns.createdAt))
@@ -3478,9 +3520,7 @@ function calculateObservedIdleMs(value: unknown): number | null {
   return Math.max(0, end - lastActivity)
 }
 
-function getObservedEndTime(value: {
-  completedAt: string | null
-}): number {
+function getObservedEndTime(value: { completedAt: string | null }): number {
   const completedAt = value.completedAt ? Date.parse(value.completedAt) : Number.NaN
   return Number.isNaN(completedAt) ? Date.now() : completedAt
 }
