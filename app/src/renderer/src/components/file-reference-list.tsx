@@ -1,13 +1,9 @@
 import type { JSX } from 'react'
-import { FolderOpen } from 'lucide-react'
+import { useState } from 'react'
+import { Check, Copy, FolderOpen } from 'lucide-react'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
-
-export type FileReference = {
-  path: string
-  artifact: boolean
-  changed: boolean
-}
+import type { FileReference } from './file-reference-utils'
 
 export function FileReferenceList({
   files,
@@ -16,15 +12,27 @@ export function FileReferenceList({
   files: FileReference[]
   onRevealPath: (path: string) => void
 }): JSX.Element {
+  const [copiedPath, setCopiedPath] = useState('')
+
+  async function copyPath(path: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopiedPath(path)
+      window.setTimeout(() => setCopiedPath((current) => (current === path ? '' : current)), 1400)
+    } catch {
+      setCopiedPath('')
+    }
+  }
+
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 gap-2">
       {files.map((file) => (
         <div
           key={normalizeFileReferenceKey(file.path)}
-          className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5"
+          className="flex min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border bg-card px-2 py-1.5"
         >
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground">
+            <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]">
               {file.path}
             </code>
             <div className="flex shrink-0 flex-wrap gap-1">
@@ -44,6 +52,15 @@ export function FileReferenceList({
             variant="ghost"
             size="icon"
             className="size-8 shrink-0"
+            onClick={() => void copyPath(file.path)}
+          >
+            {copiedPath === file.path ? <Check /> : <Copy />}
+            <span className="sr-only">Copy file path</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
             onClick={() => onRevealPath(file.path)}
           >
             <FolderOpen />
@@ -53,35 +70,6 @@ export function FileReferenceList({
       ))}
     </div>
   )
-}
-
-export function getFileReferences(artifactRefs: string[], changedFiles: string[]): FileReference[] {
-  const files = new Map<string, FileReference>()
-
-  for (const path of artifactRefs) {
-    upsertFileReference(files, path, 'artifact')
-  }
-
-  for (const path of changedFiles) {
-    upsertFileReference(files, path, 'changed')
-  }
-
-  return Array.from(files.values())
-}
-
-function upsertFileReference(
-  files: Map<string, FileReference>,
-  path: string,
-  kind: 'artifact' | 'changed'
-): void {
-  const key = normalizeFileReferenceKey(path)
-  const current = files.get(key) ?? { path, artifact: false, changed: false }
-
-  files.set(key, {
-    ...current,
-    artifact: current.artifact || kind === 'artifact',
-    changed: current.changed || kind === 'changed'
-  })
 }
 
 function normalizeFileReferenceKey(path: string): string {

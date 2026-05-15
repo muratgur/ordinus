@@ -273,6 +273,10 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
     'Read upstream files from the workspace when you need full detail. Do not assume the summary contains everything.',
     ...formatResumeMessage(input.resumeMessage),
     '',
+    'When you complete the Work Item, make the final content easy to review in the Workboard drawer.',
+    'Format final content as concise GitHub-flavored Markdown. Use short sections such as Summary, Completed, Output, Files, and Follow-up when they fit the work.',
+    'Keep file paths in artifactRefs and changedFiles as required by the outcome schema; mention only the most important paths in the content itself.',
+    '',
     'Complete only this Work Item. If you need the user to decide something before continuing, return a structured input request.'
   ].join('\n')
 }
