@@ -49,6 +49,10 @@ Conversation runtime should follow the session-backed model in
 metadata and provider session references, while provider CLIs own detailed per-agent conversation
 memory.
 
+Provider session references are provider-owned hints, not portable product memory. Runtime session
+selection and fresh-session fallback should follow
+`docs/decisions/ADR-013-provider-session-validity-and-fresh-start-fallback.md`.
+
 ## UI
 
 The renderer uses React, TypeScript, Tailwind, and shadcn/ui primitives. UI should feel calm, operational, and work-focused. Reusable primitives live under `app/src/renderer/src/components/ui`.

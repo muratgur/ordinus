@@ -64,6 +64,7 @@ import type {
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult
 } from '../types'
+import type { RuntimeObservation } from '../../../observability/types'
 
 export const claudeProviderAdapter: ProviderAdapter = {
   id: 'claude',
@@ -116,11 +117,15 @@ async function logoutClaudeProvider(): Promise<void> {
     return
   }
 
-  const result = await runCapture(executable.command, withCliBaseArgs(executable, ['auth', 'logout']), {
-    env: getClaudeEnvironment(),
-    shell: executable.shell,
-    timeoutMs: 10_000
-  })
+  const result = await runCapture(
+    executable.command,
+    withCliBaseArgs(executable, ['auth', 'logout']),
+    {
+      env: getClaudeEnvironment(),
+      shell: executable.shell,
+      timeoutMs: 10_000
+    }
+  )
 
   if (result.code !== 0) {
     throw new Error(firstLine(result.stderr || result.stdout) || 'Claude logout failed.')
@@ -158,7 +163,8 @@ async function sendClaudeConversationTurn(
     context,
     env: getClaudeEnvironment(),
     stdin: prompt,
-    streamErrorMessage: 'Claude process streams could not be opened.'
+    streamErrorMessage: 'Claude process streams could not be opened.',
+    observeStdoutLine: observeClaudeStdoutLine
   })
 
   if (result.cancelled) {
@@ -196,7 +202,8 @@ function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): strin
   const args = [
     '-p',
     '--output-format',
-    'json',
+    'stream-json',
+    '--verbose',
     '--json-schema',
     JSON.stringify(agentTurnOutcomeJsonSchema),
     '--permission-mode',
@@ -415,11 +422,15 @@ async function getClaudeStatus(loginProcess: ProviderLoginProcess | null): Promi
     const env = getClaudeEnvironment()
     const version = await getCliVersion(executable, env)
 
-    const authResult = await runCapture(executable.command, withCliBaseArgs(executable, ['auth', 'status']), {
-      env,
-      shell: executable.shell,
-      timeoutMs: 10_000
-    })
+    const authResult = await runCapture(
+      executable.command,
+      withCliBaseArgs(executable, ['auth', 'status']),
+      {
+        env,
+        shell: executable.shell,
+        timeoutMs: 10_000
+      }
+    )
     const output = `${authResult.stdout}\n${authResult.stderr}`.trim()
     const auth = parseClaudeAuthStatus(output)
 
@@ -629,6 +640,200 @@ function readClaudeAgentDraftOutput(value: string): unknown {
   }
 }
 
+function observeClaudeStdoutLine(line: string): RuntimeObservation[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return []
+  }
+
+  if (!isRecord(parsed)) {
+    return []
+  }
+
+  const type = getStringValue(parsed.type)
+  if (type === 'system') {
+    return observeClaudeSystemEvent(parsed)
+  }
+
+  if (type === 'assistant') {
+    return observeClaudeAssistantEvent(parsed)
+  }
+
+  if (type === 'user') {
+    return observeClaudeUserEvent(parsed)
+  }
+
+  if (type === 'result') {
+    return [
+      claudeObservation({
+        kind: 'message',
+        phase: 'running',
+        summary: 'Claude returned a result.'
+      })
+    ]
+  }
+
+  return []
+}
+
+function observeClaudeSystemEvent(event: Record<string, unknown>): RuntimeObservation[] {
+  const subtype = getStringValue(event.subtype)
+  if (subtype !== 'init') {
+    return []
+  }
+
+  return [
+    claudeObservation({
+      kind: 'status',
+      phase: 'starting',
+      summary: 'Claude session started.',
+      payload: {
+        sessionId: getStringValue(event.session_id),
+        model: getStringValue(event.model)
+      }
+    })
+  ]
+}
+
+function observeClaudeAssistantEvent(event: Record<string, unknown>): RuntimeObservation[] {
+  const message = isRecord(event.message) ? event.message : null
+  const content = Array.isArray(message?.content) ? message.content : []
+  const observations: RuntimeObservation[] = []
+  let hasText = false
+
+  for (const item of content) {
+    if (!isRecord(item)) {
+      continue
+    }
+
+    const itemType = getStringValue(item.type)
+    if (itemType === 'text' && getStringValue(item.text).trim()) {
+      hasText = true
+      continue
+    }
+
+    if (itemType !== 'tool_use') {
+      continue
+    }
+
+    const name = getStringValue(item.name)
+    const input = isRecord(item.input) ? item.input : {}
+    const label = getClaudeToolLabel(name, input)
+    const phase = getClaudeToolPhase(name, label)
+    const isCommand = isClaudeCommandTool(name)
+
+    observations.push(
+      claudeObservation({
+        kind: isCommand ? 'command' : 'tool',
+        phase,
+        summary: label
+          ? `${isCommand ? 'Running command' : 'Using tool'}: ${label}`
+          : isCommand
+            ? 'Running command.'
+            : 'Using tool.',
+        payload: {
+          id: getStringValue(item.id),
+          name,
+          label
+        }
+      })
+    )
+  }
+
+  if (hasText && observations.length === 0) {
+    observations.push(
+      claudeObservation({
+        kind: 'message',
+        phase: 'running',
+        summary: 'Claude is preparing a response.'
+      })
+    )
+  }
+
+  return observations
+}
+
+function observeClaudeUserEvent(event: Record<string, unknown>): RuntimeObservation[] {
+  const message = isRecord(event.message) ? event.message : null
+  const content = Array.isArray(message?.content) ? message.content : []
+  const observations: RuntimeObservation[] = []
+
+  for (const item of content) {
+    if (!isRecord(item) || getStringValue(item.type) !== 'tool_result') {
+      continue
+    }
+
+    observations.push(
+      claudeObservation({
+        kind: 'tool',
+        phase: 'running',
+        summary: 'Tool completed.',
+        payload: {
+          toolUseId: getStringValue(item.tool_use_id),
+          isError: item.is_error === true
+        }
+      })
+    )
+  }
+
+  return observations
+}
+
+function claudeObservation(
+  event: Pick<RuntimeObservation, 'kind' | 'phase' | 'summary'> &
+    Pick<Partial<RuntimeObservation>, 'payload'>
+): RuntimeObservation {
+  return {
+    source: 'provider',
+    confidence: 'reported',
+    lifecycleStatus: 'running',
+    ...event
+  }
+}
+
+function getClaudeToolLabel(name: string, input: Record<string, unknown>): string {
+  const detail =
+    getStringValue(input.command) ||
+    getStringValue(input.file_path) ||
+    getStringValue(input.path) ||
+    getStringValue(input.pattern) ||
+    getStringValue(input.url) ||
+    getStringValue(input.description)
+
+  return [name, detail].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 180)
+}
+
+function getClaudeToolPhase(name: string, label: string): RuntimeObservation['phase'] {
+  const normalized = `${name} ${label}`.toLowerCase()
+  if (
+    normalized.includes('read') ||
+    normalized.includes('grep') ||
+    normalized.includes('glob') ||
+    normalized.includes('ls') ||
+    normalized.includes('search') ||
+    normalized.includes('fetch')
+  ) {
+    return 'reading'
+  }
+
+  if (
+    normalized.includes('write') ||
+    normalized.includes('edit') ||
+    normalized.includes('patch') ||
+    normalized.includes('update')
+  ) {
+    return 'editing'
+  }
+
+  return 'running'
+}
+
+function isClaudeCommandTool(name: string): boolean {
+  return name.toLowerCase() === 'bash'
+}
+
 function unwrapClaudeStructuredOutput(value: unknown): unknown {
   if (!isRecord(value)) {
     return value
@@ -639,7 +844,7 @@ function unwrapClaudeStructuredOutput(value: unknown): unknown {
 }
 
 function readClaudeConversationOutput(value: string): { sessionId: string; responseText: string } {
-  const parsed = parseJsonFromCliOutput(value)
+  const parsed = readClaudeConversationResult(value)
 
   if (!isRecord(parsed)) {
     throw new Error('Claude returned an invalid conversation response.')
@@ -667,6 +872,28 @@ function readClaudeConversationOutput(value: string): { sessionId: string; respo
     sessionId,
     responseText: responseText.trim()
   }
+}
+
+function readClaudeConversationResult(value: string): unknown {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (const line of [...lines].reverse()) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+
+    if (isRecord(parsed) && getStringValue(parsed.type) === 'result') {
+      return parsed
+    }
+  }
+
+  return parseJsonFromCliOutput(value)
 }
 
 function readClaudeLastMessage(outputPath: string): string {
