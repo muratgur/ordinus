@@ -220,6 +220,7 @@ Final response rules:
 - Use fenced code blocks for code, commands, diffs, logs, or structured snippets.
 - Do not use raw HTML in content.
 - Use artifactRefs for user-facing deliverables such as reports, PDFs, spreadsheets, images, or final documents.
+- Newly created user-facing Markdown artifacts should follow the workspace Markdown frontmatter and References policy.
 - Use changedFiles for every file you created or modified, including artifacts.
 - All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..".
 - Do not include a file path unless you actually created or modified that file in the workspace.`
