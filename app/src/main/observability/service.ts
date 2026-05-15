@@ -23,8 +23,8 @@ import type {
   SanitizedInvocationSummary
 } from './types'
 
-const quietThresholdMs = 30_000
-const stalledThresholdMs = 120_000
+const quietThresholdMs = 90_000
+const stalledThresholdMs = 180_000
 const diagnosticsTailBytes = 64 * 1024
 
 type StartObservedRunInput = {
