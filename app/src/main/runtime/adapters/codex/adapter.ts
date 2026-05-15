@@ -1,12 +1,5 @@
 import { spawn } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -52,6 +45,8 @@ import {
   createProviderStatusBase,
   disconnectCliProvider,
   getCliVersion,
+  isInvalidProviderSessionMessage,
+  ProviderSessionInvalidError,
   readCliFailureMessage,
   runConversationProcess,
   scheduleLoginCleanup,
@@ -145,14 +140,18 @@ async function sendCodexConversationTurn(
   }
 
   if (result.code !== 0) {
-    throw new Error(
-      readCliFailureMessage({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        ignoredJsonEventTypes: ['thread.started'],
-        defaultMessage: 'Codex exited before returning a Work Item result.'
-      })
-    )
+    const message = readCliFailureMessage({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      ignoredJsonEventTypes: ['thread.started'],
+      defaultMessage: 'Codex exited before returning a Work Item result.'
+    })
+
+    if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
+      throw new ProviderSessionInvalidError(message)
+    }
+
+    throw new Error(message)
   }
 
   const providerSessionRef = extractCodexSessionRef(result.stdout) || input.providerSessionRef || ''
@@ -420,11 +419,15 @@ async function getCodexStatus(loginProcess: ProviderLoginProcess | null): Promis
     const env = getCodexEnvironment()
     const version = await getCliVersion(executable, env)
 
-    const authResult = await runCapture(executable.command, withCliBaseArgs(executable, ['login', 'status']), {
-      env,
-      shell: executable.shell,
-      timeoutMs: 10_000
-    })
+    const authResult = await runCapture(
+      executable.command,
+      withCliBaseArgs(executable, ['login', 'status']),
+      {
+        env,
+        shell: executable.shell,
+        timeoutMs: 10_000
+      }
+    )
     const output = `${authResult.stdout}\n${authResult.stderr}`.trim()
     const connected = authResult.code === 0 && /logged in/i.test(output)
 
@@ -614,7 +617,9 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
 
   const type = getEventType(parsed)
   if (type === 'thread.started') {
-    return [codexObservation({ kind: 'status', phase: 'starting', summary: 'Codex session started.' })]
+    return [
+      codexObservation({ kind: 'status', phase: 'starting', summary: 'Codex session started.' })
+    ]
   }
 
   if (type === 'turn.started') {
@@ -622,9 +627,7 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
   }
 
   if (type === 'turn.completed') {
-    return [
-      codexObservation({ kind: 'phase', phase: 'running', summary: 'Preparing response.' })
-    ]
+    return [codexObservation({ kind: 'phase', phase: 'running', summary: 'Preparing response.' })]
   }
 
   const item = isRecord(parsed) && isRecord(parsed.item) ? parsed.item : null
@@ -709,17 +712,13 @@ function codexObservation(
 
 function isCommandLikeItem(itemType: string, item: Record<string, unknown>): boolean {
   return (
-    itemType.includes('command') ||
-    itemType.includes('shell') ||
-    typeof item.command === 'string'
+    itemType.includes('command') || itemType.includes('shell') || typeof item.command === 'string'
   )
 }
 
 function isToolLikeItem(itemType: string, item: Record<string, unknown>): boolean {
   return (
-    itemType.includes('tool') ||
-    typeof item.name === 'string' ||
-    typeof item.tool_name === 'string'
+    itemType.includes('tool') || typeof item.name === 'string' || typeof item.tool_name === 'string'
   )
 }
 
@@ -795,4 +794,3 @@ function findSessionLikeString(value: unknown): string {
 
   return ''
 }
-

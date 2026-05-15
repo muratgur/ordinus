@@ -48,6 +48,8 @@ import {
   disconnectCliProvider,
   getCliVersion,
   getStringValue,
+  isInvalidProviderSessionMessage,
+  ProviderSessionInvalidError,
   readCliFailureMessage,
   runConversationProcess,
   scheduleLoginCleanup
@@ -172,14 +174,18 @@ async function sendClaudeConversationTurn(
   }
 
   if (result.code !== 0) {
-    throw new Error(
-      readCliFailureMessage({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        jsonFallbackKeys: ['result', 'message'],
-        defaultMessage: 'Claude conversation turn failed.'
-      })
-    )
+    const message = readCliFailureMessage({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      jsonFallbackKeys: ['result', 'message'],
+      defaultMessage: 'Claude conversation turn failed.'
+    })
+
+    if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
+      throw new ProviderSessionInvalidError(message)
+    }
+
+    throw new Error(message)
   }
 
   const parsed = readClaudeConversationOutput(result.stdout)
