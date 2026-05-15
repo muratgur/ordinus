@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { Link } from 'react-router-dom'
 import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   Check,
   ChevronDown,
+  ChevronLeft,
   Clock3,
   Columns3,
   CornerDownRight,
+  Copy,
   GitBranch,
   Loader2,
   Search,
@@ -30,6 +34,7 @@ import type {
   WorkboardRun,
   WorkRunInputRequest
 } from '@shared/contracts'
+import { appRoutePaths } from '@renderer/app/routes'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
 import {
@@ -38,10 +43,9 @@ import {
   formatObservedPhase,
   mergeDiagnostics
 } from '@renderer/components/observability-details'
-import {
-  FileReferenceList,
-  getFileReferences
-} from '@renderer/components/file-reference-list'
+import { FileReferenceList } from '@renderer/components/file-reference-list'
+import { getFileReferences } from '@renderer/components/file-reference-utils'
+import { MarkdownContent } from '@renderer/components/markdown-content'
 import {
   Dialog,
   DialogContent,
@@ -94,6 +98,7 @@ export function WorkboardScreen({
   const [composerTarget, setComposerTarget] = useState<WorkComposerTarget>(newWorkComposerTarget)
   const [reviewBeforeStart, setReviewBeforeStart] = useState(true)
   const [selectedRunId, setSelectedRunId] = useState('')
+  const [runDetailBackStack, setRunDetailBackStack] = useState<string[]>([])
   const [requestFilter, setRequestFilter] = useState('all')
   const [workSearch, setWorkSearch] = useState('')
   const [busy, setBusy] = useState('')
@@ -274,7 +279,7 @@ export function WorkboardScreen({
 
     setData(nextData)
     setRequestFilter(startedRequest?.id ?? 'all')
-    setSelectedRunId('')
+    closeRunDetail()
     onDraftReviewChange(emptyWorkboardDraftReviewState)
     setRequest('')
     setComposerTarget(newWorkComposerTarget)
@@ -289,7 +294,7 @@ export function WorkboardScreen({
       anchorRunTitle: run.title
     })
     setRequest('')
-    setSelectedRunId('')
+    closeRunDetail()
   }
 
   function handleContinueRequest(requestId: string): void {
@@ -302,6 +307,31 @@ export function WorkboardScreen({
       requestTitle: workRequest.title
     })
     setRequest('')
+    closeRunDetail()
+  }
+
+  function openRunDetail(runId: string): void {
+    setRunDetailBackStack([])
+    setSelectedRunId(runId)
+  }
+
+  function openLinkedRunDetail(runId: string): void {
+    if (!selectedRunId || selectedRunId === runId) return
+
+    setRunDetailBackStack((current) => [...current, selectedRunId])
+    setSelectedRunId(runId)
+  }
+
+  function goBackRunDetail(): void {
+    const previousRunId = runDetailBackStack.at(-1)
+    if (!previousRunId) return
+
+    setRunDetailBackStack((current) => current.slice(0, -1))
+    setSelectedRunId(previousRunId)
+  }
+
+  function closeRunDetail(): void {
+    setRunDetailBackStack([])
     setSelectedRunId('')
   }
 
@@ -435,7 +465,7 @@ export function WorkboardScreen({
         runs={filteredRuns}
         inputRequests={data.inputRequests}
         observedRuns={observedRunByWorkRunId}
-        onSelectRun={setSelectedRunId}
+        onSelectRun={openRunDetail}
       />
 
       <PlanReviewDialog
@@ -464,9 +494,12 @@ export function WorkboardScreen({
         observedRun={selectedRun ? (observedRunByWorkRunId.get(selectedRun.id) ?? null) : null}
         inputRequest={getVisibleWorkRunInputRequest(data.inputRequests, selectedRun?.id)}
         busy={busy}
-        onClose={() => setSelectedRunId('')}
+        canGoBack={runDetailBackStack.length > 0}
+        onBack={goBackRunDetail}
+        onClose={closeRunDetail}
         onCancel={(runId) => void handleCancelRun(runId)}
         onContinue={handleContinueRun}
+        onSelectRun={openLinkedRunDetail}
         onAnswered={(nextData) => setData(nextData)}
         onError={setError}
       />
@@ -481,16 +514,6 @@ type RequestFilterStat = {
   activeCount: number
   createdAt: string
 }
-
-type RunDetailTab = 'overview' | 'activity' | 'output' | 'files' | 'runtime'
-
-const runDetailTabs: Array<{ id: RunDetailTab; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'output', label: 'Output' },
-  { id: 'files', label: 'Files' },
-  { id: 'runtime', label: 'Runtime' }
-]
 
 function WorkFilterBar({
   filter,
@@ -1385,9 +1408,12 @@ function RunDetailDrawer({
   observedRun,
   inputRequest,
   busy,
+  canGoBack,
+  onBack,
   onClose,
   onCancel,
   onContinue,
+  onSelectRun,
   onAnswered,
   onError
 }: {
@@ -1397,9 +1423,12 @@ function RunDetailDrawer({
   observedRun: ObservedRunSnapshot | null
   inputRequest?: WorkRunInputRequest
   busy: string
+  canGoBack: boolean
+  onBack: () => void
   onClose: () => void
   onCancel: (runId: string) => void
   onContinue: (run: WorkboardRun) => void
+  onSelectRun: (runId: string) => void
   onAnswered: (data: WorkboardData) => void
   onError: (message: string) => void
 }): React.JSX.Element | null {
@@ -1407,13 +1436,11 @@ function RunDetailDrawer({
     key: string
     answers: Record<string, InteractionAnswer>
   }>({ key: '', answers: {} })
-  const [tabState, setTabState] = useState<{ runId: string; tab: RunDetailTab } | null>(null)
   const answerKey = `${run?.id ?? ''}:${inputRequest?.id ?? ''}`
   const answers = answerState.key === answerKey ? answerState.answers : {}
 
   if (!run) return null
   const activeRun = run
-  const activeTab = tabState?.runId === activeRun.id ? tabState.tab : defaultRunDetailTab(run)
 
   const waitsFor = dependencies
     .filter((dependency) => dependency.runId === activeRun.id)
@@ -1466,20 +1493,14 @@ function RunDetailDrawer({
       <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-background shadow-2xl sm:w-[86vw] sm:max-w-[680px] xl:w-[72vw] xl:max-w-[760px]">
         <RunDetailHeader
           run={run}
-          waitsFor={waitsFor}
           observedRun={observedRun}
-          inputRequest={inputRequest}
+          canGoBack={canGoBack}
+          onBack={onBack}
           onClose={onClose}
         />
 
-        <RunDetailTabBar
-          activeTab={activeTab}
-          onChange={(tab) => setTabState({ runId: activeRun.id, tab })}
-        />
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-5 ordinus-scrollbar">
-          <RunDetailTabContent
-            activeTab={activeTab}
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-5 ordinus-scrollbar">
+          <RunDetailReport
             run={run}
             waitsFor={waitsFor}
             observedRun={observedRun}
@@ -1488,6 +1509,7 @@ function RunDetailDrawer({
             onAnswerChange={updateAnswer}
             onSubmitAnswers={() => void submitAnswers()}
             onRevealPath={(path) => void revealPath(path)}
+            onSelectRun={onSelectRun}
           />
         </div>
 
@@ -1514,76 +1536,69 @@ function RunDetailDrawer({
 
 function RunDetailHeader({
   run,
-  waitsFor,
   observedRun,
-  inputRequest,
+  canGoBack,
+  onBack,
   onClose
 }: {
   run: WorkboardRun
-  waitsFor: WorkboardRun[]
   observedRun: ObservedRunSnapshot | null
-  inputRequest?: WorkRunInputRequest
+  canGoBack: boolean
+  onBack: () => void
   onClose: () => void
 }): React.JSX.Element {
+  const durationLabel = getHeaderDurationLabel(run, observedRun)
+
   return (
-    <header className="border-b p-5">
+    <header className="border-b bg-card p-5">
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="truncate text-xs text-muted-foreground">{run.requestTitle}</p>
-          <h3 className="mt-1 text-xl font-semibold leading-7">{run.title}</h3>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={statusBadgeVariant(run.status)}>{formatRunStatus(run.status)}</Badge>
+            {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
+            {durationLabel ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                <Clock3 className="size-3.5" />
+                {durationLabel}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-3 flex min-w-0 items-start gap-2">
+            {canGoBack ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="mt-0.5 size-7 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={onBack}
+              >
+                <ChevronLeft />
+                <span className="sr-only">Back to previous Work Item</span>
+              </Button>
+            ) : null}
+            <h3 className="min-w-0 break-words text-2xl font-semibold leading-8 tracking-normal [overflow-wrap:anywhere]">
+              {run.title}
+            </h3>
+          </div>
+          <div className="mt-3 flex min-w-0 text-sm">
+            <Link
+              to={appRoutePaths.agents}
+              className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
+            >
+              <Bot className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{run.agentName}</span>
+            </Link>
+          </div>
         </div>
         <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
           <XCircle />
           <span className="sr-only">Close</span>
         </Button>
       </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Badge variant={statusBadgeVariant(run.status)}>{formatRunStatus(run.status)}</Badge>
-        {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
-        <Badge variant="outline">{run.agentName}</Badge>
-        <Badge variant="outline">{run.providerId}</Badge>
-      </div>
-
-      <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted-foreground">
-        {getRunStateSummary(run, waitsFor, inputRequest, observedRun)}
-      </p>
     </header>
   )
 }
 
-function RunDetailTabBar({
-  activeTab,
-  onChange
-}: {
-  activeTab: RunDetailTab
-  onChange: (tab: RunDetailTab) => void
-}): React.JSX.Element {
-  return (
-    <div className="border-b px-5 py-2">
-      <div className="inline-flex rounded-md border bg-card p-0.5">
-        {runDetailTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={cn(
-              'h-8 rounded-md px-3 text-xs font-medium transition-colors',
-              activeTab === tab.id
-                ? 'bg-primary-soft text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
-            onClick={() => onChange(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function RunDetailTabContent({
-  activeTab,
+function RunDetailReport({
   run,
   waitsFor,
   observedRun,
@@ -1591,9 +1606,9 @@ function RunDetailTabContent({
   answers,
   onAnswerChange,
   onSubmitAnswers,
-  onRevealPath
+  onRevealPath,
+  onSelectRun
 }: {
-  activeTab: RunDetailTab
   run: WorkboardRun
   waitsFor: WorkboardRun[]
   observedRun: ObservedRunSnapshot | null
@@ -1602,82 +1617,136 @@ function RunDetailTabContent({
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
   onRevealPath: (path: string) => void
+  onSelectRun: (runId: string) => void
 }): React.JSX.Element {
-  if (activeTab === 'overview') {
-    return <RunOverviewTab run={run} waitsFor={waitsFor} />
-  }
-
-  if (activeTab === 'activity') {
-    return <RunActivityTab observedRun={observedRun} />
-  }
-
-  if (activeTab === 'output') {
-    return (
-      <RunOutputTab
+  return (
+    <div className="grid min-w-0 gap-4">
+      <RunOutputSection
         run={run}
         inputRequest={inputRequest}
         answers={answers}
         onAnswerChange={onAnswerChange}
         onSubmitAnswers={onSubmitAnswers}
+        onRevealPath={onRevealPath}
+        linkedItems={waitsFor}
+        onSelectRun={onSelectRun}
       />
-    )
-  }
-
-  if (activeTab === 'files') {
-    return <RunFilesTab run={run} onRevealPath={onRevealPath} />
-  }
-
-  return <RunRuntimeTab run={run} observedRun={observedRun} />
-}
-
-function RunOverviewTab({
-  run,
-  waitsFor
-}: {
-  run: WorkboardRun
-  waitsFor: WorkboardRun[]
-}): React.JSX.Element {
-  return (
-    <div className="grid gap-3">
-      <DetailBlock label="Instruction">{run.instruction}</DetailBlock>
-      <DetailBlock label="Expected output">{run.expectedOutput || 'Not specified'}</DetailBlock>
-      <DetailBlock label="Inputs">
-        {waitsFor.length > 0 ? waitsFor.map((item) => item.title).join(', ') : 'None'}
-      </DetailBlock>
+      <RunContextSection
+        key={`context-${run.id}`}
+        run={run}
+      />
+      <RunActivitySection key={`activity-${run.id}`} run={run} observedRun={observedRun} />
+      <TechnicalDetailsSection key={`technical-${run.id}`} run={run} observedRun={observedRun} />
     </div>
   )
 }
 
-function RunOutputTab({
+function RunContextSection({
+  run
+}: {
+  run: WorkboardRun
+}): React.JSX.Element {
+  return (
+    <CollapsibleReportSection title="Context" defaultOpen={run.status === 'blocked'}>
+      <div className="grid gap-3">
+        <CopyableTextBlock label="Asked to" value={run.instruction} />
+        <CopyableTextBlock label="Expected" value={run.expectedOutput || 'Not specified'} />
+      </div>
+    </CollapsibleReportSection>
+  )
+}
+
+function RunOutputSection({
   run,
   inputRequest,
   answers,
   onAnswerChange,
-  onSubmitAnswers
+  onSubmitAnswers,
+  onRevealPath,
+  linkedItems,
+  onSelectRun
 }: {
   run: WorkboardRun
   inputRequest?: WorkRunInputRequest
   answers: Record<string, InteractionAnswer>
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
+  onRevealPath: (path: string) => void
+  linkedItems: WorkboardRun[]
+  onSelectRun: (runId: string) => void
 }): React.JSX.Element {
+  const files = getFileReferences(run.artifactRefs, run.changedFiles)
+
   return (
-    <div className="grid gap-3">
-      {inputRequest?.status === 'pending' ? (
-        <WorkInputRequestPanel
-          inputRequest={inputRequest}
-          answers={answers}
-          onAnswerChange={onAnswerChange}
-          onSubmit={onSubmitAnswers}
-        />
-      ) : null}
+    <section className="min-w-0 overflow-hidden pb-1">
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold">Output</h4>
+        {run.resultSummary ? <CopyButton value={run.resultSummary} label="Copy output" /> : null}
+      </div>
       {inputRequest?.status === 'queued_for_resume' ? <QueuedResumePanel /> : null}
+      {inputRequest?.status === 'pending' ? (
+        <div className="mb-3">
+          <WorkInputRequestPanel
+            inputRequest={inputRequest}
+            answers={answers}
+            onAnswerChange={onAnswerChange}
+            onSubmit={onSubmitAnswers}
+          />
+        </div>
+      ) : null}
       {run.resultSummary ? (
-        <DetailBlock label="Output">{run.resultSummary}</DetailBlock>
+        <MarkdownContent content={run.resultSummary} />
       ) : (
         <EmptyDetailState>No output yet.</EmptyDetailState>
       )}
-      {run.error ? <DetailBlock label="Error">{run.error}</DetailBlock> : null}
+      {run.error ? (
+        <div className="mt-3">
+          <CopyableTextBlock label="Error" value={run.error} tone="error" />
+        </div>
+      ) : null}
+      {files.length > 0 ? (
+        <div className="mt-5 border-t pt-4">
+          <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Produced files</p>
+          <FileReferenceList files={files} onRevealPath={onRevealPath} />
+        </div>
+      ) : null}
+      {linkedItems.length > 0 ? (
+        <div className="mt-5 border-t pt-4">
+          <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Depends on</p>
+          <DependencyWorkItemList items={linkedItems} onSelectRun={onSelectRun} />
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function DependencyWorkItemList({
+  items,
+  onSelectRun
+}: {
+  items: WorkboardRun[]
+  onSelectRun: (runId: string) => void
+}): React.JSX.Element {
+  return (
+    <div className="grid min-w-0 gap-2">
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-card px-2 py-2 text-left transition-colors hover:bg-accent"
+          onClick={() => onSelectRun(item.id)}
+        >
+          <span className="min-w-0">
+            <span className="block break-words text-sm font-medium [overflow-wrap:anywhere]">
+              {item.title}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {item.agentName}
+            </span>
+          </span>
+          <Badge variant={statusBadgeVariant(item.status)}>{formatRunStatus(item.status)}</Badge>
+        </button>
+      ))}
     </div>
   )
 }
@@ -1725,47 +1794,28 @@ function WorkInputRequestPanel({
   )
 }
 
-function RunFilesTab({
+function RunActivitySection({
   run,
-  onRevealPath
-}: {
-  run: WorkboardRun
-  onRevealPath: (path: string) => void
-}): React.JSX.Element {
-  const files = getFileReferences(run.artifactRefs, run.changedFiles)
-
-  if (files.length === 0) {
-    return <EmptyDetailState>No files reported.</EmptyDetailState>
-  }
-
-  return (
-    <div className="grid gap-3">
-      <DetailBlock label="Files">
-        <FileReferenceList files={files} onRevealPath={onRevealPath} />
-      </DetailBlock>
-    </div>
-  )
-}
-
-function RunActivityTab({
   observedRun
 }: {
+  run: WorkboardRun
   observedRun: ObservedRunSnapshot | null
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [events, setEvents] = useState<ObservedRunEvent[]>([])
   const [error, setError] = useState('')
+  const observedRunId = observedRun?.id
 
   useEffect(() => {
     let mounted = true
-    if (!observedRun) {
+    if (!observedRunId) {
       return
     }
-    const observedRunId = observedRun.id
+    const activeObservedRunId = observedRunId
 
     async function loadEvents(): Promise<void> {
       try {
         const nextEvents = await window.ordinus.observability.listEvents({
-          observedRunId
+          observedRunId: activeObservedRunId
         })
         if (!mounted) return
         setEvents(nextEvents)
@@ -1782,14 +1832,12 @@ function RunActivityTab({
       mounted = false
       window.clearInterval(timer)
     }
-  }, [observedRun?.id, observedRun?.updatedAt])
+  }, [observedRunId, observedRun?.updatedAt])
 
-  if (!observedRun) {
-    return <EmptyDetailState>No activity has been recorded for this Work Item yet.</EmptyDetailState>
-  }
+  if (!observedRun) return null
 
   return (
-    <div className="grid gap-3">
+    <CollapsibleReportSection title="Activity" defaultOpen={run.status === 'running'}>
       <div className="rounded-lg border bg-card p-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -1806,15 +1854,17 @@ function RunActivityTab({
           {formatObservedPhase(observedRun.currentPhase)} · {formatElapsedMs(observedRun.elapsedMs)}
         </p>
       </div>
-      {error ? <DetailBlock label="Activity error">{error}</DetailBlock> : null}
+      {error ? <CopyableTextBlock label="Activity error" value={error} tone="error" /> : null}
       {events.length > 0 ? (
         <div className="grid gap-2">
-          {events.map((event) => (
+          {events.slice(0, 5).map((event) => (
             <div key={event.id} className="flex min-w-0 gap-3 rounded-lg border bg-card p-3">
               <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary/70" />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-medium">{event.summary}</p>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">
+                    {event.summary}
+                  </p>
                   <Badge variant="secondary">{event.kind}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -1828,11 +1878,11 @@ function RunActivityTab({
       ) : (
         <EmptyDetailState>No timeline events yet.</EmptyDetailState>
       )}
-    </div>
+    </CollapsibleReportSection>
   )
 }
 
-function RunRuntimeTab({
+function TechnicalDetailsSection({
   run,
   observedRun
 }: {
@@ -1840,20 +1890,142 @@ function RunRuntimeTab({
   observedRun: ObservedRunSnapshot | null
 }): React.JSX.Element {
   return (
-    <div className="grid gap-3">
-      <DetailBlock label="Agent">
-        {run.agentName}
-        {run.agentRole ? ` - ${run.agentRole}` : ''}
-      </DetailBlock>
-      <DetailBlock label="Provider">
-        {run.providerId} / {run.model}
-      </DetailBlock>
-      <DetailBlock label="Sandbox">{run.sandbox}</DetailBlock>
-      <DetailBlock label="Session">{run.providerSessionRef || 'Not started'}</DetailBlock>
-      <DetailBlock label="Created">{formatOptionalDate(run.createdAt)}</DetailBlock>
-      <DetailBlock label="Started">{formatOptionalDate(run.startedAt)}</DetailBlock>
-      <DetailBlock label="Completed">{formatOptionalDate(run.completedAt)}</DetailBlock>
+    <CollapsibleReportSection title="Technical details">
+      <CopyableTextBlock
+        label="Agent"
+        value={`${run.agentName}${run.agentRole ? ` - ${run.agentRole}` : ''}`}
+      />
+      <CopyableTextBlock label="Provider" value={`${run.providerId} / ${run.model}`} />
+      <CopyableTextBlock label="Sandbox" value={run.sandbox} />
+      <CopyableTextBlock label="Session" value={run.providerSessionRef || 'Not started'} />
+      <DetailGrid
+        items={[
+          { label: 'Created', value: formatOptionalDate(run.createdAt) },
+          { label: 'Started', value: formatOptionalDate(run.startedAt) },
+          { label: 'Completed', value: formatOptionalDate(run.completedAt) }
+        ]}
+      />
       <RunDiagnosticsPanel observedRun={observedRun} />
+    </CollapsibleReportSection>
+  )
+}
+
+function CollapsibleReportSection({
+  title,
+  defaultOpen = false,
+  children
+}: {
+  title: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <section className="min-w-0 overflow-hidden border-t">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 py-3 text-left"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h4 className="text-sm font-semibold">{title}</h4>
+          </div>
+        </div>
+        <ChevronDown
+          className={cn(
+            'size-4 shrink-0 text-muted-foreground transition-transform',
+            open ? 'rotate-180' : ''
+          )}
+        />
+      </button>
+      {open ? <div className="grid gap-3 pb-4 pt-1">{children}</div> : null}
+    </section>
+  )
+}
+
+function CopyableTextBlock({
+  label,
+  value,
+  tone = 'normal'
+}: {
+  label: string
+  value: string
+  tone?: 'normal' | 'error'
+}): React.JSX.Element {
+  return (
+    <div
+      className={cn(
+        'min-w-0 overflow-hidden rounded-lg border bg-background p-3',
+        tone === 'error' ? 'border-status-failed/30 bg-status-failed/10' : ''
+      )}
+    >
+      <BlockHeader label={label} copyValue={value} />
+      <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function BlockHeader({
+  label,
+  copyValue
+}: {
+  label: string
+  copyValue: string
+}): React.JSX.Element {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2">
+      <p className="min-w-0 break-words text-xs font-medium uppercase text-muted-foreground [overflow-wrap:anywhere]">
+        {label}
+      </p>
+      <CopyButton value={copyValue} label={`Copy ${label}`} />
+    </div>
+  )
+}
+
+function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  async function copy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="size-7 text-muted-foreground hover:text-foreground"
+      onClick={() => void copy()}
+    >
+      {copied ? <Check /> : <Copy />}
+      <span className="sr-only">{label}</span>
+    </Button>
+  )
+}
+
+function DetailGrid({
+  items
+}: {
+  items: Array<{ label: string; value: string }>
+}): React.JSX.Element {
+  return (
+    <div className="grid min-w-0 gap-2 sm:grid-cols-3">
+      {items.map((item) => (
+        <div key={item.label} className="min-w-0 overflow-hidden rounded-lg border bg-background p-3">
+          <p className="text-xs font-medium uppercase text-muted-foreground">{item.label}</p>
+          <p className="mt-1 break-words text-sm [overflow-wrap:anywhere]">{item.value}</p>
+        </div>
+      ))}
     </div>
   )
 }
@@ -1866,19 +2038,20 @@ function RunDiagnosticsPanel({
   const [open, setOpen] = useState(false)
   const [diagnostics, setDiagnostics] = useState<ObservedRunDiagnostics | null>(null)
   const [error, setError] = useState('')
+  const observedRunId = observedRun?.id
 
   useEffect(() => {
-    if (!open || !observedRun) {
+    if (!open || !observedRunId) {
       return
     }
 
     let mounted = true
-    const observedRunId = observedRun.id
+    const activeObservedRunId = observedRunId
 
     async function loadDiagnostics(): Promise<void> {
       try {
         const nextDiagnostics = await window.ordinus.observability.getDiagnostics({
-          observedRunId,
+          observedRunId: activeObservedRunId,
           stdoutOffset: diagnostics?.stdout.nextOffset,
           stderrOffset: diagnostics?.stderr.nextOffset
         })
@@ -1899,10 +2072,12 @@ function RunDiagnosticsPanel({
       mounted = false
       window.clearInterval(timer)
     }
-  }, [open, observedRun?.id, diagnostics?.stdout.nextOffset, diagnostics?.stderr.nextOffset])
+  }, [open, observedRunId, diagnostics?.stdout.nextOffset, diagnostics?.stderr.nextOffset])
 
   if (!observedRun) {
-    return <EmptyDetailState>Diagnostics are available after this Work Item starts.</EmptyDetailState>
+    return (
+      <EmptyDetailState>Diagnostics are available after this Work Item starts.</EmptyDetailState>
+    )
   }
 
   return (
@@ -1914,7 +2089,12 @@ function RunDiagnosticsPanel({
             Inspect sanitized provider invocation and recent output.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen((value) => !value)}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setOpen((value) => !value)}
+        >
           <TerminalSquare />
           {open ? 'Hide' : 'Inspect'}
         </Button>
@@ -2027,18 +2207,6 @@ function getSubmitButtonLabel(target: WorkComposerTarget, reviewBeforeStart: boo
   return reviewBeforeStart ? 'Review plan' : 'Start work'
 }
 
-function defaultRunDetailTab(run: WorkboardRun): RunDetailTab {
-  if (run.status === 'running') {
-    return 'activity'
-  }
-
-  if (run.status === 'completed' || run.status === 'failed' || run.status === 'waiting_for_user') {
-    return 'output'
-  }
-
-  return 'overview'
-}
-
 function formatRunStatus(status: WorkboardRun['status']): string {
   return status.replaceAll('_', ' ')
 }
@@ -2053,45 +2221,6 @@ function statusBadgeVariant(
   if (status === 'completed') return 'completed'
   if (status === 'failed') return 'failed'
   return 'secondary'
-}
-
-function getRunStateSummary(
-  run: WorkboardRun,
-  waitsFor: WorkboardRun[],
-  inputRequest: WorkRunInputRequest | undefined,
-  observedRun?: ObservedRunSnapshot | null
-): string {
-  if (inputRequest?.status === 'queued_for_resume') {
-    return 'Answer received. This Work Item will continue when the agent is available.'
-  }
-
-  if (run.status === 'waiting_for_user') {
-    return inputRequest?.title || 'Waiting for user input.'
-  }
-
-  if (run.status === 'blocked') {
-    return waitsFor.length > 0
-      ? `Waiting for ${waitsFor.map((item) => item.title).join(', ')}.`
-      : 'Waiting for dependencies.'
-  }
-
-  if (run.status === 'running') {
-    return observedRun?.latestActivity || `Running with ${run.agentName}.`
-  }
-
-  if (run.status === 'queued') {
-    return `Queued for ${run.agentName}.`
-  }
-
-  if (run.status === 'completed') {
-    return run.resultSummary ? truncateText(run.resultSummary, 180) : 'Completed.'
-  }
-
-  if (run.status === 'failed') {
-    return run.error ? truncateText(run.error, 180) : 'Failed.'
-  }
-
-  return 'Cancelled.'
 }
 
 function getVisibleWorkRunInputRequest(
@@ -2125,19 +2254,59 @@ function getWorkRunInputBadge(
   return badgeByStatus[inputRequest.status] ?? null
 }
 
-function truncateText(value: string, maxLength: number): string {
-  const normalizedValue = value.replace(/\s+/g, ' ').trim()
-  return normalizedValue.length > maxLength
-    ? `${normalizedValue.slice(0, Math.max(0, maxLength - 1))}...`
-    : normalizedValue
-}
-
 function formatOptionalDate(value: string | null): string {
   if (!value) {
     return 'Not available'
   }
 
   return new Date(value).toLocaleString()
+}
+
+function getHeaderDurationLabel(
+  run: WorkboardRun,
+  observedRun: ObservedRunSnapshot | null
+): string {
+  const elapsedMs = getRunElapsedMs(run, observedRun)
+  if (elapsedMs === null || !shouldShowHeaderDuration(run.status)) {
+    return ''
+  }
+
+  return formatElapsedMs(elapsedMs)
+}
+
+function shouldShowHeaderDuration(status: WorkboardRun['status']): boolean {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'running' ||
+    status === 'waiting_for_user'
+  )
+}
+
+function getRunElapsedMs(
+  run: WorkboardRun,
+  observedRun: ObservedRunSnapshot | null
+): number | null {
+  if (run.status === 'running' && observedRun) {
+    return observedRun.elapsedMs
+  }
+
+  const startedAt = run.startedAt ? Date.parse(run.startedAt) : Number.NaN
+  if (Number.isNaN(startedAt)) {
+    return null
+  }
+
+  const completedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN
+  if (!Number.isNaN(completedAt)) {
+    return Math.max(0, completedAt - startedAt)
+  }
+
+  if (run.status === 'running' || run.status === 'waiting_for_user') {
+    return Math.max(0, Date.now() - startedAt)
+  }
+
+  return null
 }
 
 function formatElapsedMs(value: number): string {
@@ -2213,21 +2382,6 @@ function getVisibleRequestFilters(
   }
 
   return visible
-}
-
-function DetailBlock({
-  label,
-  children
-}: {
-  label: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="rounded-lg border bg-card p-3">
-      <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
-      <div className="mt-1 whitespace-pre-wrap text-sm leading-6">{children}</div>
-    </div>
-  )
 }
 
 function EmptyDetailState({ children }: { children: React.ReactNode }): React.JSX.Element {
