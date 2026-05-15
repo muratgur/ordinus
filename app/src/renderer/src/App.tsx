@@ -11,11 +11,16 @@ import type {
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
+import { NotificationPolicyBridge } from './app/notification-policy-bridge'
 import { defaultAppRoute, appRoutePaths } from './app/routes'
 import { AgentsScreen } from './screens/agents-screen'
 import { ConversationsScreen } from './screens/conversations-screen'
 import { HomeScreen } from './screens/home-screen'
 import { WorkboardScreen } from './screens/workboard-screen'
+import {
+  emptyWorkboardDraftReviewState,
+  type WorkboardDraftReviewState
+} from './screens/workboard-draft-review'
 import { SchedulesScreen } from './screens/schedules-screen'
 import { SetupScreen } from './screens/setup-screen'
 import { SettingsScreen } from './screens/settings-screen'
@@ -44,6 +49,9 @@ function App(): React.JSX.Element {
     entered: false,
     loading: true
   })
+  const [workboardDraftReview, setWorkboardDraftReview] = useState<WorkboardDraftReviewState>(
+    emptyWorkboardDraftReviewState
+  )
 
   async function loadStatus(options: { stayOnSetup?: boolean } = {}): Promise<void> {
     setState((current) => ({ ...current, loading: true, error: '' }))
@@ -169,6 +177,7 @@ function App(): React.JSX.Element {
 
   return (
     <HashRouter>
+      <NotificationPolicyBridge workboardDraftReview={workboardDraftReview} />
       <Routes>
         <Route
           element={
@@ -176,6 +185,7 @@ function App(): React.JSX.Element {
               dbStatus={state.dbStatus}
               setupStatus={state.setupStatus}
               loading={state.loading}
+              workboardPlanReady={Boolean(workboardDraftReview.plan)}
               onRefreshStatus={() => void loadStatus()}
             />
           }
@@ -183,7 +193,15 @@ function App(): React.JSX.Element {
           <Route index element={<Navigate to={defaultAppRoute} replace />} />
           <Route path={appRoutePaths.home} element={<HomeScreen />} />
           <Route path={appRoutePaths.agents} element={<AgentsScreen />} />
-          <Route path={appRoutePaths.workboard} element={<WorkboardScreen />} />
+          <Route
+            path={appRoutePaths.workboard}
+            element={
+              <WorkboardScreen
+                draftReview={workboardDraftReview}
+                onDraftReviewChange={setWorkboardDraftReview}
+              />
+            }
+          />
           <Route path={appRoutePaths.conversations} element={<ConversationsScreen />} />
           <Route path={appRoutePaths.schedules} element={<SchedulesScreen />} />
           <Route

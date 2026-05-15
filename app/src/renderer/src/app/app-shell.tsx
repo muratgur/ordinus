@@ -4,18 +4,24 @@ import { Moon, RefreshCcw, Sun } from 'lucide-react'
 import type { DbStatus, SetupStatus } from '@shared/contracts'
 import { appNavigation, utilityNavigation } from './routes'
 import { Button } from '@renderer/components/ui/button'
+import { Toaster } from '@renderer/components/ui/sonner'
 import { cn } from '@renderer/lib/utils'
 
 type AppShellProps = {
   dbStatus: DbStatus | null
   setupStatus: SetupStatus | null
   loading: boolean
+  workboardPlanReady: boolean
   onRefreshStatus: () => void
 }
 
 type ThemeMode = 'light' | 'dark'
 
-export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX.Element {
+export function AppShell({
+  loading,
+  workboardPlanReady,
+  onRefreshStatus
+}: AppShellProps): React.JSX.Element {
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme())
 
   useEffect(() => {
@@ -97,6 +103,11 @@ export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX
               >
                 <item.icon className="size-4" />
                 {item.label}
+                {item.id === 'workboard' && workboardPlanReady ? (
+                  <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-medium leading-none text-primary-foreground">
+                    Plan ready
+                  </span>
+                ) : null}
               </NavLink>
             ))}
           </nav>
@@ -106,6 +117,13 @@ export function AppShell({ loading, onRefreshStatus }: AppShellProps): React.JSX
       <div className="mx-auto flex min-h-[calc(100vh-7rem)] w-full max-w-screen-2xl flex-col px-6">
         <Outlet />
       </div>
+      <Toaster
+        theme={theme}
+        position="top-center"
+        closeButton
+        visibleToasts={4}
+        offset={{ top: 88 }}
+      />
     </main>
   )
 }
