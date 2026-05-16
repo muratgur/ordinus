@@ -32,6 +32,8 @@ export const ipcChannels = {
   conversationsAnswerInputRequest: 'conversations:answer-input-request',
   conversationsCancelInputRequest: 'conversations:cancel-input-request',
   workboardList: 'workboard:list',
+  workboardGenerateRequestPlan: 'workboard:generate-request-plan',
+  workboardStartRequestPlan: 'workboard:start-request-plan',
   workboardGeneratePlan: 'workboard:generate-plan',
   workboardStartRequest: 'workboard:start-request',
   workboardDirectStart: 'workboard:direct-start',

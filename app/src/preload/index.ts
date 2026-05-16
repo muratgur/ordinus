@@ -50,8 +50,10 @@ import type {
   WorkboardDraftPlan,
   WorkboardGenerateFollowUpPlanInput,
   WorkboardGeneratePlanInput,
+  WorkboardGenerateRequestPlanInput,
   WorkboardRevealPathInput,
   WorkboardStartFollowUpInput,
+  WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
   WorkRunActionInput,
   WorkspaceConfig,
@@ -146,6 +148,12 @@ const ordinus = {
   },
   workboard: {
     list: async (): Promise<WorkboardData> => ipcRenderer.invoke(ipcChannels.workboardList),
+    generateRequestPlan: async (
+      input: WorkboardGenerateRequestPlanInput
+    ): Promise<WorkboardDraftPlan> =>
+      ipcRenderer.invoke(ipcChannels.workboardGenerateRequestPlan, input),
+    startRequestPlan: async (input: WorkboardStartRequestPlanInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardStartRequestPlan, input),
     generatePlan: async (input: WorkboardGeneratePlanInput): Promise<WorkboardDraftPlan> =>
       ipcRenderer.invoke(ipcChannels.workboardGeneratePlan, input),
     startRequest: async (input: WorkboardStartRequestInput): Promise<WorkboardData> =>

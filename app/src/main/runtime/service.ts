@@ -49,7 +49,8 @@ const RuntimeWorkboardPlanInputSchema = z.object({
   model: z.string().trim().min(1).default('default'),
   workspaceRoot: z.string().trim().min(1),
   agents: z.array(AgentSchema).min(1).max(16),
-  request: z.string().trim().min(1).max(64_000)
+  request: z.string().trim().min(1).max(64_000),
+  requestedAgentIds: z.array(z.string().min(1)).max(16).default([])
 })
 
 export type RuntimeService = {

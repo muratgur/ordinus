@@ -37,8 +37,10 @@ import {
   WorkboardDraftPlanSchema,
   WorkboardGenerateFollowUpPlanInputSchema,
   WorkboardGeneratePlanInputSchema,
+  WorkboardGenerateRequestPlanInputSchema,
   WorkboardRevealPathInputSchema,
   WorkboardStartFollowUpInputSchema,
+  WorkboardStartRequestPlanInputSchema,
   WorkboardStartRequestInputSchema,
   WorkRunActionInputSchema,
   WorkspaceSaveConfigInputSchema,
@@ -52,7 +54,10 @@ import {
   type ConversationSendTurnInput,
   type ProviderId,
   type WorkboardDraftPlan,
+  type WorkboardGenerateRequestPlanInput,
   type WorkboardGenerateFollowUpPlanInput,
+  type WorkboardContextReferenceInput,
+  type WorkRequest,
   type WorkRun
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
@@ -362,9 +367,19 @@ export function registerIpcHandlers(
     return detail
   })
   ipcMain.handle(ipcChannels.workboardList, () => database.getWorkboardData())
+  ipcMain.handle(ipcChannels.workboardGenerateRequestPlan, async (_event, payload) => {
+    const input = WorkboardGenerateRequestPlanInputSchema.parse(payload)
+    return generateWorkboardPlan(database, runtime, buildRequestPlanningInput(database, input))
+  })
+  ipcMain.handle(ipcChannels.workboardStartRequestPlan, (_event, payload) => {
+    const input = WorkboardStartRequestPlanInputSchema.parse(payload)
+    const request = database.createWorkRequestPlan(input)
+    startWorkRequestRuns(database, runtime, observability, request.id)
+    return database.getWorkboardData()
+  })
   ipcMain.handle(ipcChannels.workboardGeneratePlan, async (_event, payload) => {
     const input = WorkboardGeneratePlanInputSchema.parse(payload)
-    return generateWorkboardPlan(database, runtime, input.request)
+    return generateWorkboardPlan(database, runtime, { request: input.request })
   })
   ipcMain.handle(ipcChannels.workboardStartRequest, (_event, payload) => {
     const input = WorkboardStartRequestInputSchema.parse(payload)
@@ -374,7 +389,7 @@ export function registerIpcHandlers(
   })
   ipcMain.handle(ipcChannels.workboardDirectStart, async (_event, payload) => {
     const input = WorkboardDirectStartInputSchema.parse(payload)
-    const plan = await generateWorkboardPlan(database, runtime, input.request)
+    const plan = await generateWorkboardPlan(database, runtime, { request: input.request })
     if (plan.items.length > 8) {
       throw new Error('Review this Work Request before starting because it has many Work Items.')
     }
@@ -387,7 +402,9 @@ export function registerIpcHandlers(
   })
   ipcMain.handle(ipcChannels.workboardGenerateFollowUpPlan, async (_event, payload) => {
     const input = WorkboardGenerateFollowUpPlanInputSchema.parse(payload)
-    return generateWorkboardPlan(database, runtime, buildFollowUpPlanningRequest(database, input))
+    return generateWorkboardPlan(database, runtime, {
+      request: buildFollowUpPlanningRequest(database, input)
+    })
   })
   ipcMain.handle(ipcChannels.workboardStartFollowUp, (_event, payload) => {
     const input = WorkboardStartFollowUpInputSchema.parse(payload)
@@ -581,7 +598,7 @@ function getMainErrorMessage(error: unknown, fallback: string): string {
 async function generateWorkboardPlan(
   database: OrdinusDatabase,
   runtime: RuntimeService,
-  request: string
+  input: { request: string; requestedAgentIds?: string[] }
 ): Promise<WorkboardDraftPlan> {
   const workspace = database.getWorkspaceConfig()
   if (!workspace) {
@@ -605,7 +622,8 @@ async function generateWorkboardPlan(
       model: workspace.defaultModel,
       workspaceRoot: workspace.workspaceRoot,
       agents,
-      request
+      request: input.request,
+      requestedAgentIds: input.requestedAgentIds ?? []
     })
   )
 
@@ -666,6 +684,140 @@ function buildFollowUpPlanningRequest(
     'User continuation request:',
     input.request
   ].join('\n')
+}
+
+function buildRequestPlanningInput(
+  database: OrdinusDatabase,
+  input: WorkboardGenerateRequestPlanInput
+): Pick<WorkboardGenerateRequestPlanInput, 'request' | 'requestedAgentIds'> {
+  return {
+    request: buildRequestPlanningRequest(database, input),
+    requestedAgentIds: input.requestedAgentIds
+  }
+}
+
+function buildRequestPlanningRequest(
+  database: OrdinusDatabase,
+  input: WorkboardGenerateRequestPlanInput
+): string {
+  const destinationRequest = input.destinationRequestId
+    ? database.getWorkRequest(input.destinationRequestId)
+    : null
+  const context = buildContextReferencesForPrompt(database, input.contextReferences)
+
+  if (!destinationRequest && context.length === 0) {
+    return input.request
+  }
+
+  return [
+    destinationRequest
+      ? 'Plan new Work Items inside an existing Ordinus Work Request.'
+      : 'Plan a new Ordinus Work Request using the selected context.',
+    destinationRequest
+      ? 'Do not restart the existing Work Request. Add only the smallest useful next Work Items.'
+      : 'Create the smallest useful Work Request plan for the user request.',
+    'Use selected context for orientation. When a selected Work Item has artifacts or changed files, write instructions that inspect those paths before acting.',
+    '',
+    destinationRequest
+      ? formatDestinationWorkRequestForPrompt(database, destinationRequest)
+      : 'Destination: create a new Work Request.',
+    '',
+    context.length > 0 ? ['Selected context references:', ...context].join('\n\n') : '',
+    '',
+    'User request:',
+    input.request
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function formatDestinationWorkRequestForPrompt(
+  database: OrdinusDatabase,
+  destinationRequest: WorkRequest
+): string {
+  const requestRuns = database
+    .listWorkRuns()
+    .filter((run) => getOptionalWorkRequestId(run) === destinationRequest.id)
+
+  return [
+    'Destination Work Request:',
+    `Title: ${destinationRequest.title}`,
+    `Summary: ${formatPromptSnippet(destinationRequest.summary || 'No summary recorded.', 800)}`,
+    'Original request:',
+    formatPromptSnippet(destinationRequest.originalRequest, 1_200),
+    '',
+    formatExistingWorkForPrompt(requestRuns, null)
+  ].join('\n')
+}
+
+function buildContextReferencesForPrompt(
+  database: OrdinusDatabase,
+  references: WorkboardContextReferenceInput[]
+): string[] {
+  const workspace = database.getWorkspaceConfig()
+  const seen = new Set<string>()
+  const items: string[] = []
+
+  references.forEach((reference) => {
+    if (reference.kind === 'work_item') {
+      const run = database.getWorkRun(reference.runId)
+      const key = `work_item:${run.id}`
+      if (!markContextReferenceSeen(seen, key)) return
+
+      items.push(
+        [
+          `Work Item: ${run.title}`,
+          `Work Run: ${run.id}`,
+          `Work Request: ${getOptionalWorkRequestId(run) || 'Unknown'}`,
+          `Agent: ${run.assignedAgentName} (${run.assignedAgentRole || 'Agent'})`,
+          `Status: ${run.status}`,
+          'Instruction:',
+          formatPromptSnippet(run.instruction, 1_200),
+          'Latest output:',
+          formatPromptSnippet(run.resultSummary || run.error || 'No output recorded.', 1_200),
+          formatFileRefsForPrompt('Artifacts', run.artifactRefs),
+          formatFileRefsForPrompt('Changed files', run.changedFiles)
+        ].join('\n')
+      )
+      return
+    }
+
+    if (reference.kind === 'work_request') {
+      const request = database.getWorkRequest(reference.requestId)
+      const key = `work_request:${request.id}`
+      if (!markContextReferenceSeen(seen, key)) return
+
+      items.push(
+        [
+          `Work Request: ${request.title}`,
+          `Request ID: ${request.id}`,
+          `Status: ${request.status}`,
+          `Summary: ${formatPromptSnippet(request.summary || 'No summary recorded.', 800)}`,
+          `Original request: ${formatPromptSnippet(request.originalRequest, 1_200)}`
+        ].join('\n')
+      )
+      return
+    }
+
+    if (!workspace) {
+      throw new Error('Choose a workspace before adding workspace files as context.')
+    }
+    const absolutePath = resolveWorkspaceRelativePath(workspace.workspaceRoot, reference.path)
+    if (!existsSync(absolutePath)) {
+      throw new Error('Selected workspace path does not exist.')
+    }
+    const key = `workspace_path:${reference.path}`
+    if (!markContextReferenceSeen(seen, key)) return
+    items.push(`Workspace path: ${reference.path}`)
+  })
+
+  return items
+}
+
+function markContextReferenceSeen(seen: Set<string>, key: string): boolean {
+  if (seen.has(key)) return false
+  seen.add(key)
+  return true
 }
 
 function formatExistingWorkForPrompt(runs: WorkRun[], anchorRun: WorkRun | null): string {

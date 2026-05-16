@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertCircle,
@@ -11,8 +18,10 @@ import {
   Columns3,
   CornerDownRight,
   Copy,
+  FileText,
   GitBranch,
   Loader2,
+  Plus,
   Search,
   Play,
   RefreshCcw,
@@ -28,6 +37,7 @@ import type {
   ObservedRunEvent,
   ObservedRunSnapshot,
   WorkRunInputRequestStatus,
+  WorkboardContextReferenceInput,
   WorkboardData,
   WorkboardDraftItem,
   WorkboardDraftPlan,
@@ -77,7 +87,36 @@ const columns: Array<{
   { id: 'cancelled', label: 'Cancel', fullLabel: 'Cancelled', icon: XCircle }
 ]
 
-const newWorkComposerTarget: WorkComposerTarget = { mode: 'new' }
+const newWorkComposerTarget: WorkComposerTarget = {
+  contextReferences: [],
+  contextLabels: [],
+  requestedAgentIds: []
+}
+
+type ComposerContextReference = {
+  key: string
+  input: WorkboardContextReferenceInput
+  label: string
+  detail: string
+}
+
+type WorkComposerState = {
+  open: boolean
+  request: string
+  destinationRequestId: string
+  contextReferences: ComposerContextReference[]
+  requestedAgentIds: string[]
+  workspacePath: string
+}
+
+const emptyComposerState: WorkComposerState = {
+  open: false,
+  request: '',
+  destinationRequestId: '',
+  contextReferences: [],
+  requestedAgentIds: [],
+  workspacePath: ''
+}
 
 export function WorkboardScreen({
   draftReview,
@@ -91,11 +130,11 @@ export function WorkboardScreen({
     requests: [],
     runs: [],
     dependencies: [],
+    contextReferences: [],
     inputRequests: []
   })
   const [observedRuns, setObservedRuns] = useState<ObservedRunSnapshot[]>([])
-  const [request, setRequest] = useState('')
-  const [composerTarget, setComposerTarget] = useState<WorkComposerTarget>(newWorkComposerTarget)
+  const [composer, setComposer] = useState<WorkComposerState>(emptyComposerState)
   const [reviewBeforeStart, setReviewBeforeStart] = useState(true)
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runDetailBackStack, setRunDetailBackStack] = useState<string[]>([])
@@ -164,32 +203,33 @@ export function WorkboardScreen({
   const draftContext = draftReview.context
   const selectedDraftId = draftReview.selectedItemId
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
-  const canSubmit = request.trim().length >= 12 && enabledAgents.length > 0 && !busy
-  const composerIsContinuation = composerTarget.mode !== 'new'
   const selectedRequest = data.requests.find((item) => item.id === requestFilter) ?? null
 
-  async function handleSubmit(): Promise<void> {
-    if (!canSubmit) return
+  async function handleSubmitComposer(nextComposer = composer): Promise<void> {
+    if (nextComposer.request.trim().length < 12 || enabledAgents.length === 0 || busy) return
     setBusy('submit')
     setError('')
-    const submittedRequest = request.trim()
+    const submittedRequest = nextComposer.request.trim()
+    const target = buildComposerTarget(nextComposer, data)
 
     try {
-      const plan = await generateDraftPlan(composerTarget, submittedRequest)
+      const plan = await generateDraftPlan(target, submittedRequest)
       if (reviewBeforeStart) {
-        openDraftPlan(plan, composerTarget, submittedRequest)
+        openDraftPlan(plan, target, submittedRequest)
+        setComposer(emptyComposerState)
         return
       }
 
       if (plan.items.length > 8) {
-        openDraftPlan(plan, composerTarget, submittedRequest)
-        setError(getLargePlanReviewMessage(composerTarget))
+        openDraftPlan(plan, target, submittedRequest)
+        setComposer(emptyComposerState)
+        setError(getLargePlanReviewMessage(target))
         return
       }
 
-      await startDraftPlan(plan, composerTarget, submittedRequest)
+      await startDraftPlan(plan, target, submittedRequest)
     } catch (submitError) {
-      setError(getStartErrorMessage(submitError, composerTarget))
+      setError(getStartErrorMessage(submitError, target))
     } finally {
       setBusy('')
     }
@@ -281,19 +321,16 @@ export function WorkboardScreen({
     setRequestFilter(startedRequest?.id ?? 'all')
     closeRunDetail()
     onDraftReviewChange(emptyWorkboardDraftReviewState)
-    setRequest('')
-    setComposerTarget(newWorkComposerTarget)
+    setComposer(emptyComposerState)
   }
 
   function handleContinueRun(run: WorkboardRun): void {
-    setComposerTarget({
-      mode: 'item',
-      requestId: run.requestId,
-      requestTitle: run.requestTitle,
-      anchorRunId: run.id,
-      anchorRunTitle: run.title
+    setComposer({
+      ...emptyComposerState,
+      open: true,
+      destinationRequestId: run.requestId,
+      contextReferences: [createWorkItemContextReference(run)]
     })
-    setRequest('')
     closeRunDetail()
   }
 
@@ -301,12 +338,16 @@ export function WorkboardScreen({
     const workRequest = data.requests.find((item) => item.id === requestId)
     if (!workRequest) return
 
-    setComposerTarget({
-      mode: 'request',
-      requestId: workRequest.id,
-      requestTitle: workRequest.title
+    setComposer({
+      ...emptyComposerState,
+      open: true,
+      destinationRequestId: workRequest.id
     })
-    setRequest('')
+    closeRunDetail()
+  }
+
+  function handleNewRequest(): void {
+    setComposer({ ...emptyComposerState, open: true })
     closeRunDetail()
   }
 
@@ -352,92 +393,28 @@ export function WorkboardScreen({
 
   return (
     <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col gap-3 overflow-hidden py-4">
-      <section className="shrink-0 rounded-lg border bg-card shadow-sm">
-        {composerTarget.mode !== 'new' ? (
-          <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="attention">
-                  {composerTarget.mode === 'item' ? 'Item follow-up' : 'Continuing work'}
-                </Badge>
-                <p className="truncate text-sm font-medium text-foreground">
-                  {composerTarget.mode === 'item'
-                    ? composerTarget.anchorRunTitle
-                    : composerTarget.requestTitle}
-                </p>
-              </div>
-              <p className="mt-1 truncate text-xs text-muted-foreground">
-                {composerTarget.mode === 'item'
-                  ? `Adds work to ${composerTarget.requestTitle}`
-                  : 'Adds Work Items to this Work Request'}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              onClick={() => setComposerTarget(newWorkComposerTarget)}
-            >
-              New request
-            </Button>
+      <section className="flex shrink-0 flex-col gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Columns3 className="size-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Workboard</h2>
           </div>
-        ) : null}
-        <textarea
-          aria-label={composerIsContinuation ? 'Continuation Work Request' : 'Work Request'}
-          className={cn(
-            'max-h-40 min-h-24 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0',
-            composerIsContinuation ? '' : 'rounded-t-lg'
-          )}
-          placeholder={
-            composerIsContinuation
-              ? 'Add continuation work for this Work Request...'
-              : 'Give agents a Work Request...'
-          }
-          value={request}
-          onChange={(event) => setRequest(event.target.value)}
-        />
-        <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <label
-            className={cn(
-              'inline-flex h-8 w-fit cursor-pointer items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors',
-              reviewBeforeStart
-                ? 'border-primary/30 bg-primary-soft text-foreground'
-                : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
-          >
-            <input
-              type="checkbox"
-              className="sr-only"
-              checked={reviewBeforeStart}
-              onChange={(event) => setReviewBeforeStart(event.target.checked)}
-            />
-            <span
-              className={cn(
-                'grid size-4 place-items-center rounded border transition-colors',
-                reviewBeforeStart
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-card'
-              )}
-              aria-hidden="true"
-            >
-              {reviewBeforeStart ? <Check className="size-3" /> : null}
-            </span>
-            Review before start
-          </label>
-          <Button size="sm" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {busy === 'submit' ? (
-              <Loader2 className="animate-spin" />
-            ) : reviewBeforeStart ? (
-              <Send />
-            ) : (
-              <Play />
-            )}
-            {getSubmitButtonLabel(composerTarget, reviewBeforeStart)}
-          </Button>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Create requests from New, then inspect running and completed Work Items here.
+          </p>
         </div>
+        <Button
+          type="button"
+          size="sm"
+          className="shrink-0"
+          onClick={handleNewRequest}
+          disabled={enabledAgents.length === 0}
+        >
+          <Plus />
+          New
+        </Button>
         {enabledAgents.length === 0 ? (
-          <p className="border-t px-4 py-2 text-xs text-destructive">
+          <p className="text-xs text-destructive sm:ml-auto">
             Create and enable at least one agent before creating Work Requests.
           </p>
         ) : null}
@@ -468,9 +445,22 @@ export function WorkboardScreen({
         onSelectRun={openRunDetail}
       />
 
+      <RequestComposerDialog
+        open={composer.open}
+        composer={composer}
+        data={data}
+        agents={enabledAgents}
+        reviewBeforeStart={reviewBeforeStart}
+        busy={busy}
+        onComposerChange={setComposer}
+        onReviewBeforeStartChange={setReviewBeforeStart}
+        onSubmit={(nextComposer) => void handleSubmitComposer(nextComposer)}
+        onClose={() => setComposer(emptyComposerState)}
+      />
+
       <PlanReviewDialog
         open={Boolean(draftPlan)}
-        request={draftContext?.request ?? request}
+        request={draftContext?.request ?? composer.request}
         target={draftContext?.target ?? newWorkComposerTarget}
         plan={draftPlan}
         agents={enabledAgents}
@@ -513,6 +503,662 @@ type RequestFilterStat = {
   totalCount: number
   activeCount: number
   createdAt: string
+}
+
+const targetDropdownTriggerClass =
+  'flex h-10 w-full items-center justify-between gap-2 rounded-md border bg-background px-3 text-left text-sm transition-colors'
+
+const targetDropdownPanelClass =
+  'absolute top-11 z-40 w-full max-w-[calc(100vw-3rem)] rounded-lg border bg-card p-2 shadow-lg sm:min-w-[28rem]'
+
+type ReferenceView = 'suggested' | 'selected' | 'all' | 'manual'
+
+const referenceViews: Array<{ id: ReferenceView; label: string }> = [
+  { id: 'suggested', label: 'Suggested' },
+  { id: 'selected', label: 'Selected' },
+  { id: 'all', label: 'All files' },
+  { id: 'manual', label: 'Manual path' }
+]
+
+function RequestComposerDialog({
+  open,
+  composer,
+  data,
+  agents,
+  reviewBeforeStart,
+  busy,
+  onComposerChange,
+  onReviewBeforeStartChange,
+  onSubmit,
+  onClose
+}: {
+  open: boolean
+  composer: WorkComposerState
+  data: WorkboardData
+  agents: Agent[]
+  reviewBeforeStart: boolean
+  busy: string
+  onComposerChange: (composer: WorkComposerState) => void
+  onReviewBeforeStartChange: (reviewBeforeStart: boolean) => void
+  onSubmit: (composer: WorkComposerState) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [mentionPicker, setMentionPicker] = useState<MentionPickerState | null>(null)
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0)
+  const mentionOptions = useMemo(
+    () => getAgentMentionOptions(agents, mentionPicker?.query ?? ''),
+    [agents, mentionPicker?.query]
+  )
+  const canSubmit = composer.request.trim().length >= 12 && agents.length > 0 && !busy
+  const showMentionPicker = Boolean(mentionPicker && mentionOptions.length > 0)
+
+  function update(patch: Partial<WorkComposerState>): void {
+    onComposerChange({ ...composer, ...patch, open: true })
+  }
+
+  function selectMention(
+    option: AgentMentionOption,
+    range = getTextareaSelectionRange(textareaRef.current, composer.request.length)
+  ): void {
+    const insertion = insertMention(composer.request, option.label, range.start, range.end)
+    update({
+      request: insertion.value,
+      requestedAgentIds: composer.requestedAgentIds.includes(option.agentId)
+        ? composer.requestedAgentIds
+        : [...composer.requestedAgentIds, option.agentId]
+    })
+    setMentionPicker(null)
+    setActiveMentionIndex(0)
+
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(insertion.caret, insertion.caret)
+    })
+  }
+
+  function updateMentionPicker(nextValue: string, caret: number): void {
+    setMentionPicker(getActiveMentionPicker(nextValue, caret))
+    setActiveMentionIndex(0)
+  }
+
+  function handleTextareaChange(event: React.ChangeEvent<HTMLTextAreaElement>): void {
+    update({ request: event.target.value })
+    updateMentionPicker(event.target.value, event.target.selectionStart)
+  }
+
+  function handleTextareaKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    if (showMentionPicker && mentionPicker) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setActiveMentionIndex((index) => (index + 1) % mentionOptions.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setActiveMentionIndex((index) => (index - 1 + mentionOptions.length) % mentionOptions.length)
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        selectMention(mentionOptions[activeMentionIndex], mentionPicker)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMentionPicker(null)
+        return
+      }
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSubmit) {
+      onSubmit(composer)
+    }
+  }
+
+  function handleDestinationChange(destinationRequestId: string): void {
+    update({
+      destinationRequestId,
+      contextReferences: composer.contextReferences.filter(
+        (reference) =>
+          reference.input.kind !== 'work_item' ||
+          isWorkItemContextInRequest(reference, destinationRequestId, data)
+      )
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onClose() : undefined)}>
+      <DialogContent className="grid h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0 sm:h-[min(820px,calc(100vh-2rem))] sm:max-h-[calc(100vh-2rem)]">
+        <DialogHeader className="border-b px-5 py-3 pr-12 sm:px-6">
+          <DialogTitle>New request</DialogTitle>
+        </DialogHeader>
+
+        <div className="min-h-0 overflow-y-auto p-4 ordinus-scrollbar sm:p-5">
+          <div className="grid gap-3">
+            <div className="overflow-visible rounded-lg border bg-card">
+              <div className="grid gap-2 border-b bg-background/40 p-3 sm:grid-cols-2">
+                <WorkRequestSelect
+                  data={data}
+                  destinationRequestId={composer.destinationRequestId}
+                  onDestinationChange={handleDestinationChange}
+                />
+                <ContinueFromSelect composer={composer} data={data} onComposerChange={update} />
+              </div>
+
+              <div className="relative overflow-visible">
+                {showMentionPicker ? (
+                  <AgentMentionPicker
+                    activeIndex={activeMentionIndex}
+                    options={mentionOptions}
+                    onActiveIndexChange={setActiveMentionIndex}
+                    onSelect={(option) => {
+                      if (mentionPicker) selectMention(option, mentionPicker)
+                    }}
+                  />
+                ) : null}
+                <textarea
+                  ref={textareaRef}
+                  className="ordinus-scrollbar min-h-48 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+                  placeholder="Describe what should happen. Use @agent as an assignment hint."
+                  value={composer.request}
+                  onChange={handleTextareaChange}
+                  onKeyDown={handleTextareaKeyDown}
+                  onClick={(event) =>
+                    updateMentionPicker(
+                      event.currentTarget.value,
+                      event.currentTarget.selectionStart
+                    )
+                  }
+                  onKeyUp={(event) => {
+                    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                      updateMentionPicker(
+                        event.currentTarget.value,
+                        event.currentTarget.selectionStart
+                      )
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <FileContextPanel composer={composer} data={data} onComposerChange={update} />
+          </div>
+        </div>
+
+        <DialogFooter className="flex-col gap-3 border-t bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <label
+            className={cn(
+              'inline-flex h-8 w-fit cursor-pointer items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors',
+              reviewBeforeStart
+                ? 'border-primary/30 bg-primary-soft text-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
+            )}
+          >
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={reviewBeforeStart}
+              onChange={(event) => onReviewBeforeStartChange(event.target.checked)}
+            />
+            <span
+              className={cn(
+                'grid size-4 place-items-center rounded border transition-colors',
+                reviewBeforeStart ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card'
+              )}
+              aria-hidden="true"
+            >
+              {reviewBeforeStart ? <Check className="size-3" /> : null}
+            </span>
+            Review before start
+          </label>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={() => onSubmit(composer)} disabled={!canSubmit}>
+              {busy === 'submit' ? (
+                <Loader2 className="animate-spin" />
+              ) : reviewBeforeStart ? (
+                <Send />
+              ) : (
+                <Play />
+              )}
+              {reviewBeforeStart ? 'Review plan' : 'Start work'}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function WorkRequestSelect({
+  data,
+  destinationRequestId,
+  onDestinationChange
+}: {
+  data: WorkboardData
+  destinationRequestId: string
+  onDestinationChange: (destinationRequestId: string) => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const selectedRequest = destinationRequestId
+    ? data.requests.find((request) => request.id === destinationRequestId)
+    : null
+  const runCountByRequestId = getRunCountByRequestId(data.runs)
+  const filteredRequests = data.requests.filter((request) => {
+    const runCount = runCountByRequestId.get(request.id) ?? 0
+    return matchesTargetSearch(search, request.title, request.status, `${runCount} items`)
+  })
+
+  function selectRequest(requestId: string): void {
+    onDestinationChange(requestId)
+    setOpen(false)
+    setSearch('')
+  }
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget
+        if (!nextTarget || !event.currentTarget.contains(nextTarget as Node)) {
+          setOpen(false)
+        }
+      }}
+    >
+      <button
+        type="button"
+        className={cn(
+          targetDropdownTriggerClass,
+          open ? 'border-primary/40 text-foreground' : 'text-foreground hover:bg-accent'
+        )}
+        onClick={() => setOpen((nextOpen) => !nextOpen)}
+      >
+        <span className="min-w-0 truncate">{selectedRequest?.title ?? 'New Work Request'}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+      </button>
+
+      {open ? (
+        <div className={cn(targetDropdownPanelClass, 'left-0')}>
+          <TargetDropdownSearch
+            placeholder="Search Work Requests..."
+            value={search}
+            onChange={setSearch}
+            onEscape={() => setOpen(false)}
+          />
+          <div className="mt-2 max-h-72 overflow-y-auto ordinus-scrollbar">
+            <ComposerOptionButton
+              selected={!destinationRequestId}
+              label="New Work Request"
+              detail="Start a fresh request"
+              icon={!destinationRequestId ? <Check className="size-4" /> : <Plus className="size-4" />}
+              onClick={() => selectRequest('')}
+            />
+            {filteredRequests.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-muted-foreground">No Work Requests found.</p>
+            ) : (
+              filteredRequests.map((request) => {
+                const runCount = runCountByRequestId.get(request.id) ?? 0
+                const selected = request.id === destinationRequestId
+                return (
+                  <ComposerOptionButton
+                    key={request.id}
+                    selected={selected}
+                    label={request.title}
+                    detail={`${request.status} - ${runCount} item${runCount === 1 ? '' : 's'}`}
+                    icon={selected ? <Check className="size-4" /> : <Columns3 className="size-4" />}
+                    onClick={() => selectRequest(request.id)}
+                  />
+                )
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ContinueFromSelect({
+  composer,
+  data,
+  onComposerChange
+}: {
+  composer: WorkComposerState
+  data: WorkboardData
+  onComposerChange: (patch: Partial<WorkComposerState>) => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const availableRuns = composer.destinationRequestId
+    ? data.runs.filter((run) => run.requestId === composer.destinationRequestId)
+    : []
+  const filteredRuns = availableRuns.filter((run) =>
+    matchesTargetSearch(
+      search,
+      run.title,
+      run.agentName,
+      run.requestTitle,
+      formatRunStatus(run.status)
+    )
+  )
+  const selectedWorkItemReferences = composer.contextReferences.filter(
+    (reference) => reference.input.kind === 'work_item'
+  )
+  const selectedKeys = new Set(selectedWorkItemReferences.map((reference) => reference.key))
+  const disabled = !composer.destinationRequestId || availableRuns.length === 0
+  const label = !composer.destinationRequestId
+    ? 'No Work Items'
+    : selectedWorkItemReferences.length > 0
+      ? `Continue from: ${selectedWorkItemReferences.length} item${
+          selectedWorkItemReferences.length === 1 ? '' : 's'
+        }`
+      : 'Add item context'
+
+  function toggleRun(run: WorkboardRun): void {
+    const reference = createWorkItemContextReference(run)
+    onComposerChange({
+      contextReferences: selectedKeys.has(reference.key)
+        ? composer.contextReferences.filter((item) => item.key !== reference.key)
+        : [...composer.contextReferences, reference]
+    })
+  }
+
+  function toggleOpen(): void {
+    if (disabled) return
+    setOpen((nextOpen) => {
+      const willOpen = !nextOpen
+      if (!willOpen) setSearch('')
+      return willOpen
+    })
+  }
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget
+        if (!nextTarget || !event.currentTarget.contains(nextTarget as Node)) {
+          setOpen(false)
+        }
+      }}
+    >
+      <button
+        type="button"
+        className={cn(
+          targetDropdownTriggerClass,
+          disabled
+            ? 'cursor-not-allowed text-muted-foreground'
+            : open
+              ? 'border-primary/40 text-foreground'
+              : 'text-foreground hover:bg-accent'
+        )}
+        disabled={disabled}
+        onClick={toggleOpen}
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+      </button>
+
+      {open ? (
+        <div className={cn(targetDropdownPanelClass, 'right-0')}>
+          <TargetDropdownSearch
+            placeholder="Search Work Items..."
+            value={search}
+            onChange={setSearch}
+            onEscape={() => setOpen(false)}
+          />
+          <div className="mt-2 max-h-72 overflow-y-auto ordinus-scrollbar">
+            {filteredRuns.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-muted-foreground">No Work Items found.</p>
+            ) : (
+              filteredRuns.map((run) => {
+                const selected = selectedKeys.has(
+                  getContextReferenceKey({ kind: 'work_item', runId: run.id })
+                )
+                return (
+                  <ComposerOptionButton
+                    key={run.id}
+                    selected={selected}
+                    label={run.title}
+                    detail={`${formatRunStatus(run.status)} - ${run.agentName}`}
+                    icon={
+                      selected ? <Check className="size-4" /> : <GitBranch className="size-4" />
+                    }
+                    onClick={() => toggleRun(run)}
+                  />
+                )
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function TargetDropdownSearch({
+  placeholder,
+  value,
+  onChange,
+  onEscape
+}: {
+  placeholder: string
+  value: string
+  onChange: (value: string) => void
+  onEscape: () => void
+}): React.JSX.Element {
+  return (
+    <label className="flex h-9 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground">
+      <Search className="size-4 shrink-0" />
+      <input
+        className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        placeholder={placeholder}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onEscape()
+          }
+        }}
+      />
+    </label>
+  )
+}
+
+function ComposerOptionButton({
+  selected,
+  label,
+  detail,
+  icon,
+  onClick
+}: {
+  selected: boolean
+  label: string
+  detail: string
+  icon: React.ReactNode
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors',
+        selected ? 'bg-primary-soft text-foreground' : 'hover:bg-accent'
+      )}
+      onClick={onClick}
+    >
+      <span className="mt-0.5 shrink-0 text-muted-foreground">{icon}</span>
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{label}</span>
+        <span className="block truncate text-xs text-muted-foreground">{detail}</span>
+      </span>
+    </button>
+  )
+}
+
+function FileContextPanel({
+  composer,
+  data,
+  onComposerChange
+}: {
+  composer: WorkComposerState
+  data: WorkboardData
+  onComposerChange: (patch: Partial<WorkComposerState>) => void
+}): React.JSX.Element {
+  const [view, setView] = useState<ReferenceView>('suggested')
+  const fileReferences = composer.contextReferences.filter(
+    (reference) => reference.input.kind === 'workspace_path'
+  )
+  const selectedKeys = new Set(fileReferences.map((reference) => reference.key))
+  const scopedRuns = getReferenceScopedRuns(composer, data)
+  const suggestedFileReferences = getRunFileContextReferences(scopedRuns)
+  const allFileReferences = getRunFileContextReferences(data.runs)
+  const visibleFileReferences = getVisibleFileReferences(
+    view,
+    suggestedFileReferences,
+    fileReferences,
+    allFileReferences
+  )
+
+  function addWorkspacePath(): void {
+    const trimmedPath = composer.workspacePath.trim()
+    if (!trimmedPath) return
+
+    const reference = createWorkspacePathContextReference(trimmedPath)
+    onComposerChange({
+      workspacePath: '',
+      contextReferences: selectedKeys.has(reference.key)
+        ? composer.contextReferences
+        : [...composer.contextReferences, reference]
+    })
+  }
+
+  function addFileReference(reference: ComposerContextReference): void {
+    if (selectedKeys.has(reference.key)) return
+    onComposerChange({ contextReferences: [...composer.contextReferences, reference] })
+  }
+
+  function removeContextReference(key: string): void {
+    onComposerChange({
+      contextReferences: composer.contextReferences.filter((reference) => reference.key !== key)
+    })
+  }
+
+  return (
+    <section className="rounded-lg border bg-card">
+      <div className="flex flex-col gap-3 border-b px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-foreground">References</h3>
+          <p className="text-xs text-muted-foreground">
+            Suggested files follow the selected Work Request and Work Items.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1 rounded-md border bg-background p-1">
+          {referenceViews.map((referenceView) => (
+            <ReferenceViewButton
+              key={referenceView.id}
+              active={view === referenceView.id}
+              onClick={() => setView(referenceView.id)}
+            >
+              {referenceView.label}
+            </ReferenceViewButton>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-3 p-3">
+        {fileReferences.length > 0 && view !== 'selected' ? (
+          <div className="flex flex-wrap gap-2">
+            {fileReferences.map((reference) => (
+              <button
+                key={reference.key}
+                type="button"
+                className="inline-flex max-w-full items-center gap-2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => removeContextReference(reference.key)}
+              >
+                <span className="max-w-[28rem] truncate">{reference.label}</span>
+                <XCircle className="size-3.5 shrink-0" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {view === 'manual' ? (
+          <div className="flex gap-2">
+            <input
+              className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/50"
+              placeholder="src/renderer/src/..."
+              value={composer.workspacePath}
+              onChange={(event) => onComposerChange({ workspacePath: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  addWorkspacePath()
+                }
+              }}
+            />
+            <Button type="button" variant="outline" size="sm" onClick={addWorkspacePath}>
+              Add
+            </Button>
+          </div>
+        ) : (
+          <div className="grid max-h-64 gap-1 overflow-y-auto ordinus-scrollbar">
+            {visibleFileReferences.length === 0 ? (
+              <p className="rounded-md border bg-background px-3 py-3 text-sm text-muted-foreground">
+                {view === 'suggested'
+                  ? 'Select a Work Request or Work Item to see suggested files, or add a manual path.'
+                  : 'No file references selected yet.'}
+              </p>
+            ) : (
+              visibleFileReferences.map((reference) => {
+                const selected = selectedKeys.has(reference.key)
+                return (
+                  <ComposerOptionButton
+                    key={reference.key}
+                    selected={selected}
+                    label={reference.label}
+                    detail={reference.detail}
+                    icon={selected ? <Check className="size-4" /> : <FileText className="size-4" />}
+                    onClick={() =>
+                      selected ? removeContextReference(reference.key) : addFileReference(reference)
+                    }
+                  />
+                )
+              })
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function ReferenceViewButton({
+  active,
+  children,
+  onClick
+}: {
+  active: boolean
+  children: React.ReactNode
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'h-7 rounded px-2.5 text-xs font-medium transition-colors',
+        active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
 }
 
 function WorkFilterBar({
@@ -995,8 +1641,8 @@ function PlanReviewDialog({
 }): React.JSX.Element {
   const levels = useMemo(() => (plan ? buildDraftLevels(plan.items) : []), [plan])
   const stageById = useMemo(() => buildDraftStageMap(levels), [levels])
-  const isContinuation = target.mode !== 'new'
-  const targetRequestTitle = target.mode !== 'new' ? target.requestTitle : ''
+  const isContinuation = Boolean(target.destinationRequestId)
+  const targetRequestTitle = target.destinationRequestTitle ?? ''
   const itemCount = plan?.items.length ?? 0
   const parallelStageCount = levels.filter((level) => level.length > 1).length
 
@@ -1019,6 +1665,9 @@ function PlanReviewDialog({
               <div className="flex flex-wrap gap-2 text-left">
                 <Badge variant="secondary">{itemCount} Work Items</Badge>
                 <Badge variant="outline">{levels.length} Stages</Badge>
+                {target.contextLabels.length > 0 ? (
+                  <Badge variant="outline">{target.contextLabels.length} Context refs</Badge>
+                ) : null}
                 {parallelStageCount > 0 ? (
                   <Badge variant="outline">{parallelStageCount} Parallel stages</Badge>
                 ) : null}
@@ -1063,6 +1712,15 @@ function PlanReviewDialog({
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {request}
                 </p>
+                {target.contextLabels.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {target.contextLabels.map((label) => (
+                      <Badge key={label} variant="outline">
+                        {label}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -2134,19 +2792,256 @@ function isTerminalRunStatus(status: WorkboardRun['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
+function isWorkItemContextInRequest(
+  reference: ComposerContextReference,
+  requestId: string,
+  data: WorkboardData
+): boolean {
+  const input = reference.input
+  if (input.kind !== 'work_item') return true
+  if (!requestId) return false
+
+  return data.runs.some((run) => run.id === input.runId && run.requestId === requestId)
+}
+
+function matchesTargetSearch(search: string, ...values: string[]): boolean {
+  const normalizedSearch = search.trim().toLocaleLowerCase()
+  if (!normalizedSearch) return true
+
+  return values.some((value) => value.toLocaleLowerCase().includes(normalizedSearch))
+}
+
+function getRunCountByRequestId(runs: WorkboardRun[]): Map<string, number> {
+  const counts = new Map<string, number>()
+
+  runs.forEach((run) => {
+    counts.set(run.requestId, (counts.get(run.requestId) ?? 0) + 1)
+  })
+
+  return counts
+}
+
+function getReferenceScopedRuns(composer: WorkComposerState, data: WorkboardData): WorkboardRun[] {
+  const selectedRunIds = new Set(
+    composer.contextReferences.flatMap((reference) =>
+      reference.input.kind === 'work_item' ? [reference.input.runId] : []
+    )
+  )
+
+  if (selectedRunIds.size > 0) {
+    return data.runs.filter((run) => selectedRunIds.has(run.id))
+  }
+
+  if (composer.destinationRequestId) {
+    return data.runs.filter((run) => run.requestId === composer.destinationRequestId)
+  }
+
+  return []
+}
+
+function getVisibleFileReferences(
+  view: ReferenceView,
+  suggestedFileReferences: ComposerContextReference[],
+  fileReferences: ComposerContextReference[],
+  allFileReferences: ComposerContextReference[]
+): ComposerContextReference[] {
+  if (view === 'suggested') return suggestedFileReferences
+  if (view === 'selected') return fileReferences
+  if (view === 'all') return allFileReferences
+  return []
+}
+
+function buildComposerTarget(composer: WorkComposerState, data: WorkboardData): WorkComposerTarget {
+  const destinationRequest = composer.destinationRequestId
+    ? data.requests.find((request) => request.id === composer.destinationRequestId)
+    : null
+
+  return {
+    destinationRequestId: destinationRequest?.id,
+    destinationRequestTitle: destinationRequest?.title,
+    contextReferences: composer.contextReferences.map((reference) => reference.input),
+    contextLabels: composer.contextReferences.map((reference) => reference.label),
+    requestedAgentIds: composer.requestedAgentIds
+  }
+}
+
+function createWorkItemContextReference(run: WorkboardRun): ComposerContextReference {
+  const input = { kind: 'work_item', runId: run.id } as const
+  return {
+    key: getContextReferenceKey(input),
+    input,
+    label: run.title,
+    detail: `${run.requestTitle} - ${formatRunStatus(run.status)}`
+  }
+}
+
+function createWorkspacePathContextReference(path: string): ComposerContextReference {
+  const input = { kind: 'workspace_path', path } as const
+  return {
+    key: getContextReferenceKey(input),
+    input,
+    label: path,
+    detail: 'Workspace path'
+  }
+}
+
+function getRunFileContextReferences(runs: WorkboardRun[]): ComposerContextReference[] {
+  const references = new Map<string, ComposerContextReference>()
+
+  runs.forEach((run) => {
+    getFileReferences(run.artifactRefs, run.changedFiles).forEach((file) => {
+      const reference = createWorkspacePathContextReference(file.path)
+      if (!references.has(reference.key)) {
+        references.set(reference.key, {
+          ...reference,
+          detail: `${file.artifact ? 'Artifact' : 'Changed file'} - ${run.title}`
+        })
+      }
+    })
+  })
+
+  return Array.from(references.values()).slice(0, 24)
+}
+
+function getContextReferenceKey(reference: WorkboardContextReferenceInput): string {
+  if (reference.kind === 'work_item') return `work_item:${reference.runId}`
+  if (reference.kind === 'work_request') return `work_request:${reference.requestId}`
+  return `workspace_path:${reference.path}`
+}
+
+type MentionPickerState = {
+  start: number
+  end: number
+  query: string
+}
+
+type AgentMentionOption = {
+  agentId: string
+  label: string
+  detail: string
+}
+
+function AgentMentionPicker({
+  activeIndex,
+  options,
+  onActiveIndexChange,
+  onSelect
+}: {
+  activeIndex: number
+  options: AgentMentionOption[]
+  onActiveIndexChange: (index: number) => void
+  onSelect: (option: AgentMentionOption) => void
+}): React.JSX.Element {
+  return (
+    <div className="absolute bottom-full left-0 z-20 mb-2 w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-lg">
+      <div className="max-h-56 overflow-y-auto p-1">
+        {options.map((option, index) => (
+          <button
+            key={option.agentId}
+            type="button"
+            className={cn(
+              'grid w-full min-w-0 gap-1 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none',
+              index === activeIndex ? 'bg-primary-soft' : 'hover:bg-accent'
+            )}
+            onMouseEnter={() => onActiveIndexChange(index)}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              onSelect(option)
+            }}
+          >
+            <span className="truncate font-medium">@{option.label}</span>
+            <span className="line-clamp-1 text-xs text-muted-foreground">{option.detail}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function getAgentMentionOptions(agents: Agent[], query: string): AgentMentionOption[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const options = agents.map((agent) => ({
+    agentId: agent.id,
+    label: agent.name,
+    detail: agent.role
+  }))
+
+  if (!normalizedQuery) {
+    return options
+  }
+
+  return options.filter((option) => option.label.toLocaleLowerCase().includes(normalizedQuery))
+}
+
+function getActiveMentionPicker(value: string, caret: number): MentionPickerState | null {
+  const mentionStart = value.lastIndexOf('@', caret - 1)
+
+  if (mentionStart < 0 || !isMentionStart(value, mentionStart)) {
+    return null
+  }
+
+  const query = value.slice(mentionStart + 1, caret)
+
+  if (/\s/.test(query) || query.length > 80) {
+    return null
+  }
+
+  return {
+    start: mentionStart,
+    end: caret,
+    query
+  }
+}
+
+function isMentionStart(value: string, index: number): boolean {
+  return index === 0 || /\s/.test(value[index - 1])
+}
+
+function getTextareaSelectionRange(
+  textarea: HTMLTextAreaElement | null,
+  fallbackPosition: number
+): { start: number; end: number } {
+  const start = textarea?.selectionStart ?? fallbackPosition
+
+  return {
+    start,
+    end: textarea?.selectionEnd ?? start
+  }
+}
+
+function insertMention(
+  value: string,
+  agentName: string,
+  selectionStart: number,
+  selectionEnd: number
+): { value: string; start: number; end: number; caret: number } {
+  const mention = `@${agentName}`
+  const beforeSelection = value.slice(0, selectionStart)
+  const afterSelection = value.slice(selectionEnd)
+  const prefix = beforeSelection.length > 0 && !beforeSelection.endsWith(' ') ? ' ' : ''
+  const suffix = afterSelection.startsWith(' ') ? '' : ' '
+  const insertedMention = `${prefix}${mention}${suffix}`
+  const start = beforeSelection.length + prefix.length
+  const end = start + mention.length
+
+  return {
+    value: `${beforeSelection}${insertedMention}${afterSelection}`,
+    start,
+    end,
+    caret: end + suffix.length
+  }
+}
+
 function generateDraftPlan(
   target: WorkComposerTarget,
   request: string
 ): Promise<WorkboardDraftPlan> {
-  if (target.mode !== 'new') {
-    return window.ordinus.workboard.generateFollowUpPlan({
-      requestId: target.requestId,
-      anchorRunId: target.mode === 'item' ? target.anchorRunId : undefined,
-      request
-    })
-  }
-
-  return window.ordinus.workboard.generatePlan({ request })
+  return window.ordinus.workboard.generateRequestPlan({
+    request,
+    destinationRequestId: target.destinationRequestId,
+    contextReferences: target.contextReferences,
+    requestedAgentIds: target.requestedAgentIds
+  })
 }
 
 function startPlan(
@@ -2154,16 +3049,11 @@ function startPlan(
   originalRequest: string,
   plan: WorkboardDraftPlan
 ): Promise<WorkboardData> {
-  if (target.mode !== 'new') {
-    return window.ordinus.workboard.startFollowUp({
-      requestId: target.requestId,
-      anchorRunId: target.mode === 'item' ? target.anchorRunId : undefined,
-      plan
-    })
-  }
-
-  return window.ordinus.workboard.startRequest({
+  return window.ordinus.workboard.startRequestPlan({
     originalRequest,
+    destinationRequestId: target.destinationRequestId,
+    contextReferences: target.contextReferences,
+    requestedAgentIds: target.requestedAgentIds,
     plan
   })
 }
@@ -2174,8 +3064,8 @@ function findStartedRequest(
   originalRequest: string,
   plan: WorkboardDraftPlan
 ): WorkboardData['requests'][number] | undefined {
-  if (target.mode !== 'new') {
-    return data.requests.find((item) => item.id === target.requestId)
+  if (target.destinationRequestId) {
+    return data.requests.find((item) => item.id === target.destinationRequestId)
   }
 
   return data.requests.find(
@@ -2184,7 +3074,7 @@ function findStartedRequest(
 }
 
 function getLargePlanReviewMessage(target: WorkComposerTarget): string {
-  return target.mode !== 'new'
+  return target.destinationRequestId
     ? 'Review this continuation before starting because it has many Work Items.'
     : 'Review this Work Request before starting because it has many Work Items.'
 }
@@ -2194,17 +3084,9 @@ function getStartErrorMessage(error: unknown, target: WorkComposerTarget): strin
     return error.message
   }
 
-  return target.mode !== 'new'
+  return target.destinationRequestId
     ? 'Continuation work could not start.'
     : 'Work Request could not start.'
-}
-
-function getSubmitButtonLabel(target: WorkComposerTarget, reviewBeforeStart: boolean): string {
-  if (target.mode !== 'new') {
-    return reviewBeforeStart ? 'Review continuation' : 'Add continuation'
-  }
-
-  return reviewBeforeStart ? 'Review plan' : 'Start work'
 }
 
 function formatRunStatus(status: WorkboardRun['status']): string {

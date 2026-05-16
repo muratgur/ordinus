@@ -35,10 +35,12 @@ import {
   WorkboardAnswerInputRequestInputSchema,
   WorkboardDataSchema,
   WorkboardDraftPlanSchema,
+  WorkboardStartRequestPlanInputSchema,
   WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestInputSchema,
   WorkRunActionInputSchema,
   WorkRunCompleteInputSchema,
+  WorkRunContextReferenceSchema,
   WorkRunCreateInputSchema,
   WorkRunDependencySchema,
   WorkRunEventSchema,
@@ -83,9 +85,12 @@ import {
   type WorkRunActionInput,
   type WorkboardAnswerInputRequestInput,
   type WorkboardData,
+  type WorkboardContextReferenceInput,
   type WorkboardStartFollowUpInput,
+  type WorkboardStartRequestPlanInput,
   type WorkboardStartRequestInput,
   type WorkRunCompleteInput,
+  type WorkRunContextReference,
   type WorkRunCreateInput,
   type WorkRunDependency,
   type WorkRunEvent,
@@ -111,6 +116,7 @@ import {
   observedRuns,
   workRequestAgentSessions,
   workRequests,
+  workRunContextReferences,
   workRunDependencies,
   workRunEvents,
   workRunInputRequests,
@@ -121,7 +127,8 @@ import {
   createConversationWorkingRoot,
   createWorkboardWorkingRoot,
   ensureWorkspaceRelativeDirectory,
-  filterExistingWorkspacePaths
+  filterExistingWorkspacePaths,
+  resolveWorkspaceRelativePath
 } from '../workspace/path-policy'
 
 const turnContentLimit = 16_000
@@ -225,6 +232,14 @@ export type ConversationDeleteDatabaseResult = ConversationDeleteResult & {
 }
 
 type InitialWorkRunStatus = Extract<WorkRun['status'], 'queued' | 'blocked'>
+type PreparedContextReference = {
+  kind: WorkRunContextReference['kind']
+  refId: string
+  label: string
+  metadata: Record<string, unknown>
+  dependencyRun?: WorkRun
+  anchorRun?: WorkRun
+}
 type WorkRequestAgentSession = typeof workRequestAgentSessions.$inferSelect
 
 export class OrdinusDatabase {
@@ -250,6 +265,7 @@ export class OrdinusDatabase {
         observedRuns,
         workRequestAgentSessions,
         workRequests,
+        workRunContextReferences,
         workRunDependencies,
         workRunEvents,
         workRunInputRequests,
@@ -696,6 +712,203 @@ export class OrdinusDatabase {
     return this.getWorkRun(runId)
   }
 
+  createWorkRequestPlan(input: WorkboardStartRequestPlanInput): WorkRequest {
+    const parsed = WorkboardStartRequestPlanInputSchema.parse(input)
+    const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before creating a Work Request.')
+    }
+
+    const destinationRequest = parsed.destinationRequestId
+      ? this.getWorkRequest(parsed.destinationRequestId)
+      : null
+    const contextReferences = this.prepareWorkboardContextReferences(
+      parsed.contextReferences,
+      workspace.workspaceRoot
+    )
+    const workItemContextRuns = contextReferences
+      .map((reference) => reference.anchorRun)
+      .filter((run): run is WorkRun => Boolean(run))
+    const parentRun = workItemContextRuns.length === 1 ? workItemContextRuns[0] : null
+    const contextDependencyRuns = contextReferences
+      .map((reference) => reference.dependencyRun)
+      .filter((run): run is WorkRun => Boolean(run))
+    const contextDependencyRunIds = contextDependencyRuns.map((run) => run.id)
+
+    const agentsById = new Map(
+      this.listAgents()
+        .filter((agent) => agent.enabled)
+        .map((agent) => [agent.id, agent])
+    )
+    plan.items.forEach((item) => {
+      if (!agentsById.has(item.assignedAgentId)) {
+        throw new Error('One or more Work Items are assigned to an unavailable agent.')
+      }
+    })
+    validateWorkboardDraftPlanDependencies(plan.items)
+
+    const now = new Date().toISOString()
+    const requestId = destinationRequest?.id ?? createWorkRequestId()
+    const workingRoot =
+      destinationRequest?.workingRoot ??
+      createWorkboardWorkingRoot(plan.title || parsed.originalRequest, requestId)
+    const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
+
+    this.db.transaction((tx) => {
+      if (!destinationRequest) {
+        tx.insert(workRequests)
+          .values({
+            id: requestId,
+            title: plan.title,
+            originalRequest: parsed.originalRequest,
+            summary: plan.summary,
+            workingRoot,
+            status: 'active',
+            createdAt: now,
+            updatedAt: now,
+            startedAt: null,
+            completedAt: null
+          })
+          .run()
+      } else {
+        tx.update(workRequests)
+          .set({
+            summary: plan.summary || destinationRequest.summary,
+            status: destinationRequest.status === 'completed' ? 'active' : destinationRequest.status,
+            updatedAt: now,
+            completedAt: null
+          })
+          .where(eq(workRequests.id, destinationRequest.id))
+          .run()
+      }
+
+      plan.items.forEach((item) => {
+        const agent = agentsById.get(item.assignedAgentId)
+        const runId = runIdsByTempId.get(item.tempId)
+        if (!agent || !runId) {
+          throw new Error('Work Item could not be prepared.')
+        }
+
+        const planDependencyRunIds = item.dependsOnTempIds.map((tempId) => {
+          const dependsOnRunId = runIdsByTempId.get(tempId)
+          if (!dependsOnRunId) {
+            throw new Error('Work Item dependency could not be prepared.')
+          }
+          return dependsOnRunId
+        })
+        const requiredRunIds = uniqueValues([...contextDependencyRunIds, ...planDependencyRunIds])
+        const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds(contextDependencyRuns)
+        const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
+        const providerSessionRef = getContinuationProviderSessionRef(parentRun, agent, requiredRunIds)
+
+        tx.insert(workRuns)
+          .values({
+            id: runId,
+            rootRunId: parentRun?.rootRunId ?? runId,
+            parentRunId: parentRun?.id ?? null,
+            assignedAgentId: agent.id,
+            assignedAgentName: agent.name,
+            assignedAgentRole: agent.role,
+            createdByType: 'user',
+            createdByAgentId: null,
+            sourceType: workRequestSourceType,
+            sourceId: requestId,
+            sourceItemId: item.tempId,
+            title: item.title,
+            instruction: item.instruction,
+            status,
+            priority: item.priority,
+            providerId: agent.providerId,
+            model: agent.model,
+            providerSessionRef,
+            workingRoot,
+            sandbox: agent.sandbox,
+            expectedOutput: item.expectedOutput,
+            resultSummary: '',
+            resultArtifactRef: '',
+            artifactRefs: JSON.stringify([]),
+            changedFiles: JSON.stringify([]),
+            error: '',
+            createdAt: now,
+            updatedAt: now,
+            startedAt: null,
+            completedAt: null
+          })
+          .run()
+
+        requiredRunIds.forEach((dependsOnRunId) => {
+          tx.insert(workRunDependencies)
+            .values({
+              id: createWorkRunDependencyId(),
+              runId,
+              dependsOnRunId,
+              status: satisfiedRequiredRunIds.has(dependsOnRunId) ? 'satisfied' : 'pending',
+              createdAt: now,
+              resolvedAt: satisfiedRequiredRunIds.has(dependsOnRunId) ? now : null
+            })
+            .run()
+        })
+
+        contextReferences.forEach((reference) => {
+          tx.insert(workRunContextReferences)
+            .values({
+              id: createWorkRunContextReferenceId(),
+              runId,
+              kind: reference.kind,
+              refId: reference.refId,
+              label: reference.label,
+              metadata: JSON.stringify(reference.metadata),
+              createdAt: now
+            })
+            .run()
+        })
+
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId,
+            sequence: 1,
+            kind: 'created',
+            payload: JSON.stringify({
+              workRequestId: requestId,
+              assignedAgentId: item.assignedAgentId,
+              parentRunId: parentRun?.id ?? null,
+              requiredRunIds,
+              contextReferences: contextReferences.map((reference) => ({
+                kind: reference.kind,
+                refId: reference.refId,
+                label: reference.label
+              }))
+            }),
+            createdAt: now
+          })
+          .run()
+        tx.insert(workRunEvents)
+          .values({
+            id: createWorkRunEventId(),
+            runId,
+            sequence: 2,
+            kind: status,
+            payload: JSON.stringify({}),
+            createdAt: now
+          })
+          .run()
+      })
+    })
+
+    const firstRunId = plan.items
+      .map((item) => runIdsByTempId.get(item.tempId))
+      .find((runId): runId is string => Boolean(runId))
+    if (firstRunId) {
+      this.refreshWorkRequestStatusForRun(firstRunId)
+    }
+    this.ensureWorkRequestAgentSessionsForRuns(Array.from(runIdsByTempId.values()))
+
+    return this.getWorkRequest(requestId)
+  }
+
   createWorkRequest(input: WorkboardStartRequestInput): WorkRequest {
     const parsed = WorkboardStartRequestInputSchema.parse(input)
     const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
@@ -1046,6 +1259,16 @@ export class OrdinusDatabase {
             .all()
             .map((dependency) => WorkRunDependencySchema.parse(dependency))
         : []
+    const contextReferences =
+      runIds.length > 0
+        ? this.db
+            .select()
+            .from(workRunContextReferences)
+            .where(inArray(workRunContextReferences.runId, runIds))
+            .orderBy(asc(workRunContextReferences.createdAt))
+            .all()
+            .map(parseWorkRunContextReference)
+        : []
     const inputRequests =
       runIds.length > 0
         ? this.db
@@ -1061,6 +1284,7 @@ export class OrdinusDatabase {
       requests,
       runs,
       dependencies,
+      contextReferences,
       inputRequests
     })
   }
@@ -1074,6 +1298,74 @@ export class OrdinusDatabase {
     }
 
     return parseWorkRun(run)
+  }
+
+  private prepareWorkboardContextReferences(
+    references: WorkboardContextReferenceInput[],
+    workspaceRoot: string
+  ): PreparedContextReference[] {
+    const prepared: PreparedContextReference[] = []
+    const seen = new Set<string>()
+
+    references.forEach((reference) => {
+      if (reference.kind === 'work_item') {
+        const run = this.getWorkRun(reference.runId)
+        const key = `work_item:${run.id}`
+        if (!markContextReferenceSeen(seen, key)) return
+
+        prepared.push({
+          kind: 'work_item',
+          refId: run.id,
+          label: run.title,
+          metadata: {
+            requestId: getOptionalWorkRequestId(run),
+            status: run.status,
+            artifactRefs: run.artifactRefs,
+            changedFiles: run.changedFiles
+          },
+          dependencyRun: shouldUseContextDependency(run) ? run : undefined,
+          anchorRun: run
+        })
+        return
+      }
+
+      if (reference.kind === 'work_request') {
+        const request = this.getWorkRequest(reference.requestId)
+        const key = `work_request:${request.id}`
+        if (!markContextReferenceSeen(seen, key)) return
+
+        prepared.push({
+          kind: 'work_request',
+          refId: request.id,
+          label: request.title,
+          metadata: {
+            status: request.status,
+            summary: request.summary
+          }
+        })
+        return
+      }
+
+      const absolutePath = resolveWorkspaceRelativePath(workspaceRoot, reference.path)
+      if (!existsSync(absolutePath)) {
+        throw new Error('Selected workspace path does not exist.')
+      }
+
+      const key = `workspace_path:${reference.path}`
+      if (!markContextReferenceSeen(seen, key)) return
+
+      prepared.push({
+        kind: 'workspace_path',
+        refId: reference.path,
+        label: reference.path,
+        metadata: {
+          path: reference.path,
+          isDirectory: statSync(absolutePath).isDirectory()
+        }
+      })
+    })
+
+    return prepared
   }
 
   listWorkRuns(): WorkRun[] {
@@ -3228,6 +3520,10 @@ function createWorkRunDependencyId(): string {
   return `wrd-${randomUUID()}`
 }
 
+function createWorkRunContextReferenceId(): string {
+  return `wcr-${randomUUID()}`
+}
+
 function createWorkRunEventId(): string {
   return `wre-${randomUUID()}`
 }
@@ -3316,6 +3612,27 @@ function isDatabaseWorkRun(value: unknown): value is {
     'artifactRefs' in value &&
     'changedFiles' in value
   )
+}
+
+function parseWorkRunContextReference(value: unknown): WorkRunContextReference {
+  if (!isDatabaseWorkRunContextReference(value)) {
+    throw new Error('Work run context reference row was invalid.')
+  }
+
+  return WorkRunContextReferenceSchema.parse({
+    ...value,
+    metadata: parseJsonObject(value.metadata)
+  })
+}
+
+function isDatabaseWorkRunContextReference(value: unknown): value is { metadata: string } {
+  return typeof value === 'object' && value !== null && 'metadata' in value
+}
+
+function markContextReferenceSeen(seen: Set<string>, key: string): boolean {
+  if (seen.has(key)) return false
+  seen.add(key)
+  return true
 }
 
 function parseWorkRunEvent(value: unknown): WorkRunEvent {
@@ -3537,12 +3854,41 @@ function isWorkRunInRequest(run: WorkRun, requestId: string): boolean {
   return run.source?.type === workRequestSourceType && run.source.id === requestId
 }
 
+function getOptionalWorkRequestId(run: WorkRun): string {
+  return run.source?.type === workRequestSourceType ? run.source.id : ''
+}
+
 function shouldUseAnchorDependency(anchorRun: WorkRun | null, dependsOnTempIds: string[]): boolean {
   if (!anchorRun || dependsOnTempIds.length > 0) {
     return false
   }
 
   return !isTerminalWorkRunStatus(anchorRun.status) || hasCompletedWorkRunOutput(anchorRun)
+}
+
+function shouldUseContextDependency(run: WorkRun): boolean {
+  if (run.status === 'failed' || run.status === 'cancelled') {
+    return false
+  }
+
+  return !isTerminalWorkRunStatus(run.status) || hasCompletedWorkRunOutput(run)
+}
+
+function getContinuationProviderSessionRef(
+  parentRun: WorkRun | null,
+  agent: Agent,
+  requiredRunIds: string[]
+): string | null {
+  if (
+    parentRun &&
+    parentRun.assignedAgentId === agent.id &&
+    parentRun.providerId === agent.providerId &&
+    requiredRunIds.includes(parentRun.id)
+  ) {
+    return parentRun.providerSessionRef
+  }
+
+  return null
 }
 
 function getSatisfiedRequiredRunIds(requiredRuns: WorkRun[]): Set<string> {
