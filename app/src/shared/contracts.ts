@@ -572,6 +572,22 @@ export const WorkRunDependencySchema = z.object({
   resolvedAt: z.string().nullable()
 })
 
+export const WorkRunContextReferenceKindSchema = z.enum([
+  'work_item',
+  'work_request',
+  'workspace_path'
+])
+
+export const WorkRunContextReferenceSchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  kind: WorkRunContextReferenceKindSchema,
+  refId: z.string().min(1),
+  label: z.string(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string()
+})
+
 export const WorkRunEventSchema = z.object({
   id: z.string().min(1),
   runId: z.string().min(1),
@@ -660,6 +676,40 @@ export const WorkboardStartRequestInputSchema = z.object({
 
 export const WorkboardDirectStartInputSchema = WorkboardGeneratePlanInputSchema
 
+export const WorkboardRequestDestinationSchema = z.object({
+  requestId: z.string().min(1).optional()
+})
+
+export const WorkboardContextReferenceInputSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('work_item'),
+    runId: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal('work_request'),
+    requestId: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal('workspace_path'),
+    path: WorkspaceRelativePathSchema
+  })
+])
+
+export const WorkboardGenerateRequestPlanInputSchema = z.object({
+  request: z.string().trim().min(12, 'Describe the work request.').max(64_000),
+  destinationRequestId: z.string().min(1).optional(),
+  contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
+  requestedAgentIds: z.array(z.string().min(1)).max(16).default([])
+})
+
+export const WorkboardStartRequestPlanInputSchema = z.object({
+  originalRequest: z.string().trim().min(1).max(64_000),
+  destinationRequestId: z.string().min(1).optional(),
+  contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
+  requestedAgentIds: z.array(z.string().min(1)).max(16).default([]),
+  plan: WorkboardDraftPlanSchema
+})
+
 export const WorkboardGenerateFollowUpPlanInputSchema = z.object({
   requestId: z.string().min(1),
   anchorRunId: z.string().min(1).optional(),
@@ -676,6 +726,7 @@ export const WorkboardDataSchema = z.object({
   requests: z.array(WorkRequestSchema),
   runs: z.array(WorkboardRunSchema),
   dependencies: z.array(WorkRunDependencySchema),
+  contextReferences: z.array(WorkRunContextReferenceSchema),
   inputRequests: z.array(WorkRunInputRequestSchema)
 })
 
@@ -969,6 +1020,8 @@ export type WorkRequest = z.infer<typeof WorkRequestSchema>
 export type WorkRun = z.infer<typeof WorkRunSchema>
 export type WorkboardRun = z.infer<typeof WorkboardRunSchema>
 export type WorkRunDependency = z.infer<typeof WorkRunDependencySchema>
+export type WorkRunContextReferenceKind = z.infer<typeof WorkRunContextReferenceKindSchema>
+export type WorkRunContextReference = z.infer<typeof WorkRunContextReferenceSchema>
 export type WorkRunEvent = z.infer<typeof WorkRunEventSchema>
 export type WorkRunInputSummary = z.infer<typeof WorkRunInputSummarySchema>
 export type WorkRunInputRequest = z.infer<typeof WorkRunInputRequestSchema>
@@ -981,6 +1034,16 @@ export type WorkboardDraftPlan = z.infer<typeof WorkboardDraftPlanSchema>
 export type WorkboardGeneratePlanInput = z.infer<typeof WorkboardGeneratePlanInputSchema>
 export type WorkboardStartRequestInput = z.infer<typeof WorkboardStartRequestInputSchema>
 export type WorkboardDirectStartInput = z.infer<typeof WorkboardDirectStartInputSchema>
+export type WorkboardRequestDestination = z.infer<typeof WorkboardRequestDestinationSchema>
+export type WorkboardContextReferenceInput = z.infer<
+  typeof WorkboardContextReferenceInputSchema
+>
+export type WorkboardGenerateRequestPlanInput = z.infer<
+  typeof WorkboardGenerateRequestPlanInputSchema
+>
+export type WorkboardStartRequestPlanInput = z.infer<
+  typeof WorkboardStartRequestPlanInputSchema
+>
 export type WorkboardGenerateFollowUpPlanInput = z.infer<
   typeof WorkboardGenerateFollowUpPlanInputSchema
 >

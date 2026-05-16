@@ -11,6 +11,7 @@ export type RuntimeWorkboardPlanInput = {
   workspaceRoot: string
   agents: Agent[]
   request: string
+  requestedAgentIds?: string[]
 }
 
 export const workboardDraftPlanJsonSchema = {
@@ -145,6 +146,7 @@ AGENT ASSIGNMENT
 - Match each Work Item to the agent whose described capabilities most directly cover the instruction.
 - If multiple agents could do the work, pick the most specialized one.
 - If no agent is a clean fit, still produce the plan: pick the closest match and note the mismatch briefly inside the instruction field so the agent knows.
+- The user may provide preferred agent hints. Prefer those agents when they fit the work, but use another available agent when the hinted agents are clearly not suitable.
 
 ============================================================
 INSTRUCTION QUALITY
@@ -231,6 +233,7 @@ ${JSON.stringify(
       providerId: agent.providerId,
       model: agent.model
     })),
+    preferredAgentIds: input.requestedAgentIds ?? [],
     request: input.request
   },
   null,

@@ -164,6 +164,23 @@ export const workRunDependencies = sqliteTable('work_run_dependencies', {
   resolvedAt: text('resolved_at')
 })
 
+export const workRunContextReferences = sqliteTable(
+  'work_run_context_references',
+  {
+    id: text('id').primaryKey(),
+    runId: text('run_id').notNull(),
+    kind: text('kind').notNull(),
+    refId: text('ref_id').notNull(),
+    label: text('label').notNull(),
+    metadata: text('metadata').notNull().default('{}'),
+    createdAt: text('created_at').notNull()
+  },
+  (table) => ({
+    runIdx: index('work_run_context_references_run_id_idx').on(table.runId),
+    kindRefIdx: index('work_run_context_references_kind_ref_idx').on(table.kind, table.refId)
+  })
+)
+
 export const workRunEvents = sqliteTable('work_run_events', {
   id: text('id').primaryKey(),
   runId: text('run_id').notNull(),
