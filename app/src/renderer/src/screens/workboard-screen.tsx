@@ -2933,7 +2933,7 @@ function AgentMentionPicker({
   onSelect: (option: AgentMentionOption) => void
 }): React.JSX.Element {
   return (
-    <div className="absolute bottom-full left-0 z-20 mb-2 w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-lg">
+    <div className="absolute left-0 top-full z-20 mt-2 w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-lg">
       <div className="max-h-56 overflow-y-auto p-1">
         {options.map((option, index) => (
           <button
