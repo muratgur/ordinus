@@ -31,6 +31,7 @@ import {
   ObservedRunEventSchema,
   ObservedRunSnapshotSchema,
   WorkspaceConfigSchema,
+  WorkspaceSaveConfigInputSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
   WorkboardAnswerInputRequestInputSchema,
   WorkboardDataSchema,
@@ -341,10 +342,13 @@ export class OrdinusDatabase {
   }
 
   saveWorkspaceConfig(input: WorkspaceSaveConfigInput): WorkspaceConfig {
-    const workspaceRoot = resolveWorkspaceRoot(input.workspaceRoot)
-    const workspaceName = input.workspaceName.trim()
+    const parsed = WorkspaceSaveConfigInputSchema.parse(input)
+    const workspaceRoot = resolveWorkspaceRoot(parsed.workspaceRoot)
+    const workspaceName = parsed.workspaceName.trim()
     const now = new Date().toISOString()
     const existing = this.db.select().from(workspaceConfig).where(eq(workspaceConfig.id, 1)).get()
+    const defaultProviderId = parsed.defaultProviderId ?? existing?.defaultProviderId ?? 'codex'
+    const defaultModel = parsed.defaultModel ?? existing?.defaultModel ?? 'default'
 
     if (existing) {
       if (existing.workspaceRoot !== workspaceRoot && this.hasRunningWorkspaceWork()) {
@@ -356,6 +360,8 @@ export class OrdinusDatabase {
         .set({
           workspaceRoot,
           workspaceName,
+          defaultProviderId,
+          defaultModel,
           updatedAt: now
         })
         .where(eq(workspaceConfig.id, 1))
@@ -367,8 +373,8 @@ export class OrdinusDatabase {
           id: 1,
           workspaceRoot,
           workspaceName,
-          defaultProviderId: 'codex',
-          defaultModel: 'default',
+          defaultProviderId,
+          defaultModel,
           createdAt: now,
           updatedAt: now
         })
