@@ -15,12 +15,6 @@ export const defaultAppRoute = appRoutePaths.home
 
 export const appNavigation = [
   {
-    id: 'home',
-    label: 'Home',
-    path: appRoutePaths.home,
-    icon: House
-  },
-  {
     id: 'agents',
     label: 'Agents',
     path: appRoutePaths.agents,

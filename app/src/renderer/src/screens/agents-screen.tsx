@@ -177,26 +177,28 @@ export function AgentsScreen(): React.JSX.Element {
 
       <main className="min-w-0">
         <Card className="flex min-h-[760px] flex-col overflow-hidden">
-          <div className="border-b bg-accent/50 p-3">
-            <div className="flex flex-wrap gap-1 rounded-md border bg-card p-1">
-              {sections.map((section) => {
-                const Icon = section.icon
-                return (
-                  <Button
-                    key={section.id}
-                    type="button"
-                    size="sm"
-                    variant={activeSection === section.id ? 'secondary' : 'ghost'}
-                    className="shrink-0"
-                    disabled={!selectedAgent}
-                    onClick={() => setActiveSection(section.id)}
-                  >
-                    <Icon />
-                    {section.label}
-                  </Button>
-                )
-              })}
-            </div>
+          <div className="flex items-stretch gap-0 border-b">
+            {sections.map((section) => {
+              const Icon = section.icon
+              const isActive = activeSection === section.id
+              return (
+                <button
+                  key={section.id}
+                  type="button"
+                  disabled={!selectedAgent}
+                  onClick={() => setActiveSection(section.id)}
+                  className={cn(
+                    'relative flex items-center gap-1.5 px-4 py-3 text-[12.5px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-40',
+                    isActive
+                      ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <Icon className="size-3.5 shrink-0" />
+                  {section.label}
+                </button>
+              )
+            })}
           </div>
 
           <CardContent className="flex-1 p-0">
