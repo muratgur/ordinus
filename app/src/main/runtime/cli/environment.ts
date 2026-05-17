@@ -15,7 +15,7 @@ const runtimeEnvAllowlist = [
 ] as const
 
 export function buildRuntimeEnvironment(providerEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...providerEnv }
+  const env: NodeJS.ProcessEnv = {}
 
   for (const key of runtimeEnvAllowlist) {
     const value = process.env[key]
@@ -24,5 +24,8 @@ export function buildRuntimeEnvironment(providerEnv: NodeJS.ProcessEnv): NodeJS.
     }
   }
 
-  return env
+  return {
+    ...env,
+    ...providerEnv
+  }
 }

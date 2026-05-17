@@ -37,7 +37,9 @@ export const WorkspaceConfigSchema = z.object({
 
 export const WorkspaceSaveConfigInputSchema = z.object({
   workspaceRoot: z.string().trim().min(1, 'Workspace folder is required.'),
-  workspaceName: z.string().trim().min(1, 'Project name is required.').max(80)
+  workspaceName: z.string().trim().min(1, 'Project name is required.').max(80),
+  defaultProviderId: ProviderIdSchema.optional(),
+  defaultModel: z.string().trim().min(1, 'Model is required.').max(120).optional()
 })
 
 export const WorkspaceSelectFolderResultSchema = z.object({

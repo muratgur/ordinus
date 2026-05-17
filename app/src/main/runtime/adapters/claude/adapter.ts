@@ -465,8 +465,18 @@ function getClaudeConfigDir(): string {
 }
 
 function getClaudeEnvironment(): NodeJS.ProcessEnv {
+  const configDir = getClaudeConfigDir()
+  const appDataDir = join(configDir, 'AppData', 'Roaming')
+  const localAppDataDir = join(configDir, 'AppData', 'Local')
+  mkdirSync(appDataDir, { recursive: true })
+  mkdirSync(localAppDataDir, { recursive: true })
+
   return buildRuntimeEnvironment({
-    CLAUDE_CONFIG_DIR: getClaudeConfigDir()
+    CLAUDE_CONFIG_DIR: configDir,
+    HOME: configDir,
+    USERPROFILE: configDir,
+    APPDATA: appDataDir,
+    LOCALAPPDATA: localAppDataDir
   })
 }
 

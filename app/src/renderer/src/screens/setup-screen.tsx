@@ -16,9 +16,11 @@ import type {
   WorkspaceSaveConfigInput,
   WorkspaceSelectFolderResult
 } from '@shared/contracts'
+import { getDefaultModelForProvider } from '@shared/provider-models'
 import { getProviderDisplayName } from '@shared/provider-labels'
 import { DetailRow } from '@renderer/components/detail-row'
 import { ReadinessBadge } from '@renderer/components/readiness-badge'
+import { SelectControl } from '@renderer/components/select-control'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
 import {
@@ -57,14 +59,16 @@ export function SetupScreen({
 }: SetupScreenProps): React.JSX.Element {
   const [workspaceRoot, setWorkspaceRoot] = useState(status.workspace?.workspaceRoot ?? '')
   const [workspaceName, setWorkspaceName] = useState(status.workspace?.workspaceName ?? '')
-  const defaultProviderId = status.workspace?.defaultProviderId ?? 'codex'
-  const defaultProvider = useMemo(
-    () => status.providers.find((provider) => provider.id === defaultProviderId),
-    [defaultProviderId, status.providers]
+  const [selectedProviderId, setSelectedProviderId] = useState<ProviderId>(() =>
+    getInitialProviderId(status)
   )
-  const defaultProviderName = getProviderDisplayName(defaultProviderId)
+  const selectedProvider = useMemo(
+    () => status.providers.find((provider) => provider.id === selectedProviderId),
+    [selectedProviderId, status.providers]
+  )
+  const selectedProviderName = getProviderDisplayName(selectedProviderId)
   const [openStep, setOpenStep] = useState<SetupStepId | null>(() =>
-    getInitialOpenStep(status, defaultProvider)
+    getInitialOpenStep(status, selectedProvider)
   )
 
   async function chooseFolder(): Promise<void> {
@@ -76,7 +80,30 @@ export function SetupScreen({
   }
 
   async function saveWorkspace(): Promise<void> {
-    await onSaveWorkspace({ workspaceRoot, workspaceName })
+    await saveWorkspaceWithProvider(selectedProviderId)
+  }
+
+  async function saveWorkspaceWithProvider(providerId: ProviderId): Promise<void> {
+    await onSaveWorkspace({
+      workspaceRoot,
+      workspaceName,
+      defaultProviderId: providerId,
+      defaultModel: getDefaultModelForProvider(providerId)
+    })
+  }
+
+  async function connectSelectedProvider(): Promise<void> {
+    await onConnectProvider(selectedProviderId)
+    if (workspaceRoot.trim() && workspaceName.trim()) {
+      await saveWorkspaceWithProvider(selectedProviderId)
+    }
+  }
+
+  async function refreshSelectedProvider(): Promise<void> {
+    await onRefreshProvider(selectedProviderId)
+    if (workspaceRoot.trim() && workspaceName.trim()) {
+      await saveWorkspaceWithProvider(selectedProviderId)
+    }
   }
 
   function toggleStep(step: SetupStepId): void {
@@ -96,7 +123,7 @@ export function SetupScreen({
                 Set up Ordinus
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Prepare a local workspace and connect {defaultProviderName} before entering the app.
+                Prepare a local workspace and connect one provider before entering the app.
               </p>
             </div>
           </div>
@@ -176,18 +203,23 @@ export function SetupScreen({
           <SetupStep
             number="02"
             title="Provider"
-            description={`Connect ${defaultProviderName} so Ordinus can prepare agent work from this machine.`}
-            ready={Boolean(defaultProvider?.connected)}
+            description={`Choose Codex, Claude, or Gemini for app-owned AI work on this machine.`}
+            ready={Boolean(selectedProvider?.connected)}
             open={openStep === 'provider'}
             onToggle={() => toggleStep('provider')}
           >
             <ProviderSetupPanel
-              provider={defaultProvider}
-              providerId={defaultProviderId}
-              providerName={defaultProviderName}
+              providers={status.providers}
+              provider={selectedProvider}
+              providerId={selectedProviderId}
+              providerName={selectedProviderName}
+              workspaceReady={Boolean(workspaceRoot.trim() && workspaceName.trim())}
+              providerSaved={status.workspace?.defaultProviderId === selectedProviderId}
               busyAction={busyAction}
-              onConnect={() => onConnectProvider(defaultProviderId)}
-              onRefresh={() => onRefreshProvider(defaultProviderId)}
+              onProviderChange={(providerId) => setSelectedProviderId(providerId)}
+              onConnect={connectSelectedProvider}
+              onRefresh={refreshSelectedProvider}
+              onUseProvider={() => saveWorkspaceWithProvider(selectedProviderId)}
             />
           </SetupStep>
 
@@ -206,8 +238,8 @@ export function SetupScreen({
                   <ReadinessBadge ready={status.workspaceConfigured} readyText="Ready" />
                 </div>
                 <div className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-3">
-                  <span className="font-medium">{defaultProviderName}</span>
-                  <ReadinessBadge ready={Boolean(defaultProvider?.connected)} readyText="Ready" />
+                  <span className="font-medium">{selectedProviderName}</span>
+                  <ReadinessBadge ready={Boolean(selectedProvider?.connected)} readyText="Ready" />
                 </div>
               </div>
               <Button onClick={onEnter} disabled={!status.ready} className="w-fit">
@@ -272,25 +304,49 @@ function SetupStep({
 }
 
 function ProviderSetupPanel({
+  providers,
   provider,
   providerId,
   providerName,
+  workspaceReady,
+  providerSaved,
   busyAction,
+  onProviderChange,
   onConnect,
-  onRefresh
+  onRefresh,
+  onUseProvider
 }: {
+  providers: ProviderStatus[]
   provider: ProviderStatus | undefined
   providerId: ProviderId
   providerName: string
+  workspaceReady: boolean
+  providerSaved: boolean
   busyAction: string
+  onProviderChange: (providerId: ProviderId) => void
   onConnect: () => Promise<void>
   onRefresh: () => Promise<void>
+  onUseProvider: () => Promise<void>
 }): React.JSX.Element {
   const disabled = !provider
   const authUrl = provider?.authUrl ?? ''
 
   return (
     <div className="grid gap-4">
+      <label className="grid gap-2 text-sm">
+        <span className="text-xs font-medium text-muted-foreground">Provider</span>
+        <SelectControl
+          value={providerId}
+          onChange={(value) => onProviderChange(value as ProviderId)}
+        >
+          {providers.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </SelectControl>
+      </label>
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 text-base font-semibold leading-tight tracking-normal">
@@ -358,9 +414,32 @@ function ProviderSetupPanel({
           )}
           Connect to {providerName}
         </Button>
+        {provider?.connected ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void onUseProvider()}
+            disabled={!workspaceReady || Boolean(busyAction) || providerSaved}
+          >
+            {busyAction === 'save-workspace' ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <CheckCircle2 />
+            )}
+            {providerSaved ? 'Provider Saved' : 'Use Provider'}
+          </Button>
+        ) : null}
       </div>
     </div>
   )
+}
+
+function getInitialProviderId(status: SetupStatus): ProviderId {
+  if (status.workspace?.defaultProviderId) {
+    return status.workspace.defaultProviderId
+  }
+
+  return status.providers.find((provider) => provider.connected)?.id ?? 'codex'
 }
 
 function getInitialOpenStep(
