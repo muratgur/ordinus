@@ -562,16 +562,17 @@ function CreateAgentDialog({
           />
         ) : step === 'describe' ? (
           <ScrollArea className="h-full min-h-0">
-            <div className="grid gap-3 p-5">
+            <div className="grid gap-4 p-5">
               <label className="grid gap-2">
                 <span className="text-sm font-semibold">What should this agent help with?</span>
                 <textarea
-                  className="ordinus-scrollbar min-h-56 resize-y rounded-lg border bg-card p-4 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="ordinus-scrollbar min-h-44 resize-y rounded-lg border bg-card p-4 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   placeholder="Example: I need an agent that reviews pull requests, checks missing tests, and flags risky changes before merge."
                   value={intent}
                   onChange={(event) => setIntent(event.target.value)}
                 />
               </label>
+              <AgentBriefGuide />
               {error ? <InlineError message={error} /> : null}
             </div>
           </ScrollArea>
@@ -917,17 +918,147 @@ function ProfileDetailDrawer({
 
         <div className="grid gap-3 border-t bg-accent/50 p-4">
           {error ? <InlineError message={error} /> : null}
-          <Button
-            type="button"
-            disabled={busy || !profile}
-            onClick={handleUseProfile}
-          >
+          <Button type="button" disabled={busy || !profile} onClick={handleUseProfile}>
             {busy ? <Loader2 className="animate-spin" /> : <BookOpen />}
             Use profile
           </Button>
         </div>
       </aside>
     </div>
+  )
+}
+
+const agentBriefGuideItems = [
+  {
+    label: 'Role',
+    detail: 'What work should this agent own?',
+    examples: [
+      {
+        weak: 'Help me with work.',
+        strong:
+          'Create an agent that helps manage customer requests. It should sort urgent messages, prepare replies for review, and keep a short follow-up list.'
+      },
+      {
+        weak: 'Make my day easier.',
+        strong:
+          'Create an agent that organizes weekly team tasks, tracks owners, and highlights anything waiting on a decision.'
+      }
+    ]
+  },
+  {
+    label: 'Judgment',
+    detail: 'What should it notice, weigh, or question?',
+    examples: [
+      {
+        weak: 'Make smart decisions.',
+        strong:
+          'It should compare options by time, cost, customer impact, and risk, and call out assumptions when information is missing.'
+      },
+      {
+        weak: 'Tell me the best option.',
+        strong:
+          'It should notice when a request is urgent, unclear, repeated, or likely to affect another team.'
+      }
+    ]
+  },
+  {
+    label: 'Tone',
+    detail: 'How should it speak and report progress?',
+    examples: [
+      {
+        weak: 'Be professional.',
+        strong:
+          'It should be calm, clear, and brief. When there is a problem, it should explain choices without blame.'
+      },
+      {
+        weak: 'Sound nice.',
+        strong:
+          'It should write in plain language, avoid jargon, and separate facts from suggestions.'
+      }
+    ]
+  },
+  {
+    label: 'Boundaries',
+    detail: 'What should it avoid or escalate?',
+    examples: [
+      {
+        weak: 'Handle everything.',
+        strong:
+          'It should not approve refunds, sign contracts, or give medical or legal advice. It should ask me before anything sensitive.'
+      },
+      {
+        weak: 'Do whatever is needed.',
+        strong:
+          'It should pause and ask before sending messages to customers, changing prices, or making commitments.'
+      }
+    ]
+  },
+  {
+    label: 'Output',
+    detail: 'What does a good result look like?',
+    examples: [
+      {
+        weak: 'Give me the result.',
+        strong:
+          'At the end, it should give a short summary, next actions, open decisions, and anything that needs my approval.'
+      },
+      {
+        weak: 'Finish the task.',
+        strong:
+          'It should produce a clear checklist with completed items, blocked items, and recommended next steps.'
+      }
+    ]
+  }
+]
+
+function AgentBriefGuide(): React.JSX.Element {
+  const [selectedGuideItem, setSelectedGuideItem] = useState(agentBriefGuideItems[0].label)
+  const selectedItem =
+    agentBriefGuideItems.find((item) => item.label === selectedGuideItem) ?? agentBriefGuideItems[0]
+
+  return (
+    <section className="grid gap-4 rounded-lg border bg-accent p-4">
+      <div className="grid gap-1">
+        <p className="text-sm font-semibold">Write a stronger brief</p>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Ordinus will turn your description into the same profile sections used by built-in agents.
+          A few concrete details usually produce a stronger agent.
+        </p>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-5">
+        {agentBriefGuideItems.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            aria-pressed={selectedGuideItem === item.label}
+            className={cn(
+              'rounded-md border bg-card p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              selectedGuideItem === item.label && 'border-primary bg-primary-soft/60'
+            )}
+            onClick={() => setSelectedGuideItem(item.label)}
+          >
+            <p className="text-xs font-semibold text-foreground">{item.label}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-3 rounded-md border bg-card p-3 text-xs leading-5">
+        {selectedItem.examples.map((example) => (
+          <div key={example.weak} className="grid gap-1.5">
+            <p>
+              <span className="font-semibold text-status-attention">Weak:</span>{' '}
+              <span className="text-muted-foreground">{example.weak}</span>
+            </p>
+            <p>
+              <span className="font-semibold text-status-completed">Strong:</span>{' '}
+              <span className="text-muted-foreground">{example.strong}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -1558,7 +1689,7 @@ function DeleteAgentDialog({
 
 function getCreateAgentDialogDescription(step: CreateAgentStep): string {
   if (step === 'describe') {
-    return 'Describe the role you need. Ordinus will prepare a draft for review before saving.'
+    return 'Describe the role you need. Ordinus will prepare a standard profile draft for review.'
   }
 
   if (step === 'review') {
