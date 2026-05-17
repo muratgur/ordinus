@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { renderAgentProfileInstructions } from '@shared/agent-profile-template'
 import {
   AgentProfileCatalogSchema,
   AgentProfileSchema,
@@ -68,26 +69,37 @@ export function buildAgentDraftFromProfile(
 }
 
 export function buildBlankAgentDraft(defaults: ProfileDraftDefaults): AgentDraft {
+  const name = defaults.makeUniqueName('New agent')
+
   return {
     requestedWork: 'Create a custom agent from a blank draft.',
-    name: defaults.makeUniqueName('New agent'),
+    name,
     role: 'Custom agent',
-    instructions: [
-      '# Role',
-      '',
-      'Describe what this agent is responsible for.',
-      '',
-      '# Working Style',
-      '',
-      '- Keep work focused and observable.',
-      '- Ask for clarification when the next action is unclear.',
-      '- Summarize changes, decisions, and verification before finishing.',
-      '',
-      '# Boundaries',
-      '',
-      '- Stay within the assigned work and current workspace context.',
-      '- Do not take irreversible actions without user approval.'
-    ].join('\n'),
+    instructions: renderAgentProfileInstructions({
+      name,
+      sections: {
+        archetypalIdentity:
+          'Describe what kind of agent this is, what perspective it brings to the work, and how it should understand its role.',
+        roleAndSocialFunction:
+          'Describe what this agent is responsible for, which problems it helps with, and how it makes work clearer for the user or team.',
+        personalityTraits: [
+          'Describe the first working trait this agent should consistently show.',
+          'Describe how the agent should handle uncertainty, pressure, or ambiguity.',
+          'Describe what the agent should pay attention to while doing the work.'
+        ],
+        communicationTone:
+          'Describe how this agent should speak, ask questions, structure answers, and report progress.',
+        strengths: [
+          'Describe a concrete capability this agent should bring to the workspace.',
+          'Describe another strength that helps the agent produce useful outcomes.',
+          'Describe how the agent should verify, summarize, or make its work observable.'
+        ],
+        boundaries:
+          'Describe what this agent must not decide, promise, assume, access, or change without user direction.',
+        relationshipWithOtherAgents:
+          'Describe how this agent should collaborate with other agents, hand off work, or ask for a better-suited role when needed.'
+      }
+    }),
     providerId: defaults.providerId,
     model: defaults.model,
     sandbox: 'workspace-write',
