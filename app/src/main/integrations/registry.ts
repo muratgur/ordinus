@@ -28,6 +28,13 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     transport: 'mcp-http',
     authMethod: 'oauth',
     mcpUrl: 'https://mcp.canva.com/mcp'
+  },
+  atlassian: {
+    id: 'atlassian',
+    label: 'Atlassian',
+    transport: 'mcp-http',
+    authMethod: 'oauth',
+    mcpUrl: 'https://mcp.atlassian.com/v1/mcp/authv2'
   }
 }
 
