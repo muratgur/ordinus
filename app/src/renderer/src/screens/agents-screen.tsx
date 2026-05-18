@@ -5,7 +5,6 @@ import {
   BookOpen,
   Bot,
   FileText,
-  FolderOpen,
   Info,
   Loader2,
   Plus,
@@ -1412,10 +1411,6 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
         >
           <Plus />
           Create skill
-        </Button>
-        <Button type="button" variant="outline" size="sm" className="h-8 px-2.5 text-xs" disabled>
-          <FolderOpen />
-          Import skill
         </Button>
       </div>
 

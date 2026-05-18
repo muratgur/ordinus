@@ -118,6 +118,18 @@ const emptyComposerState: WorkComposerState = {
   workspacePath: ''
 }
 
+const draftPriorityOptions = [
+  { label: 'Low', value: -1 },
+  { label: 'Normal', value: 0 },
+  { label: 'High', value: 1 }
+] as const
+
+const draftFieldClassName = 'grid min-w-0 gap-1 text-xs font-medium text-muted-foreground'
+const draftInputClassName =
+  'h-10 min-w-0 rounded-md border bg-background px-3 text-sm font-normal text-foreground'
+const draftTextareaClassName =
+  'ordinus-scrollbar min-w-0 resize-none rounded-md border bg-background px-3 py-2 text-sm font-normal leading-6 text-foreground'
+
 export function WorkboardScreen({
   draftReview,
   onDraftReviewChange
@@ -1676,26 +1688,26 @@ function PlanReviewDialog({
           </div>
         </DialogHeader>
         {plan ? (
-          <div className="grid min-h-0 grid-cols-1 overflow-y-auto ordinus-scrollbar lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden">
-            <div className="flex min-w-0 flex-col gap-4 p-5 ordinus-scrollbar sm:p-6 lg:min-h-0 lg:overflow-y-auto">
-              <div className="grid gap-3 md:grid-cols-[1fr_2fr]">
-                <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-                  Title
+          <div className="grid min-h-0 grid-cols-1 overflow-y-auto ordinus-scrollbar lg:grid-cols-[minmax(0,1fr)_460px] lg:overflow-hidden xl:grid-cols-[minmax(0,1fr)_480px]">
+            <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden p-5 ordinus-scrollbar sm:p-6 lg:min-h-0 lg:overflow-y-auto">
+              <section className="grid gap-3" aria-label="Work request">
+                <label className={draftFieldClassName}>
+                  Request name
                   <input
-                    className="h-10 rounded-md border bg-background px-3 text-sm text-foreground"
+                    className={draftInputClassName}
                     value={plan.title}
                     onChange={(event) => onUpdatePlan({ ...plan, title: event.target.value })}
                   />
                 </label>
-                <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-                  Summary
-                  <input
-                    className="h-10 rounded-md border bg-background px-3 text-sm text-foreground"
+                <label className={draftFieldClassName}>
+                  Planned scope
+                  <textarea
+                    className={cn(draftTextareaClassName, 'min-h-24')}
                     value={plan.summary}
                     onChange={(event) => onUpdatePlan({ ...plan, summary: event.target.value })}
                   />
                 </label>
-              </div>
+              </section>
 
               <DraftStageTimeline
                 levels={levels}
@@ -1707,7 +1719,7 @@ function PlanReviewDialog({
 
               <div className="rounded-lg border bg-background p-4">
                 <h3 className="text-sm font-semibold">
-                  {isContinuation ? 'Continuation request' : 'Original request'}
+                  {isContinuation ? 'Continuation request' : 'Your original request'}
                 </h3>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {request}
@@ -1724,7 +1736,7 @@ function PlanReviewDialog({
               </div>
             </div>
 
-            <div className="border-t bg-card p-4 ordinus-scrollbar lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
+            <div className="min-w-0 overflow-x-hidden border-t bg-card p-4 ordinus-scrollbar lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
               {selectedItem ? (
                 <DraftItemEditor
                   item={selectedItem}
@@ -1833,14 +1845,14 @@ function DraftStageItemButton({
     <button
       type="button"
       className={cn(
-        'group rounded-md border bg-card px-3 py-2.5 text-left transition-colors',
-        selected ? 'border-primary ring-2 ring-primary/20' : 'hover:border-primary/40'
+        'group min-w-0 rounded-md border bg-card px-3 py-2.5 text-left transition-colors',
+        selected ? 'border-primary bg-primary-soft/10' : 'hover:border-primary/40'
       )}
       onClick={onSelect}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-semibold leading-5">{item.title}</p>
+          <p className="truncate text-sm font-semibold leading-5">{item.title}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {agentName(agents, item.assignedAgentId)}
           </p>
@@ -1875,24 +1887,23 @@ function DraftItemEditor({
   onChange: (patch: Partial<WorkboardDraftItem>) => void
 }): React.JSX.Element {
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4">
       <div>
         <p className="text-xs font-medium text-muted-foreground">
           Stage {stageById.get(item.tempId) ?? 1}
         </p>
-        <h3 className="mt-1 text-sm font-semibold">Work Item details</h3>
+        <h3 className="mt-1 text-sm font-semibold">Work item</h3>
       </div>
-      <DraftDependencyMap item={item} items={items} stageById={stageById} />
-      <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-        Title
+      <label className={draftFieldClassName}>
+        Item name
         <input
-          className="h-10 rounded-md border bg-background px-3 text-sm text-foreground"
+          className={draftInputClassName}
           value={item.title}
           onChange={(event) => onChange({ title: event.target.value })}
         />
       </label>
-      <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-        Agent
+      <label className={draftFieldClassName}>
+        Assigned agent
         <SelectControl
           value={item.assignedAgentId}
           onChange={(assignedAgentId) => onChange({ assignedAgentId })}
@@ -1904,72 +1915,135 @@ function DraftItemEditor({
           ))}
         </SelectControl>
       </label>
-      <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+      <label className={draftFieldClassName}>
         Instruction
         <textarea
-          className="min-h-28 rounded-md border bg-background px-3 py-2 text-sm leading-6 text-foreground"
+          className={cn(draftTextareaClassName, 'min-h-28')}
           value={item.instruction}
           onChange={(event) => onChange({ instruction: event.target.value })}
         />
       </label>
-      <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+      <label className={draftFieldClassName}>
         Expected output
         <textarea
-          className="min-h-20 rounded-md border bg-background px-3 py-2 text-sm leading-6 text-foreground"
+          className={cn(draftTextareaClassName, 'min-h-20')}
           value={item.expectedOutput}
           onChange={(event) => onChange({ expectedOutput: event.target.value })}
         />
       </label>
-      <label className="grid gap-1 text-xs font-medium text-muted-foreground">
-        Priority
-        <input
-          type="number"
-          className="h-10 rounded-md border bg-background px-3 text-sm text-foreground"
-          value={item.priority}
-          onChange={(event) => onChange({ priority: Number(event.target.value) })}
-        />
-      </label>
-      <div className="grid gap-2">
-        <p className="text-xs font-medium text-muted-foreground">Waits for</p>
-        {items
-          .filter((candidate) => candidate.tempId !== item.tempId)
-          .map((candidate) => {
-            const checked = item.dependsOnTempIds.includes(candidate.tempId)
-            const createsCycle =
-              !checked && draftItemDependsOn(items, candidate.tempId, item.tempId)
+      <DraftPriorityControl
+        value={item.priority}
+        onChange={(priority) => onChange({ priority })}
+      />
+      <DraftDependencyChecklist
+        item={item}
+        items={items}
+        stageById={stageById}
+        onChange={onChange}
+      />
+      <DraftDependencyMap item={item} items={items} stageById={stageById} />
+    </div>
+  )
+}
 
-            return (
-              <label
-                key={candidate.tempId}
-                className={cn(
-                  'flex items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm',
-                  createsCycle && 'opacity-60'
-                )}
-                title={createsCycle ? 'This would create a dependency cycle.' : undefined}
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5 size-4"
-                  checked={checked}
-                  disabled={createsCycle}
-                  onChange={(event) => {
-                    const next = event.target.checked
-                      ? [...item.dependsOnTempIds, candidate.tempId]
-                      : item.dependsOnTempIds.filter((id) => id !== candidate.tempId)
-                    onChange({ dependsOnTempIds: next })
-                  }}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{candidate.title}</span>
-                  <span className="text-xs text-muted-foreground">
-                    Stage {stageById.get(candidate.tempId) ?? 1}
-                    {createsCycle ? ' - would create a cycle' : ''}
-                  </span>
-                </span>
-              </label>
-            )
-          })}
+function DraftPriorityControl({
+  value,
+  onChange
+}: {
+  value: number
+  onChange: (value: number) => void
+}): React.JSX.Element {
+  const selectedValue = value < 0 ? -1 : value > 0 ? 1 : 0
+
+  return (
+    <div className="grid min-w-0 gap-1">
+      <p className="text-xs font-medium text-muted-foreground">Priority</p>
+      <div className="grid min-w-0 grid-cols-3 overflow-hidden rounded-md border bg-background">
+        {draftPriorityOptions.map((option) => {
+          const selected = option.value === selectedValue
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={selected}
+              className={cn(
+                'h-10 min-w-0 truncate border-r px-3 text-sm font-medium transition-colors last:border-r-0',
+                selected
+                  ? 'bg-card text-foreground shadow-inner'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              )}
+              onClick={() => onChange(option.value)}
+            >
+              {option.label}
+            </button>
+          )
+        })}
       </div>
+      <p className="text-xs leading-5 text-muted-foreground">
+        Used to order Work Items that are ready at the same time.
+      </p>
+    </div>
+  )
+}
+
+function DraftDependencyChecklist({
+  item,
+  items,
+  stageById,
+  onChange
+}: {
+  item: WorkboardDraftItem
+  items: WorkboardDraftItem[]
+  stageById: Map<string, number>
+  onChange: (patch: Partial<WorkboardDraftItem>) => void
+}): React.JSX.Element {
+  const dependencyCandidates = items.filter((candidate) => candidate.tempId !== item.tempId)
+
+  return (
+    <div className="grid gap-2">
+      <p className="text-xs font-medium text-muted-foreground">Waits for</p>
+      {dependencyCandidates.length > 0 ? (
+        dependencyCandidates.map((candidate) => {
+          const checked = item.dependsOnTempIds.includes(candidate.tempId)
+          const createsCycle = !checked && draftItemDependsOn(items, candidate.tempId, item.tempId)
+
+          return (
+            <label
+              key={candidate.tempId}
+              className={cn(
+                'flex min-w-0 items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm',
+                createsCycle && 'opacity-60'
+              )}
+              title={createsCycle ? 'This would create a dependency cycle.' : undefined}
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4"
+                checked={checked}
+                disabled={createsCycle}
+                onChange={(event) => {
+                  const next = event.target.checked
+                    ? [...item.dependsOnTempIds, candidate.tempId]
+                    : item.dependsOnTempIds.filter((id) => id !== candidate.tempId)
+                  onChange({ dependsOnTempIds: next })
+                }}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{candidate.title}</span>
+                <span className="text-xs text-muted-foreground">
+                  Stage {stageById.get(candidate.tempId) ?? 1}
+                  {createsCycle ? ' - would create a cycle' : ''}
+                </span>
+              </span>
+            </label>
+          )
+        })
+      ) : (
+        <p className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground">
+          No other Work Items in this request.
+        </p>
+      )}
     </div>
   )
 }
@@ -1996,7 +2070,7 @@ function DraftDependencyMap({
     )
 
   return (
-    <section className="rounded-lg border bg-background p-3">
+    <section className="min-w-0 overflow-hidden rounded-lg border bg-background p-3">
       <div className="flex items-center gap-2 text-sm font-semibold">
         <GitBranch className="size-4 text-muted-foreground" />
         Dependency map
@@ -2009,7 +2083,7 @@ function DraftDependencyMap({
           stageById={stageById}
         />
         <div className="flex justify-center text-xs text-muted-foreground">then</div>
-        <div className="rounded-md border border-primary/30 bg-primary-soft/40 px-3 py-2">
+        <div className="min-w-0 rounded-md border border-primary/30 bg-primary-soft/40 px-3 py-2">
           <p className="truncate text-sm font-semibold">{item.title}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Stage {stageById.get(item.tempId) ?? 1}
@@ -2039,12 +2113,12 @@ function DraftDependencyMapGroup({
   stageById: Map<string, number>
 }): React.JSX.Element {
   return (
-    <div className="rounded-md border bg-card p-2">
+    <div className="min-w-0 rounded-md border bg-card p-2">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <div className="mt-2 grid gap-1.5">
         {items.length > 0 ? (
           items.map((item) => (
-            <div key={item.tempId} className="rounded-sm bg-accent/60 px-2 py-1.5">
+            <div key={item.tempId} className="min-w-0 rounded-sm bg-accent/60 px-2 py-1.5">
               <p className="truncate text-xs font-medium">{item.title}</p>
               <p className="text-[11px] text-muted-foreground">
                 Stage {stageById.get(item.tempId) ?? 1}
