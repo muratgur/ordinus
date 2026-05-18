@@ -182,6 +182,7 @@ export function createRuntimeService(): RuntimeService {
           agentName: input.agentName,
           agentRole: input.agentRole,
           instructions: input.instructions,
+          connectors: input.connectors,
           providerSessionRef: input.providerSessionRef,
           message: buildWorkRunMessage(input),
           logRef: input.logRef,

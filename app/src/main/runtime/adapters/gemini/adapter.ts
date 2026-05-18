@@ -23,6 +23,7 @@ import { firstLine, isRecord, parseJsonFromCliOutput } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
+import { materializeGeminiConnectors } from '../../../integrations/materialize'
 import {
   AgentDraftOutputSchema,
   buildAgentDraft,
@@ -138,53 +139,65 @@ async function sendGeminiConversationTurn(
     throw new Error('Gemini needs login before this conversation can run.')
   }
 
-  const args = buildGeminiConversationArgs(input)
-  const prompt = input.providerSessionRef
-    ? buildGeminiResumePrompt(input)
-    : buildGeminiConversationPrompt(input)
-  const result = await runConversationProcess({
-    executable,
-    args,
-    input,
-    context,
-    env: getGeminiEnvironment(),
-    stdin: prompt,
-    streamErrorMessage: 'Gemini process streams could not be opened.'
-  })
+  const connectors = await materializeGeminiConnectors(
+    input.connectors,
+    getGeminiConfigDir(),
+    join(input.agentHomePath, '.ordinus-gemini', input.turnId)
+  )
 
-  if (result.cancelled) {
-    throw new Error('Conversation turn was cancelled.')
-  }
-
-  if (result.code !== 0) {
-    const message = readCliFailureMessage({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      jsonFallbackKeys: ['result', 'response', 'message'],
-      ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
-      defaultMessage: 'Gemini conversation turn failed.'
+  try {
+    const args = buildGeminiConversationArgs(input)
+    const prompt = input.providerSessionRef
+      ? buildGeminiResumePrompt(input)
+      : buildGeminiConversationPrompt(input)
+    const result = await runConversationProcess({
+      executable,
+      args,
+      input,
+      context,
+      env: connectors.home
+        ? { ...getGeminiEnvironment(), GEMINI_CLI_HOME: connectors.home }
+        : getGeminiEnvironment(),
+      stdin: prompt,
+      streamErrorMessage: 'Gemini process streams could not be opened.'
     })
 
-    if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
-      throw new ProviderSessionInvalidError(message)
+    if (result.cancelled) {
+      throw new Error('Conversation turn was cancelled.')
     }
 
-    throw new Error(message)
-  }
+    if (result.code !== 0) {
+      const message = readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        jsonFallbackKeys: ['result', 'response', 'message'],
+        ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+        defaultMessage: 'Gemini conversation turn failed.'
+      })
 
-  const parsed = readGeminiConversationOutput(result.stdout)
-  const providerSessionRef = parsed.sessionId || input.providerSessionRef || ''
+      if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
+        throw new ProviderSessionInvalidError(message)
+      }
 
-  if (!providerSessionRef) {
-    throw new Error('Gemini did not provide a session reference for this conversation.')
-  }
+      throw new Error(message)
+    }
 
-  writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
+    const parsed = readGeminiConversationOutput(result.stdout)
+    const providerSessionRef = parsed.sessionId || input.providerSessionRef || ''
 
-  return {
-    providerSessionRef,
-    outcome: parseAgentTurnOutcome(readGeminiLastMessage(input.lastMessagePath)),
-    logRef: input.logRef
+    if (!providerSessionRef) {
+      throw new Error('Gemini did not provide a session reference for this conversation.')
+    }
+
+    writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
+
+    return {
+      providerSessionRef,
+      outcome: parseAgentTurnOutcome(readGeminiLastMessage(input.lastMessagePath)),
+      logRef: input.logRef
+    }
+  } finally {
+    connectors.cleanup()
   }
 }
 

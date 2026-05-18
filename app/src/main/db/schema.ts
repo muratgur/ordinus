@@ -26,6 +26,7 @@ export const agents = sqliteTable('agents', {
   providerId: text('provider_id').notNull(),
   model: text('model').notNull(),
   sandbox: text('sandbox').notNull(),
+  connectors: text('connectors', { mode: 'json' }).$type<string[]>().notNull().default([]),
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()

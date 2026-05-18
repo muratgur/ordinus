@@ -16,6 +16,7 @@ import { extractJsonObject, firstLine, isRecord, parseJsonFromCliOutput } from '
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
+import { materializeCodexConnectors } from '../../../integrations/materialize'
 import {
   AgentDraftOutputSchema,
   agentDraftOutputJsonSchema,
@@ -123,7 +124,11 @@ async function sendCodexConversationTurn(
     throw new Error('Codex CLI was not found.')
   }
 
+  const connectors = await materializeCodexConnectors(input.connectors)
   const args = buildCodexConversationArgs(input)
+  if (connectors.configArgs.length > 0) {
+    args.splice(1, 0, ...connectors.configArgs)
+  }
   const prompt = input.providerSessionRef
     ? buildCodexResumePrompt(input)
     : buildCodexConversationPrompt(input)
@@ -132,7 +137,7 @@ async function sendCodexConversationTurn(
     args,
     input,
     context,
-    env: getCodexEnvironment(),
+    env: { ...getCodexEnvironment(), ...connectors.env },
     stdin: prompt,
     streamErrorMessage: 'Codex process streams could not be opened.',
     observeStdoutLine: observeCodexStdoutLine

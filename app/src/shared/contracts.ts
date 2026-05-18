@@ -51,6 +51,30 @@ export const WorkspaceSelectFolderResultSchema = z.object({
 export const AgentSandboxSchema = z.enum(['read-only', 'workspace-write', 'full-access'])
 export const ProviderLoginMethodSchema = z.enum(['default', 'claudeai', 'console', 'sso'])
 
+export const ConnectorIdSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]*$/, 'Connector id must be a lowercase slug.')
+
+export const ConnectorTransportSchema = z.enum(['mcp-http', 'mcp-stdio', 'api'])
+export const ConnectorAuthMethodSchema = z.enum(['oauth', 'api-key', 'none'])
+
+export const AgentConnectorsSchema = z.array(ConnectorIdSchema).default([])
+
+export const ConnectorSummarySchema = z.object({
+  id: ConnectorIdSchema,
+  label: z.string().min(1),
+  transport: ConnectorTransportSchema,
+  authMethod: ConnectorAuthMethodSchema,
+  connected: z.boolean()
+})
+
+export const ConnectorActionInputSchema = z.object({
+  connectorId: ConnectorIdSchema
+})
+
+export type ConnectorSummary = z.infer<typeof ConnectorSummarySchema>
+export type ConnectorActionInput = z.infer<typeof ConnectorActionInputSchema>
+
 export const WorkspaceUpdateSystemDefaultInputSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().trim().min(1, 'Model is required.').max(120)
@@ -100,6 +124,7 @@ export const AgentSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
+  connectors: AgentConnectorsSchema,
   enabled: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -124,6 +149,7 @@ export const AgentProfileSchema = z.object({
   summary: z.string().min(1).max(300),
   tags: z.array(z.string().min(1).max(40)).default([]),
   recommended: z.boolean().default(false),
+  suggestedConnectors: AgentConnectorsSchema,
   instructions: z.string().min(1)
 })
 
@@ -150,6 +176,7 @@ export const AgentDraftSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
+  connectors: AgentConnectorsSchema,
   enabled: z.boolean().default(true)
 })
 
@@ -167,6 +194,7 @@ export const AgentUpdateSettingsInputSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
+  connectors: AgentConnectorsSchema,
   enabled: z.boolean()
 })
 
@@ -677,7 +705,11 @@ export const WorkRunFailInputSchema = WorkRunActionInputSchema.extend({
 })
 
 export const WorkboardDraftItemSchema = z.object({
-  tempId: z.string().trim().regex(/^item-[0-9]+$/).max(80),
+  tempId: z
+    .string()
+    .trim()
+    .regex(/^item-[0-9]+$/)
+    .max(80),
   title: z.string().trim().min(1).max(160),
   instruction: z.string().trim().min(1).max(64_000),
   expectedOutput: z.string().trim().min(1).max(2_000),
@@ -1067,15 +1099,11 @@ export type WorkboardGeneratePlanInput = z.infer<typeof WorkboardGeneratePlanInp
 export type WorkboardStartRequestInput = z.infer<typeof WorkboardStartRequestInputSchema>
 export type WorkboardDirectStartInput = z.infer<typeof WorkboardDirectStartInputSchema>
 export type WorkboardRequestDestination = z.infer<typeof WorkboardRequestDestinationSchema>
-export type WorkboardContextReferenceInput = z.infer<
-  typeof WorkboardContextReferenceInputSchema
->
+export type WorkboardContextReferenceInput = z.infer<typeof WorkboardContextReferenceInputSchema>
 export type WorkboardGenerateRequestPlanInput = z.infer<
   typeof WorkboardGenerateRequestPlanInputSchema
 >
-export type WorkboardStartRequestPlanInput = z.infer<
-  typeof WorkboardStartRequestPlanInputSchema
->
+export type WorkboardStartRequestPlanInput = z.infer<typeof WorkboardStartRequestPlanInputSchema>
 export type WorkboardGenerateFollowUpPlanInput = z.infer<
   typeof WorkboardGenerateFollowUpPlanInputSchema
 >

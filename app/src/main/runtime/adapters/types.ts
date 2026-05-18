@@ -55,6 +55,7 @@ export type RuntimeConversationTurnInput = {
   agentName: string
   agentRole: string
   instructions: string
+  connectors: string[]
   providerSessionRef: string | null
   message: string
   logRef: string
@@ -81,6 +82,7 @@ export type RuntimeWorkRunInput = {
   agentName: string
   agentRole: string
   instructions: string
+  connectors: string[]
   providerSessionRef: string | null
   title: string
   instruction: string
