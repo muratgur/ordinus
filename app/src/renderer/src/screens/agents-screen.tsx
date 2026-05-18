@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useId } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -35,6 +35,7 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
+import { Switch } from '@renderer/components/ui/switch'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import type {
@@ -54,6 +55,7 @@ type CreateAgentStep = 'catalog' | 'describe' | 'review'
 type ReviewBackStep = 'catalog' | 'describe'
 type SettingsDraft = {
   name: string
+  role: string
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox
@@ -166,7 +168,7 @@ export function AgentsScreen(): React.JSX.Element {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-7rem)] gap-4 py-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100vh-3rem)] gap-4 py-4 xl:grid-cols-[280px_minmax(0,1fr)]">
       <AgentLibrary
         agents={agents}
         loading={loading}
@@ -201,7 +203,7 @@ export function AgentsScreen(): React.JSX.Element {
             })}
           </div>
 
-          <CardContent className="flex-1 p-0">
+          <CardContent className="flex flex-1 flex-col p-0">
             {error ? (
               <EmptyState icon={<Bot />} title="Agents unavailable" detail={error} />
             ) : selectedAgent ? (
@@ -258,7 +260,7 @@ function AgentLibrary({
 
   return (
     <aside className="min-w-0">
-      <Card className="sticky top-32 overflow-hidden">
+      <Card className="sticky top-14 overflow-hidden">
         <CardHeader className="border-b">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1352,81 +1354,102 @@ function InstructionsPanel({
   const [savedInstructions, setSavedInstructions] = useState(agent.instructions)
   const [instructions, setInstructions] = useState(agent.instructions)
   const [saving, setSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [error, setError] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirty = instructions !== savedInstructions
 
-  async function handleSave(): Promise<void> {
-    if (!dirty) {
-      return
-    }
+  // Revert target — son kaydedilen, session boyunca tutulur
+  const revertTargetRef = useRef<string>(savedInstructions)
+
+  async function save(value: string): Promise<void> {
+    if (value === savedInstructions) return
 
     try {
       setSaving(true)
       setError('')
       const nextAgent = await window.ordinus.agents.updateInstructions({
         id: agent.id,
-        instructions
+        instructions: value
       })
+      revertTargetRef.current = savedInstructions // kayıt öncesi versiyonu sakla
       setSavedInstructions(nextAgent.instructions)
-      setInstructions(nextAgent.instructions)
       onAgentSaved(nextAgent)
+
+      // "Saved · Revert" göster
+      setSaveStatus('saved')
+      // Revert butonu 4sn sonra solar
+      if (revertTimerRef.current) clearTimeout(revertTimerRef.current)
+      revertTimerRef.current = setTimeout(() => setSaveStatus('idle'), 4000)
     } catch (saveError) {
       setError(getErrorMessage(saveError, 'Instructions could not be saved.'))
+      setSaveStatus('error')
     } finally {
       setSaving(false)
     }
   }
 
+  function handleChange(value: string): void {
+    setInstructions(value)
+    setSaveStatus('idle')
+    // Debounce: 2sn sonra otomatik kayıt
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      void save(value)
+    }, 2000)
+  }
+
+  function handleBlur(): void {
+    // Focus kaybolunca bekleyen debounce'u iptal et, hemen kaydet
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    void save(instructions)
+  }
+
+  function handleRevert(): void {
+    const target = revertTargetRef.current
+    setInstructions(target)
+    setSaveStatus('idle')
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    void save(target)
+  }
+
   return (
-    <div className="grid gap-4 p-5">
-      <div className="flex flex-col gap-3 rounded-lg border bg-accent px-3 py-2.5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <p className="truncate font-mono text-xs text-muted-foreground">
-            agents/{agent.id}/AGENTS.md
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            {dirty ? 'Unsaved changes' : 'Saved'}
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* Durum göstergesi — sağ üst, yalnızca gerektiğinde */}
+      <div className="absolute right-5 top-4 flex items-center gap-2">
+        {saving ? (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            Saving
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!dirty || saving}
-            onClick={() => setInstructions(savedInstructions)}
-          >
-            Discard
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!dirty || saving}
-            onClick={() => void handleSave()}
-          >
-            {saving ? <Loader2 className="animate-spin" /> : null}
-            Save
-          </Button>
-        </div>
+        ) : saveStatus === 'saved' ? (
+          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Saved</span>
+            <span className="text-border">·</span>
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={handleRevert}
+            >
+              Revert
+            </button>
+          </span>
+        ) : saveStatus === 'error' ? (
+          <span className="text-xs text-status-attention">{error}</span>
+        ) : null}
       </div>
 
-      {error ? <InlineError message={error} /> : null}
-
+      {/* Editör — sınırsız, panel yüzeyiyle bütünleşik */}
       <textarea
+        key={agent.id}
         aria-label={`${agent.name} instructions`}
-        className="ordinus-scrollbar min-h-[480px] resize-y rounded-lg border bg-card p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        placeholder={`Describe what this agent is responsible for.
-
-Include:
-- Role
-- Scope
-- What it should avoid
-- How it should verify work`}
+        className="ordinus-scrollbar h-full w-full flex-1 resize-none bg-transparent p-5 pt-4 font-mono text-xs leading-6 text-foreground shadow-none outline-none placeholder:text-muted-foreground/50"
+        placeholder={`Describe what ${agent.name} is responsible for.\n\nInclude:\n- Role and purpose\n- Scope of work\n- What it should avoid\n- How it should verify its work`}
         spellCheck={false}
         value={instructions}
-        onChange={(event) => setInstructions(event.target.value)}
+        onChange={(event) => handleChange(event.target.value)}
+        onBlur={handleBlur}
       />
     </div>
   )
@@ -1476,6 +1499,7 @@ function SettingsPanel({
         id: agent.id,
         ...draft,
         name: draft.name.trim(),
+        role: draft.role.trim(),
         model: draft.model.trim()
       })
       const nextSettings = getPersistedSettingsDraft(nextAgent)
@@ -1504,134 +1528,100 @@ function SettingsPanel({
   }
 
   return (
-    <div className="grid gap-4 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-accent px-3 py-2.5">
-        <span className="text-xs text-muted-foreground">
-          {dirty ? 'Unsaved changes' : 'Settings saved'}
-        </span>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!dirty || saving}
-            onClick={() => setDraft(getEditableSettingsDraft(savedSettings))}
-          >
-            Discard
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-2.5 text-xs"
-            disabled={!canSave}
-            onClick={() => void handleSave()}
-          >
-            {saving ? <Loader2 className="animate-spin" /> : null}
-            Save settings
-          </Button>
-        </div>
-      </div>
+    <ScrollArea className="h-full min-h-0">
+      <div className="grid gap-5 p-5">
+        {/* Agent adı + Enabled */}
+        <AgentNameField
+          name={draft.name}
+          enabled={draft.enabled}
+          nameIssue={nameIssue}
+          onNameChange={(name) => updateDraft({ name })}
+          onEnabledChange={(enabled) => updateDraft({ enabled })}
+        />
 
-      {error ? <InlineError message={error} /> : null}
-
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <div className="grid gap-1">
-          <p className="text-sm font-semibold">Identity</p>
-          <p className="text-xs leading-5 text-muted-foreground">
-            Rename how this agent appears across Ordinus.
-          </p>
-        </div>
-        <FormField label="Agent name">
+        {/* Role */}
+        <FormField label="Role">
           <Input
-            maxLength={80}
-            value={draft.name}
-            onChange={(event) => updateDraft({ name: event.target.value })}
+            maxLength={120}
+            placeholder="Brief description of this agent's purpose"
+            value={draft.role}
+            onChange={(event) => updateDraft({ role: event.target.value })}
           />
         </FormField>
-        <p
-          className={cn(
-            'text-xs leading-5 text-muted-foreground',
-            nameIssue && 'text-status-attention'
-          )}
-        >
-          {nameIssue ?? 'Existing conversations and local files stay linked.'}
-        </p>
-      </section>
 
-      <section className="grid gap-4 rounded-lg border bg-card p-4">
-        <div className="grid gap-1">
-          <p className="text-sm font-semibold">Runtime</p>
-          <p className="text-xs leading-5 text-muted-foreground">
-            Choose the CLI and model this agent uses when it runs.
-          </p>
+        {/* Runtime */}
+        <div className="grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <FormField label="Provider">
+              <SelectControl
+                value={draft.providerId}
+                onChange={(value) => updateDraft({ providerId: value as ProviderId })}
+              >
+                <option value="codex">Codex</option>
+                <option value="claude">Claude</option>
+                <option value="gemini">Gemini</option>
+              </SelectControl>
+            </FormField>
+            <ModelField
+              providerId={draft.providerId}
+              model={draft.model}
+              onChange={(model) => updateDraft({ model })}
+            />
+          </div>
+          <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <FormField label="Provider CLI">
-            <SelectControl
-              value={draft.providerId}
-              onChange={(value) => updateDraft({ providerId: value as ProviderId })}
-            >
-              <option value="codex">Codex</option>
-              <option value="claude">Claude</option>
-              <option value="gemini">Gemini</option>
-            </SelectControl>
-          </FormField>
 
-          <ModelField
-            providerId={draft.providerId}
-            model={draft.model}
-            onChange={(model) => updateDraft({ model })}
-          />
-        </div>
-        <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
+        {/* Sandbox */}
         <SandboxField
           name="agent-settings-sandbox"
           value={draft.sandbox}
           onChange={(sandbox) => updateDraft({ sandbox })}
         />
-      </section>
 
-      <section className="grid gap-3 rounded-lg border bg-card p-4">
-        <p className="text-sm font-semibold">Lifecycle</p>
-        <div className="grid gap-2">
-          <label className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">Enabled</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                Agent can be assigned work
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              className="size-4 shrink-0 accent-primary"
-              checked={draft.enabled}
-              onChange={(event) => updateDraft({ enabled: event.target.checked })}
-            />
-          </label>
-          <div className="flex items-center justify-between gap-3 rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2">
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-status-attention">
-                Delete permanently
-              </span>
-              <span className="block text-xs text-muted-foreground">
-                Remove this agent, its conversations, local files, and app logs.
-              </span>
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 shrink-0 px-2.5 text-xs"
-              disabled={saving || deleting}
-              onClick={() => setDeleteOpen(true)}
-            >
-              <Trash2 />
-              Delete
-            </Button>
+
+        {/* Save bar — sadece dirty'de belirir, içeriğin hemen altında */}
+        {dirty ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border bg-accent px-4 py-3">
+            {error ? (
+              <p className="text-xs text-status-attention">{error}</p>
+            ) : (
+              <span className="text-xs text-muted-foreground">Unsaved changes</span>
+            )}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                disabled={saving}
+                onClick={() => setDraft(getEditableSettingsDraft(savedSettings))}
+              >
+                Discard
+              </button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                disabled={!canSave}
+                onClick={() => void handleSave()}
+              >
+                {saving ? <Loader2 className="animate-spin" /> : null}
+                Save settings
+              </Button>
+            </div>
           </div>
+        ) : null}
+
+        {/* Delete — içerik akışının sonunda, ince ayırıcıdan sonra */}
+        <div className="border-t pt-2">
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline-offset-2 hover:text-status-attention hover:underline"
+            disabled={saving || deleting}
+            onClick={() => setDeleteOpen(true)}
+          >
+            {deleting ? 'Deleting…' : 'Delete this agent'}
+          </button>
         </div>
-      </section>
+      </div>
 
       <DeleteAgentDialog
         agentName={agent.name}
@@ -1640,7 +1630,7 @@ function SettingsPanel({
         onDelete={() => void handleDelete()}
         onOpenChange={setDeleteOpen}
       />
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -1736,6 +1726,45 @@ function StatusDot({ status }: { status: AgentStatus }): React.JSX.Element {
   )
 }
 
+function AgentNameField({
+  name,
+  enabled,
+  nameIssue,
+  onNameChange,
+  onEnabledChange
+}: {
+  name: string
+  enabled: boolean
+  nameIssue: string | null
+  onNameChange: (name: string) => void
+  onEnabledChange: (enabled: boolean) => void
+}): React.JSX.Element {
+  const switchId = useId()
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">Agent name</span>
+        <label htmlFor={switchId} className="flex cursor-pointer items-center gap-2">
+          <span className="text-xs text-muted-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
+          <Switch
+            id={switchId}
+            checked={enabled}
+            onCheckedChange={onEnabledChange}
+          />
+        </label>
+      </div>
+      <Input
+        maxLength={80}
+        value={name}
+        onChange={(event) => onNameChange(event.target.value)}
+      />
+      {nameIssue ? (
+        <p className="text-xs text-status-attention">{nameIssue}</p>
+      ) : null}
+    </div>
+  )
+}
+
 function FormField({
   label,
   children
@@ -1780,54 +1809,54 @@ function SandboxField({
   value: AgentSandbox
   onChange: (value: AgentSandbox) => void
 }): React.JSX.Element {
-  return (
-    <div className="grid gap-3 border-t pt-4">
-      <div className="grid gap-1">
-        <p className="text-sm font-semibold">Sandbox</p>
-        <p className="text-xs leading-5 text-muted-foreground">
-          Control what this agent is allowed to do locally.
-        </p>
-      </div>
-      <div className="grid gap-2 lg:grid-cols-3">
-        {sandboxOptions.map((option) => {
-          const selected = option.value === value
-          const fullAccess = option.value === 'full-access'
+  const selected = sandboxOptions.find((o) => o.value === value) ?? sandboxOptions[0]
+  const isFullAccess = value === 'full-access'
 
+  return (
+    <div className="grid gap-2">
+      <span className="text-xs font-medium text-muted-foreground">Sandbox</span>
+      {/* Kompakt radio satırları */}
+      <div className="grid gap-1">
+        {sandboxOptions.map((option) => {
+          const isSelected = option.value === value
           return (
-            <label
-              key={option.value}
-              className={cn(
-                'grid min-h-[112px] cursor-pointer gap-2 rounded-md border bg-card p-3 text-sm transition-colors hover:bg-accent',
-                selected && 'border-primary bg-primary-soft/60',
-                selected && fullAccess && 'border-status-attention bg-status-attention/10'
-              )}
-            >
-              <span className="flex items-start gap-2">
+            <div key={option.value}>
+              <label className="flex w-fit cursor-pointer items-center gap-2.5 py-1.5">
                 <input
                   type="radio"
                   name={name}
-                  className="mt-0.5 size-4 shrink-0 accent-primary"
-                  checked={selected}
+                  className="size-3.5 shrink-0 accent-primary"
+                  checked={isSelected}
                   onChange={() => onChange(option.value)}
                 />
-                <span className="grid min-w-0 gap-1">
-                  <span className="font-medium text-foreground">{option.label}</span>
+                <span className="flex items-center gap-2">
                   <span
                     className={cn(
-                      'text-xs leading-5 text-muted-foreground',
-                      selected && fullAccess && 'text-status-attention'
+                      'text-sm font-medium',
+                      isSelected ? 'text-foreground' : 'text-muted-foreground'
                     )}
                   >
-                    {option.description}
+                    {option.label}
                   </span>
                   {option.badge ? (
-                    <span className="w-fit rounded-full border bg-card px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <span className="rounded-full border px-1.5 py-px text-[10px] font-medium text-muted-foreground">
                       {option.badge}
                     </span>
                   ) : null}
                 </span>
-              </span>
-            </label>
+              </label>
+              {/* Seçilinin açıklaması doğrudan altında */}
+              {isSelected ? (
+                <p
+                  className={cn(
+                    'ml-6 text-xs leading-5',
+                    isFullAccess ? 'text-status-attention' : 'text-muted-foreground'
+                  )}
+                >
+                  {option.description}
+                </p>
+              ) : null}
+            </div>
           )
         })}
       </div>
@@ -1876,6 +1905,7 @@ function getAgentStatus(agent: Agent): AgentStatus {
 function getPersistedSettingsDraft(agent: Agent): SettingsDraft {
   return {
     name: agent.name,
+    role: agent.role,
     providerId: agent.providerId,
     model: agent.model,
     sandbox: agent.sandbox,
@@ -1893,6 +1923,7 @@ function getEditableSettingsDraft(settings: SettingsDraft): SettingsDraft {
 function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): boolean {
   return (
     draft.name !== savedSettings.name ||
+    draft.role !== savedSettings.role ||
     draft.providerId !== savedSettings.providerId ||
     draft.model !== savedSettings.model ||
     draft.sandbox !== savedSettings.sandbox ||
