@@ -9,10 +9,16 @@ import {
 } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import {
+  AgentSkillDetailSchema,
   AgentSkillSchema,
   type Agent,
   type AgentSkill,
-  type AgentSkillCreateInput
+  type AgentSkillCreateInput,
+  type AgentSkillDeleteInput,
+  type AgentSkillDeleteResult,
+  type AgentSkillDetail,
+  type AgentSkillGetInput,
+  type AgentSkillUpdateInput
 } from '@shared/contracts'
 import { getSystemPaths } from '../paths'
 
@@ -42,7 +48,7 @@ export function createAgentSkill(input: AgentSkillCreateInput): AgentSkill {
   const skillPath = join(skillRoot, skillFileName)
 
   mkdirSync(skillRoot, { recursive: true })
-  writeFileSync(skillPath, buildSkillTemplate(input.name.trim(), input.description ?? ''), {
+  writeFileSync(skillPath, buildSkillDocument(input.name, input.description ?? '', input.body), {
     encoding: 'utf8',
     flag: 'wx'
   })
@@ -53,6 +59,50 @@ export function createAgentSkill(input: AgentSkillCreateInput): AgentSkill {
   }
 
   return skill
+}
+
+export function getAgentSkill(input: AgentSkillGetInput): AgentSkillDetail {
+  const skillsRoot = getAgentSkillsRoot(input.agentId)
+  mkdirSync(skillsRoot, { recursive: true })
+
+  return readSkillDetail(skillsRoot, input.skillId)
+}
+
+export function updateAgentSkill(input: AgentSkillUpdateInput): AgentSkill {
+  const skillsRoot = getAgentSkillsRoot(input.agentId)
+  mkdirSync(skillsRoot, { recursive: true })
+
+  const skillRoot = resolveInside(skillsRoot, input.skillId)
+  const skillPath = join(skillRoot, skillFileName)
+  if (!existsSync(skillPath)) {
+    throw new Error('Skill was not found.')
+  }
+
+  writeFileSync(skillPath, buildSkillDocument(input.name, input.description ?? '', input.body), {
+    encoding: 'utf8'
+  })
+
+  const skill = readSkillSummary(skillsRoot, input.skillId)
+  if (!skill) {
+    throw new Error('Skill could not be saved.')
+  }
+
+  return skill
+}
+
+export function deleteAgentSkill(input: AgentSkillDeleteInput): AgentSkillDeleteResult {
+  const skillsRoot = getAgentSkillsRoot(input.agentId)
+  mkdirSync(skillsRoot, { recursive: true })
+
+  const skillRoot = resolveInside(skillsRoot, input.skillId)
+  const skillPath = join(skillRoot, skillFileName)
+  if (!existsSync(skillPath)) {
+    throw new Error('Skill was not found.')
+  }
+
+  rmSync(skillRoot, { recursive: true, force: true })
+
+  return { deletedSkillId: input.skillId }
 }
 
 export function getAgentHome(agentId: string): string {
@@ -81,36 +131,108 @@ function readSkillSummary(skillsRoot: string, skillId: string): AgentSkill | nul
 
   const stat = statSync(skillPath)
   const content = readFileSync(skillPath, 'utf8')
-  const { name, description } = parseSkillMetadata(content)
+  const metadata = parseSkillMetadata(content)
+  if (!metadata) {
+    return null
+  }
 
   return AgentSkillSchema.parse({
     id: skillId,
-    name: name || titleFromId(skillId),
-    description,
+    name: metadata.name,
+    description: metadata.description,
     relativePath: toRelativeSkillPath(skillsRoot, skillPath),
     updatedAt: stat.mtime.toISOString()
   })
 }
 
-function parseSkillMetadata(content: string): { name: string; description: string } {
+function readSkillDetail(skillsRoot: string, skillId: string): AgentSkillDetail {
+  const skillRoot = resolveInside(skillsRoot, skillId)
+  const skillPath = join(skillRoot, skillFileName)
+
+  if (!existsSync(skillPath)) {
+    throw new Error('Skill was not found.')
+  }
+
+  const stat = statSync(skillPath)
+  const content = readFileSync(skillPath, 'utf8')
+  const parsed = parseSkillDocument(content)
+  if (!parsed) {
+    throw new Error('Skill metadata could not be read.')
+  }
+
+  return AgentSkillDetailSchema.parse({
+    id: skillId,
+    name: parsed.metadata.name,
+    description: parsed.metadata.description,
+    relativePath: toRelativeSkillPath(skillsRoot, skillPath),
+    updatedAt: stat.mtime.toISOString(),
+    body: parsed.body
+  })
+}
+
+function parseSkillMetadata(content: string): { name: string; description: string } | null {
+  return parseSkillDocument(content)?.metadata ?? null
+}
+
+function parseSkillDocument(
+  content: string
+): { metadata: { name: string; description: string }; body: string } | null {
   const lines = content.split(/\r?\n/)
-  const titleLine = lines.find((line) => /^#\s+/.test(line))
-  const descriptionLine = lines.find((line) => /^description:\s*/i.test(line))
+  if (lines[0]?.trim() !== '---') {
+    return null
+  }
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+  if (endIndex < 0) {
+    return null
+  }
+
+  const frontmatter = new Map<string, string>()
+  lines.slice(1, endIndex).forEach((line) => {
+    const match = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/.exec(line)
+    if (!match) {
+      return
+    }
+    frontmatter.set(match[1].toLowerCase(), parseFrontmatterValue(match[2]))
+  })
+
+  const name = cleanOneLine(frontmatter.get('name') ?? '')
+  if (!name) {
+    return null
+  }
 
   return {
-    name: titleLine?.replace(/^#\s+/, '').trim() ?? '',
-    description: descriptionLine?.replace(/^description:\s*/i, '').trim() ?? ''
+    metadata: {
+      name,
+      description: cleanOneLine(frontmatter.get('description') ?? '')
+    },
+    body: lines
+      .slice(endIndex + 1)
+      .join('\n')
+      .trimStart()
   }
 }
 
-function buildSkillTemplate(name: string, description: string): string {
+function buildSkillDocument(name: string, description: string, body?: string): string {
   const safeName = cleanOneLine(name)
   const safeDescription = cleanOneLine(description)
+  const safeBody = body?.trim() || buildDefaultSkillBody(safeName)
 
   return [
-    `# ${safeName}`,
+    '---',
+    `name: ${formatFrontmatterValue(safeName)}`,
+    `description: ${formatFrontmatterValue(
+      safeDescription || 'Describe when this skill should be used.'
+    )}`,
+    '---',
     '',
-    `description: ${safeDescription || 'Describe when this skill should be used.'}`,
+    safeBody
+  ].join('\n')
+}
+
+function buildDefaultSkillBody(name: string): string {
+  return [
+    `# ${name}`,
     '',
     '## When To Use',
     '',
@@ -120,12 +242,41 @@ function buildSkillTemplate(name: string, description: string): string {
     '',
     '1. Read the user request and identify the relevant context.',
     '2. Apply this skill only within its intended scope.',
-    '3. Summarize what changed and how the result was verified.'
+    '3. Summarize what changed and how the result was verified.',
+    '',
+    '## Boundaries',
+    '',
+    '- Do not use this skill when it does not match the task.'
   ].join('\n')
 }
 
 function cleanOneLine(value: string): string {
   return value.trim().replace(/\s+/g, ' ')
+}
+
+function formatFrontmatterValue(value: string): string {
+  return JSON.stringify(cleanOneLine(value))
+}
+
+function parseFrontmatterValue(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return ''
+  }
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      return typeof parsed === 'string' ? parsed : String(parsed)
+    } catch {
+      return trimmed.slice(1, -1)
+    }
+  }
+
+  return trimmed
 }
 
 function getAvailableSkillId(skillsRoot: string, name: string): string {
@@ -170,14 +321,6 @@ function assertSafeSegment(value: string, label: string): string {
     throw new Error(`${label} is not a safe folder name.`)
   }
   return segment
-}
-
-function titleFromId(value: string): string {
-  return value
-    .split('-')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
 }
 
 function slugify(value: string): string {

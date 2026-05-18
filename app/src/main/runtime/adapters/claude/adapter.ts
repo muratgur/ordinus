@@ -39,7 +39,10 @@ import {
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
-import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
+import {
+  buildAgentPrivateFolderInstructions,
+  buildWorkspaceWorkingFolderInstructions
+} from '../../prompts/workspace'
 import {
   addCliModelArg,
   connectCliProvider,
@@ -215,7 +218,9 @@ function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): strin
     '--permission-mode',
     getClaudePermissionMode(input.sandbox),
     '--append-system-prompt-file',
-    writeClaudeSystemPromptFile(input)
+    writeClaudeSystemPromptFile(input),
+    '--add-dir',
+    input.agentHomePath
   ]
 
   if (input.providerSessionRef) {
@@ -253,6 +258,8 @@ function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
     '',
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
+    buildAgentPrivateFolderInstructions(input.agentHomePath),
+    '',
     buildConversationOutcomeInstructions()
   ].join('\n')
 }
@@ -271,6 +278,8 @@ function buildClaudeConversationPrompt(input: RuntimeConversationTurnInput): str
 function buildClaudeResumePrompt(input: RuntimeConversationTurnInput): string {
   return [
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
+    buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
     buildConversationOutcomeInstructions(),
     '',

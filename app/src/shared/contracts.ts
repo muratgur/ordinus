@@ -189,14 +189,38 @@ export const AgentSkillSchema = z.object({
   updatedAt: z.string()
 })
 
+export const AgentSkillDetailSchema = AgentSkillSchema.extend({
+  body: z.string()
+})
+
 export const AgentSkillsListInputSchema = z.object({
   agentId: z.string().min(1)
+})
+
+export const AgentSkillGetInputSchema = z.object({
+  agentId: z.string().min(1),
+  skillId: z.string().min(1)
 })
 
 export const AgentSkillCreateInputSchema = z.object({
   agentId: z.string().min(1),
   name: z.string().trim().min(1, 'Skill name is required.').max(80),
-  description: z.string().trim().max(500).optional()
+  description: z.string().trim().max(500).optional(),
+  body: z.string().max(64_000).optional()
+})
+
+export const AgentSkillUpdateInputSchema = z.object({
+  agentId: z.string().min(1),
+  skillId: z.string().min(1),
+  name: z.string().trim().min(1, 'Skill name is required.').max(80),
+  description: z.string().trim().max(500).optional(),
+  body: z.string().max(64_000)
+})
+
+export const AgentSkillDeleteInputSchema = AgentSkillGetInputSchema
+
+export const AgentSkillDeleteResultSchema = z.object({
+  deletedSkillId: z.string().min(1)
 })
 
 export const ConversationModeSchema = z.enum(['direct', 'manual'])
@@ -973,8 +997,13 @@ export type AgentUpdateSettingsInput = z.infer<typeof AgentUpdateSettingsInputSc
 export type AgentDeleteInput = z.infer<typeof AgentDeleteInputSchema>
 export type AgentDeleteResult = z.infer<typeof AgentDeleteResultSchema>
 export type AgentSkill = z.infer<typeof AgentSkillSchema>
+export type AgentSkillDetail = z.infer<typeof AgentSkillDetailSchema>
 export type AgentSkillsListInput = z.infer<typeof AgentSkillsListInputSchema>
+export type AgentSkillGetInput = z.infer<typeof AgentSkillGetInputSchema>
 export type AgentSkillCreateInput = z.infer<typeof AgentSkillCreateInputSchema>
+export type AgentSkillUpdateInput = z.infer<typeof AgentSkillUpdateInputSchema>
+export type AgentSkillDeleteInput = z.infer<typeof AgentSkillDeleteInputSchema>
+export type AgentSkillDeleteResult = z.infer<typeof AgentSkillDeleteResultSchema>
 export type ConversationMode = z.infer<typeof ConversationModeSchema>
 export type ConversationRoutingMode = z.infer<typeof ConversationRoutingModeSchema>
 export type ConversationStatus = z.infer<typeof ConversationStatusSchema>

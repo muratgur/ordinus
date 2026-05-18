@@ -6,6 +6,9 @@ import {
   AgentDraftFromProfileInputSchema,
   AgentDraftFromIntentInputSchema,
   AgentSkillCreateInputSchema,
+  AgentSkillDeleteInputSchema,
+  AgentSkillGetInputSchema,
+  AgentSkillUpdateInputSchema,
   AgentSkillsListInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
@@ -74,8 +77,12 @@ import type { SanitizedInvocationSummary } from '../observability/types'
 import {
   createAgentSkill,
   deleteAgentHome,
+  deleteAgentSkill,
   ensureAgentHome,
-  listAgentSkills
+  getAgentHome,
+  getAgentSkill,
+  listAgentSkills,
+  updateAgentSkill
 } from '../agents/filesystem'
 import {
   buildAgentDraftFromProfile,
@@ -247,10 +254,28 @@ export function registerIpcHandlers(
     requireAgent(database, input.agentId)
     return listAgentSkills(input.agentId)
   })
+  ipcMain.handle(ipcChannels.agentsGetSkill, (_event, payload) => {
+    const input = AgentSkillGetInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return getAgentSkill(input)
+  })
   ipcMain.handle(ipcChannels.agentsCreateSkill, (_event, payload) => {
     const input = AgentSkillCreateInputSchema.parse(payload)
     requireAgent(database, input.agentId)
     return createAgentSkill(input)
+  })
+  ipcMain.handle(ipcChannels.agentsUpdateSkill, (_event, payload) => {
+    const input = AgentSkillUpdateInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return updateAgentSkill(input)
+  })
+  ipcMain.handle(ipcChannels.agentsDeleteSkill, (_event, payload) => {
+    const input = AgentSkillDeleteInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    if (database.hasRunningWorkForAgent(input.agentId)) {
+      throw new Error("Stop this agent's running work before deleting skills.")
+    }
+    return deleteAgentSkill(input)
   })
   ipcMain.handle(ipcChannels.conversationsList, () => database.listConversations())
   ipcMain.handle(ipcChannels.conversationsGet, (_event, payload) => {
@@ -962,6 +987,7 @@ function startPreparedWorkRun(
       sandbox: prepared.run.sandbox,
       workspaceRoot: workspaceContext.workspaceRoot,
       workingRoot: workspaceContext.workingRoot,
+      agentHomePath: getAgentHome(prepared.agent.id),
       agentName: prepared.agent.name,
       agentRole: prepared.agent.role,
       instructions: prepared.agent.instructions,
@@ -1042,6 +1068,8 @@ function buildProviderInvocationSummary(input: {
         getClaudePermissionModeSummary(input.sandbox),
         '--append-system-prompt-file',
         '<run-log>/system-prompt.txt',
+        '--add-dir',
+        '<agent-home>',
         '--name',
         '<agent>'
       ],
@@ -1063,7 +1091,9 @@ function buildProviderInvocationSummary(input: {
       '-C',
       '<workspace>',
       '--output-last-message',
-      '<run-log>/last-message.txt'
+      '<run-log>/last-message.txt',
+      input.providerId === 'gemini' ? '--include-directories' : '--add-dir',
+      '<agent-home>'
     ],
     cwd: input.workspaceRoot,
     startedAt: input.startedAt
@@ -1247,6 +1277,7 @@ function startPreparedConversationTurns(
         sandbox: agentTurn.agent.sandbox,
         workspaceRoot: workspace.workspaceRoot,
         workingRoot: conversation.workingRoot,
+        agentHomePath: getAgentHome(agentTurn.agent.id),
         agentName: agentTurn.agent.name,
         agentRole: agentTurn.agent.role,
         instructions: agentTurn.agent.instructions,

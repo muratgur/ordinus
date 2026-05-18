@@ -34,7 +34,10 @@ import {
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
-import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
+import {
+  buildAgentPrivateFolderInstructions,
+  buildWorkspaceWorkingFolderInstructions
+} from '../../prompts/workspace'
 import {
   addCliModelArg,
   connectCliProvider,
@@ -191,7 +194,9 @@ function buildGeminiConversationArgs(input: RuntimeConversationTurnInput): strin
     '--approval-mode',
     getGeminiApprovalMode(input.sandbox),
     '--output-format',
-    'json'
+    'json',
+    '--include-directories',
+    input.agentHomePath
   ]
 
   if (input.providerSessionRef) {
@@ -227,6 +232,8 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
     '',
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
+    buildAgentPrivateFolderInstructions(input.agentHomePath),
+    '',
     buildConversationOutcomeInstructions(),
     '',
     'User message:',
@@ -237,6 +244,8 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
 function buildGeminiResumePrompt(input: RuntimeConversationTurnInput): string {
   return [
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
+    buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
     buildConversationOutcomeInstructions(),
     '',
