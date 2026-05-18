@@ -8,6 +8,8 @@ import type {
   AgentDraft,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
+  ConnectorActionInput,
+  ConnectorSummary,
   AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
@@ -193,9 +195,7 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.observabilityListConversation, input),
     listEvents: async (input: ObservedRunListEventsInput): Promise<ObservedRunEvent[]> =>
       ipcRenderer.invoke(ipcChannels.observabilityListEvents, input),
-    getDiagnostics: async (
-      input: ObservedRunDiagnosticsInput
-    ): Promise<ObservedRunDiagnostics> =>
+    getDiagnostics: async (input: ObservedRunDiagnosticsInput): Promise<ObservedRunDiagnostics> =>
       ipcRenderer.invoke(ipcChannels.observabilityGetDiagnostics, input),
     onRunChanged: (callback: (snapshot: ObservedRunSnapshot) => void): (() => void) => {
       const listener = (_event: IpcRendererEvent, snapshot: ObservedRunSnapshot): void => {
@@ -214,6 +214,13 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.runtimeDisconnectProvider, input),
     refreshProvider: async (input: ProviderActionInput): Promise<ProviderStatus> =>
       ipcRenderer.invoke(ipcChannels.runtimeRefreshProvider, input)
+  },
+  connectors: {
+    list: async (): Promise<ConnectorSummary[]> => ipcRenderer.invoke(ipcChannels.connectorsList),
+    connect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
+      ipcRenderer.invoke(ipcChannels.connectorsConnect, input),
+    disconnect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
+      ipcRenderer.invoke(ipcChannels.connectorsDisconnect, input)
   }
 }
 

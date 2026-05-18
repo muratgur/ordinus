@@ -622,6 +622,7 @@ export class OrdinusDatabase {
         providerId: parsed.providerId,
         model: parsed.model,
         sandbox: parsed.sandbox,
+        connectors: parsed.connectors,
         enabled: parsed.enabled,
         updatedAt: now
       })

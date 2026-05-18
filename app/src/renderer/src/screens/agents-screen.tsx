@@ -44,6 +44,7 @@ import type {
   AgentProfileCatalog,
   AgentSandbox,
   AgentSkill,
+  ConnectorSummary,
   ProviderId
 } from '@shared/contracts'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
@@ -58,6 +59,7 @@ type SettingsDraft = {
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox
+  connectors: string[]
   enabled: boolean
 }
 
@@ -1232,8 +1234,8 @@ function createSkillEditState(skill: AgentSkill): SkillEditorState {
 }
 
 function upsertSkill(skills: AgentSkill[], skill: AgentSkill): AgentSkill[] {
-  return [...skills.filter((currentSkill) => currentSkill.id !== skill.id), skill].sort((left, right) =>
-    left.name.localeCompare(right.name)
+  return [...skills.filter((currentSkill) => currentSkill.id !== skill.id), skill].sort(
+    (left, right) => left.name.localeCompare(right.name)
   )
 }
 
@@ -1337,7 +1339,9 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
       ...current,
       name: value,
       body:
-        current.mode === 'create' && !current.bodyTouched ? buildDefaultSkillBody(value) : current.body
+        current.mode === 'create' && !current.bodyTouched
+          ? buildDefaultSkillBody(value)
+          : current.body
     }))
   }
 
@@ -1367,7 +1371,7 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
               name: editor.name,
               description: editor.description,
               body: editor.body
-      })
+            })
       setSkills((current) => upsertSkill(current, skill))
       setEditor(createSkillEditorState())
       closeSkillEditor()
@@ -1750,9 +1754,37 @@ function SettingsPanel({
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
+  const [availableConnectors, setAvailableConnectors] = useState<ConnectorSummary[]>([])
   const dirty = isSettingsDirty(draft, savedSettings)
   const nameIssue = getAgentNameIssue(draft.name, savedSettings.name, agents, agent.id)
   const canSave = dirty && Boolean(draft.model.trim()) && !nameIssue && !saving
+
+  useEffect(() => {
+    let active = true
+    window.ordinus.connectors
+      .list()
+      .then((list) => {
+        if (active) {
+          setAvailableConnectors(list)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
+  function toggleConnector(connectorId: string, enabled: boolean): void {
+    setDraft((current) => {
+      const set = new Set(current.connectors)
+      if (enabled) {
+        set.add(connectorId)
+      } else {
+        set.delete(connectorId)
+      }
+      return { ...current, connectors: [...set] }
+    })
+  }
 
   function updateDraft(next: Partial<SettingsDraft>): void {
     setDraft((current) => {
@@ -1855,6 +1887,39 @@ function SettingsPanel({
           onChange={(sandbox) => updateDraft({ sandbox })}
         />
 
+        {/* Connectors */}
+        <div className="space-y-2">
+          <div>
+            <h3 className="text-sm font-semibold leading-tight">Connectors</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              External systems this agent may use. Authorize connections in the Connections screen —
+              an agent can be enabled here before its connection is set up.
+            </p>
+          </div>
+          {availableConnectors.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No connectors available.</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {availableConnectors.map((connector) => (
+                <li
+                  key={connector.id}
+                  className="flex items-center justify-between gap-4 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium">{connector.label}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {connector.connected ? 'Connected' : 'Not connected'}
+                    </span>
+                  </div>
+                  <Switch
+                    checked={draft.connectors.includes(connector.id)}
+                    onCheckedChange={(checked) => toggleConnector(connector.id, checked)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {/* Save bar — sadece dirty'de belirir, içeriğin hemen altında */}
         {dirty ? (
@@ -2023,21 +2088,11 @@ function AgentNameField({
         <span className="text-xs font-medium text-muted-foreground">Agent name</span>
         <label htmlFor={switchId} className="flex cursor-pointer items-center gap-2">
           <span className="text-xs text-muted-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
-          <Switch
-            id={switchId}
-            checked={enabled}
-            onCheckedChange={onEnabledChange}
-          />
+          <Switch id={switchId} checked={enabled} onCheckedChange={onEnabledChange} />
         </label>
       </div>
-      <Input
-        maxLength={80}
-        value={name}
-        onChange={(event) => onNameChange(event.target.value)}
-      />
-      {nameIssue ? (
-        <p className="text-xs text-status-attention">{nameIssue}</p>
-      ) : null}
+      <Input maxLength={80} value={name} onChange={(event) => onNameChange(event.target.value)} />
+      {nameIssue ? <p className="text-xs text-status-attention">{nameIssue}</p> : null}
     </div>
   )
 }
@@ -2185,6 +2240,7 @@ function getPersistedSettingsDraft(agent: Agent): SettingsDraft {
     providerId: agent.providerId,
     model: agent.model,
     sandbox: agent.sandbox,
+    connectors: agent.connectors,
     enabled: agent.enabled
   }
 }
@@ -2203,6 +2259,7 @@ function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): bo
     draft.providerId !== savedSettings.providerId ||
     draft.model !== savedSettings.model ||
     draft.sandbox !== savedSettings.sandbox ||
+    draft.connectors.join(',') !== savedSettings.connectors.join(',') ||
     draft.enabled !== savedSettings.enabled
   )
 }

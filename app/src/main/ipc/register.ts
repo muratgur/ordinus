@@ -14,6 +14,7 @@ import {
   AgentUpdateSettingsInputSchema,
   AgentCreateInputSchema,
   AppInfoSchema,
+  ConnectorActionInputSchema,
   ConversationCancelTurnInputSchema,
   ConversationAnswerInputRequestInputSchema,
   ConversationCancelInputRequestInputSchema,
@@ -90,6 +91,7 @@ import {
   getAgentProfile,
   listAgentProfiles
 } from '../agents/profiles'
+import { connectConnector, disconnectConnector, listConnectors } from '../integrations/service'
 import {
   ensureWorkspaceRelativeDirectory,
   resolveReportedWorkspaceFileRefs,
@@ -496,6 +498,15 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.runtimeRefreshProvider, (_event, payload) => {
     const input = ProviderActionInputSchema.parse(payload)
     return runtime.refreshProvider(input)
+  })
+  ipcMain.handle(ipcChannels.connectorsList, () => listConnectors())
+  ipcMain.handle(ipcChannels.connectorsConnect, (_event, payload) => {
+    const input = ConnectorActionInputSchema.parse(payload)
+    return connectConnector(input.connectorId)
+  })
+  ipcMain.handle(ipcChannels.connectorsDisconnect, (_event, payload) => {
+    const input = ConnectorActionInputSchema.parse(payload)
+    return disconnectConnector(input.connectorId)
   })
 }
 
@@ -991,6 +1002,7 @@ function startPreparedWorkRun(
       agentName: prepared.agent.name,
       agentRole: prepared.agent.role,
       instructions: prepared.agent.instructions,
+      connectors: prepared.agent.connectors,
       providerSessionRef,
       title: prepared.run.title,
       instruction: prepared.run.instruction,
@@ -1281,6 +1293,7 @@ function startPreparedConversationTurns(
         agentName: agentTurn.agent.name,
         agentRole: agentTurn.agent.role,
         instructions: agentTurn.agent.instructions,
+        connectors: agentTurn.agent.connectors,
         providerSessionRef: agentTurn.providerSessionRef,
         message: agentTurn.message,
         logRef,

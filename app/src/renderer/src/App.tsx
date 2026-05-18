@@ -22,6 +22,7 @@ import {
   type WorkboardDraftReviewState
 } from './screens/workboard-draft-review'
 import { SchedulesScreen } from './screens/schedules-screen'
+import { ConnectionsScreen } from './screens/connections-screen'
 import { SetupScreen } from './screens/setup-screen'
 import { SettingsScreen } from './screens/settings-screen'
 
@@ -204,6 +205,7 @@ function App(): React.JSX.Element {
           />
           <Route path={appRoutePaths.conversations} element={<ConversationsScreen />} />
           <Route path={appRoutePaths.schedules} element={<SchedulesScreen />} />
+          <Route path={appRoutePaths.connections} element={<ConnectionsScreen />} />
           <Route
             path={appRoutePaths.settings}
             element={

@@ -4,6 +4,8 @@ import type {
   AgentDeleteInput,
   AgentDeleteResult,
   AgentDraft,
+  ConnectorActionInput,
+  ConnectorSummary,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentProfileCatalog,
@@ -140,6 +142,11 @@ export type OrdinusApi = {
     connectProvider: (input: ProviderConnectInput) => Promise<ProviderConnectResult>
     disconnectProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
     refreshProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
+  }
+  connectors: {
+    list: () => Promise<ConnectorSummary[]>
+    connect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
+    disconnect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
   }
 }
 

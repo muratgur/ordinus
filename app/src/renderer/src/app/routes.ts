@@ -1,4 +1,12 @@
-import { Bot, CalendarClock, Columns3, House, MessageSquareText, Settings } from 'lucide-react'
+import {
+  Bot,
+  CalendarClock,
+  Columns3,
+  House,
+  MessageSquareText,
+  Plug,
+  Settings
+} from 'lucide-react'
 
 export const appRoutePaths = {
   home: '/home',
@@ -6,6 +14,7 @@ export const appRoutePaths = {
   workboard: '/workboard',
   conversations: '/conversations',
   schedules: '/schedules',
+  connections: '/connections',
   settings: '/settings'
 } as const
 
@@ -37,6 +46,12 @@ export const appNavigation = [
     label: 'Schedules',
     path: appRoutePaths.schedules,
     icon: CalendarClock
+  },
+  {
+    id: 'connections',
+    label: 'Connections',
+    path: appRoutePaths.connections,
+    icon: Plug
   }
 ] satisfies Array<{
   id: Exclude<AppRouteId, 'settings'>

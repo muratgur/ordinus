@@ -64,6 +64,7 @@ export function buildAgentDraftFromProfile(
     providerId: defaults.providerId,
     model: defaults.model,
     sandbox: 'workspace-write',
+    connectors: profile.suggestedConnectors,
     enabled: true
   }
 }
@@ -103,6 +104,7 @@ export function buildBlankAgentDraft(defaults: ProfileDraftDefaults): AgentDraft
     providerId: defaults.providerId,
     model: defaults.model,
     sandbox: 'workspace-write',
+    connectors: [],
     enabled: true
   }
 }
@@ -128,6 +130,7 @@ function readProfileFile(categoryRoot: string, category: string, fileName: strin
     summary: parsed.frontmatter.summary,
     tags: parsed.frontmatter.tags ?? [],
     recommended: parsed.frontmatter.recommended ?? false,
+    suggestedConnectors: parsed.frontmatter.suggestedConnectors ?? [],
     instructions: parsed.body.trim()
   })
 }

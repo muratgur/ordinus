@@ -18,6 +18,7 @@ import { extractJsonObject, firstLine, isRecord, parseJsonFromCliOutput } from '
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
+import { materializeConnectors } from '../../../integrations/materialize'
 import {
   AgentDraftOutputSchema,
   agentDraftOutputJsonSchema,
@@ -157,57 +158,71 @@ async function sendClaudeConversationTurn(
     throw new Error('Claude needs login before this conversation can run.')
   }
 
-  const args = buildClaudeConversationArgs(input)
-  const prompt = input.providerSessionRef
-    ? buildClaudeResumePrompt(input)
-    : buildClaudeConversationPrompt(input)
-  const result = await runConversationProcess({
-    executable,
-    args,
-    input,
-    context,
-    env: getClaudeEnvironment(),
-    stdin: prompt,
-    streamErrorMessage: 'Claude process streams could not be opened.',
-    observeStdoutLine: observeClaudeStdoutLine
-  })
+  const materialized = await materializeConnectors(input.connectors, input.agentHomePath)
 
-  if (result.cancelled) {
-    throw new Error('Conversation turn was cancelled.')
-  }
-
-  if (result.code !== 0) {
-    const message = readCliFailureMessage({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      jsonFallbackKeys: ['result', 'message'],
-      defaultMessage: 'Claude conversation turn failed.'
+  try {
+    const args = buildClaudeConversationArgs(
+      input,
+      materialized.mcpConfigPath,
+      materialized.allowedTools
+    )
+    const prompt = input.providerSessionRef
+      ? buildClaudeResumePrompt(input)
+      : buildClaudeConversationPrompt(input)
+    const result = await runConversationProcess({
+      executable,
+      args,
+      input,
+      context,
+      env: getClaudeEnvironment(),
+      stdin: prompt,
+      streamErrorMessage: 'Claude process streams could not be opened.',
+      observeStdoutLine: observeClaudeStdoutLine
     })
 
-    if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
-      throw new ProviderSessionInvalidError(message)
+    if (result.cancelled) {
+      throw new Error('Conversation turn was cancelled.')
     }
 
-    throw new Error(message)
-  }
+    if (result.code !== 0) {
+      const message = readCliFailureMessage({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        jsonFallbackKeys: ['result', 'message'],
+        defaultMessage: 'Claude conversation turn failed.'
+      })
 
-  const parsed = readClaudeConversationOutput(result.stdout)
-  const providerSessionRef = parsed.sessionId || input.providerSessionRef || ''
+      if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
+        throw new ProviderSessionInvalidError(message)
+      }
 
-  if (!providerSessionRef) {
-    throw new Error('Claude did not provide a session reference for this conversation.')
-  }
+      throw new Error(message)
+    }
 
-  writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
+    const parsed = readClaudeConversationOutput(result.stdout)
+    const providerSessionRef = parsed.sessionId || input.providerSessionRef || ''
 
-  return {
-    providerSessionRef,
-    outcome: parseAgentTurnOutcome(readClaudeLastMessage(input.lastMessagePath)),
-    logRef: input.logRef
+    if (!providerSessionRef) {
+      throw new Error('Claude did not provide a session reference for this conversation.')
+    }
+
+    writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
+
+    return {
+      providerSessionRef,
+      outcome: parseAgentTurnOutcome(readClaudeLastMessage(input.lastMessagePath)),
+      logRef: input.logRef
+    }
+  } finally {
+    materialized.cleanup()
   }
 }
 
-function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): string[] {
+function buildClaudeConversationArgs(
+  input: RuntimeConversationTurnInput,
+  mcpConfigPath: string | null,
+  allowedTools: string[]
+): string[] {
   const args = [
     '-p',
     '--output-format',
@@ -222,6 +237,14 @@ function buildClaudeConversationArgs(input: RuntimeConversationTurnInput): strin
     '--add-dir',
     input.agentHomePath
   ]
+
+  if (mcpConfigPath) {
+    args.push('--mcp-config', mcpConfigPath)
+  }
+
+  if (allowedTools.length > 0) {
+    args.push('--allowedTools', allowedTools.join(','))
+  }
 
   if (input.providerSessionRef) {
     args.push('--resume', input.providerSessionRef)
