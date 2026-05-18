@@ -11,7 +11,12 @@ import type {
   AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
+  AgentSkillDeleteInput,
+  AgentSkillDeleteResult,
+  AgentSkillDetail,
+  AgentSkillGetInput,
   AgentSkillsListInput,
+  AgentSkillUpdateInput,
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
@@ -105,8 +110,14 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.agentsDelete, input),
     listSkills: async (input: AgentSkillsListInput): Promise<AgentSkill[]> =>
       ipcRenderer.invoke(ipcChannels.agentsListSkills, input),
+    getSkill: async (input: AgentSkillGetInput): Promise<AgentSkillDetail> =>
+      ipcRenderer.invoke(ipcChannels.agentsGetSkill, input),
     createSkill: async (input: AgentSkillCreateInput): Promise<AgentSkill> =>
-      ipcRenderer.invoke(ipcChannels.agentsCreateSkill, input)
+      ipcRenderer.invoke(ipcChannels.agentsCreateSkill, input),
+    updateSkill: async (input: AgentSkillUpdateInput): Promise<AgentSkill> =>
+      ipcRenderer.invoke(ipcChannels.agentsUpdateSkill, input),
+    deleteSkill: async (input: AgentSkillDeleteInput): Promise<AgentSkillDeleteResult> =>
+      ipcRenderer.invoke(ipcChannels.agentsDeleteSkill, input)
   },
   conversations: {
     list: async (): Promise<ConversationListItem[]> =>

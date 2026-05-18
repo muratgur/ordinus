@@ -51,6 +51,7 @@ export type RuntimeConversationTurnInput = {
   sandbox: AgentSandbox
   workspaceRoot: string
   workingRoot: string
+  agentHomePath: string
   agentName: string
   agentRole: string
   instructions: string
@@ -76,6 +77,7 @@ export type RuntimeWorkRunInput = {
   sandbox: AgentSandbox
   workspaceRoot: string
   workingRoot: string
+  agentHomePath: string
   agentName: string
   agentRole: string
   instructions: string

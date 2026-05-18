@@ -1178,14 +1178,77 @@ function ReviewAgentStep({
   )
 }
 
+type SkillEditorMode = 'create' | 'edit'
+type SkillEditorState = {
+  mode: SkillEditorMode
+  skillId: string
+  name: string
+  description: string
+  body: string
+  bodyTouched: boolean
+}
+
+function buildDefaultSkillBody(name: string): string {
+  const title = name.trim() || 'New skill'
+
+  return [
+    `# ${title}`,
+    '',
+    '## When To Use',
+    '',
+    '- Use this skill when ...',
+    '',
+    '## Workflow',
+    '',
+    '1. ...',
+    '2. ...',
+    '3. ...',
+    '',
+    '## Boundaries',
+    '',
+    '- Do not use this skill when ...'
+  ].join('\n')
+}
+
+function createSkillEditorState(): SkillEditorState {
+  return {
+    mode: 'create',
+    skillId: '',
+    name: '',
+    description: '',
+    body: buildDefaultSkillBody(''),
+    bodyTouched: false
+  }
+}
+
+function createSkillEditState(skill: AgentSkill): SkillEditorState {
+  return {
+    mode: 'edit',
+    skillId: skill.id,
+    name: skill.name,
+    description: skill.description,
+    body: '',
+    bodyTouched: false
+  }
+}
+
+function upsertSkill(skills: AgentSkill[], skill: AgentSkill): AgentSkill[] {
+  return [...skills.filter((currentSkill) => currentSkill.id !== skill.id), skill].sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )
+}
+
 function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
   const [skills, setSkills] = useState<AgentSkill[]>([])
   const [loading, setLoading] = useState(true)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [skillName, setSkillName] = useState('')
-  const [skillDescription, setSkillDescription] = useState('')
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editor, setEditor] = useState<SkillEditorState>(() => createSkillEditorState())
+  const [loadingSkill, setLoadingSkill] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [error, setError] = useState('')
+  const skillLoadRequestRef = useRef(0)
 
   useEffect(() => {
     let mounted = true
@@ -1216,29 +1279,124 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
     }
   }, [agent.id])
 
-  async function handleCreateSkill(): Promise<void> {
-    if (!skillName.trim() || saving) {
+  function openCreateSkill(): void {
+    skillLoadRequestRef.current += 1
+    setEditor(createSkillEditorState())
+    setLoadingSkill(false)
+    setDeleteOpen(false)
+    setError('')
+    setEditorOpen(true)
+  }
+
+  async function openEditSkill(skill: AgentSkill): Promise<void> {
+    const requestId = skillLoadRequestRef.current + 1
+    skillLoadRequestRef.current = requestId
+    setEditor(createSkillEditState(skill))
+    setDeleteOpen(false)
+    setLoadingSkill(true)
+    setError('')
+    setEditorOpen(true)
+
+    try {
+      const detail = await window.ordinus.agents.getSkill({
+        agentId: agent.id,
+        skillId: skill.id
+      })
+      if (skillLoadRequestRef.current !== requestId) {
+        return
+      }
+      setEditor({
+        mode: 'edit',
+        skillId: detail.id,
+        name: detail.name,
+        description: detail.description,
+        body: detail.body,
+        bodyTouched: false
+      })
+    } catch (loadError) {
+      if (skillLoadRequestRef.current !== requestId) {
+        return
+      }
+      setError(getErrorMessage(loadError, 'Skill could not be opened.'))
+      setEditorOpen(false)
+    } finally {
+      if (skillLoadRequestRef.current === requestId) {
+        setLoadingSkill(false)
+      }
+    }
+  }
+
+  function closeSkillEditor(): void {
+    skillLoadRequestRef.current += 1
+    setEditorOpen(false)
+    setDeleteOpen(false)
+    setLoadingSkill(false)
+  }
+
+  function handleSkillNameChange(value: string): void {
+    setEditor((current) => ({
+      ...current,
+      name: value,
+      body:
+        current.mode === 'create' && !current.bodyTouched ? buildDefaultSkillBody(value) : current.body
+    }))
+  }
+
+  function handleSkillBodyChange(value: string): void {
+    setEditor((current) => ({ ...current, body: value, bodyTouched: true }))
+  }
+
+  async function handleSaveSkill(): Promise<void> {
+    if (!editor.name.trim() || saving || deleting) {
       return
     }
 
     try {
       setSaving(true)
       setError('')
-      const skill = await window.ordinus.agents.createSkill({
-        agentId: agent.id,
-        name: skillName,
-        description: skillDescription
+      const skill =
+        editor.mode === 'create'
+          ? await window.ordinus.agents.createSkill({
+              agentId: agent.id,
+              name: editor.name,
+              description: editor.description,
+              body: editor.body
+            })
+          : await window.ordinus.agents.updateSkill({
+              agentId: agent.id,
+              skillId: editor.skillId,
+              name: editor.name,
+              description: editor.description,
+              body: editor.body
       })
-      setSkills((current) =>
-        [...current, skill].sort((left, right) => left.name.localeCompare(right.name))
-      )
-      setSkillName('')
-      setSkillDescription('')
-      setCreateOpen(false)
-    } catch (createError) {
-      setError(getErrorMessage(createError, 'Skill could not be created.'))
+      setSkills((current) => upsertSkill(current, skill))
+      setEditor(createSkillEditorState())
+      closeSkillEditor()
+    } catch (saveError) {
+      setError(getErrorMessage(saveError, 'Skill could not be saved.'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleDeleteSkill(): Promise<void> {
+    if (editor.mode !== 'edit' || deleting || saving || loadingSkill) {
+      return
+    }
+
+    try {
+      setDeleting(true)
+      setError('')
+      const result = await window.ordinus.agents.deleteSkill({
+        agentId: agent.id,
+        skillId: editor.skillId
+      })
+      setSkills((current) => current.filter((skill) => skill.id !== result.deletedSkillId))
+      closeSkillEditor()
+    } catch (deleteError) {
+      setError(getErrorMessage(deleteError, 'Skill could not be deleted.'))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -1250,7 +1408,7 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
           variant="outline"
           size="sm"
           className="h-8 px-2.5 text-xs"
-          onClick={() => setCreateOpen(true)}
+          onClick={openCreateSkill}
         >
           <Plus />
           Create skill
@@ -1266,7 +1424,12 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
       {skills.length > 0 ? (
         <div className="grid gap-2">
           {skills.map((skill) => (
-            <div key={skill.id} className="grid gap-2 rounded-lg border bg-card p-4">
+            <button
+              key={skill.id}
+              type="button"
+              className="grid gap-2 rounded-lg border bg-card p-4 text-left transition-colors hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              onClick={() => void openEditSkill(skill)}
+            >
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{skill.name}</p>
@@ -1281,7 +1444,7 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
               {skill.description ? (
                 <p className="text-sm text-muted-foreground">{skill.description}</p>
               ) : null}
-            </div>
+            </button>
           ))}
         </div>
       ) : (
@@ -1296,51 +1459,172 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
         />
       )}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Create skill</DialogTitle>
-            <DialogDescription>Add a SKILL.md file to this agent skill folder.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3">
-            <FormField label="Skill name">
-              <Input
-                value={skillName}
-                onChange={(event) => setSkillName(event.target.value)}
-                placeholder="Strategy review"
-              />
-            </FormField>
-            <label className="grid gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Description</span>
-              <textarea
-                className="ordinus-scrollbar min-h-28 resize-y rounded-lg border bg-card p-3 text-sm leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                value={skillDescription}
-                onChange={(event) => setSkillDescription(event.target.value)}
-                placeholder="When should this skill be used?"
-              />
-            </label>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={saving}
-              onClick={() => setCreateOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={!skillName.trim() || saving}
-              onClick={() => void handleCreateSkill()}
-            >
-              {saving ? <Loader2 className="animate-spin" /> : null}
-              Create skill
-            </Button>
-          </DialogFooter>
-        </DialogContent>
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeSkillEditor()
+            return
+          }
+          setEditorOpen(true)
+        }}
+      >
+        <SkillEditorDialog
+          deleting={deleting}
+          editor={editor}
+          loadingSkill={loadingSkill}
+          saving={saving}
+          onBodyChange={handleSkillBodyChange}
+          onCancel={closeSkillEditor}
+          onDelete={() => setDeleteOpen(true)}
+          onDescriptionChange={(description) =>
+            setEditor((current) => ({ ...current, description }))
+          }
+          onNameChange={handleSkillNameChange}
+          onSave={() => void handleSaveSkill()}
+        />
       </Dialog>
+      <DeleteSkillDialog
+        deleting={deleting}
+        open={deleteOpen}
+        skillName={editor.name}
+        onDelete={() => void handleDeleteSkill()}
+        onOpenChange={setDeleteOpen}
+      />
     </div>
+  )
+}
+
+function SkillEditorDialog({
+  deleting,
+  editor,
+  loadingSkill,
+  saving,
+  onBodyChange,
+  onCancel,
+  onDelete,
+  onDescriptionChange,
+  onNameChange,
+  onSave
+}: {
+  deleting: boolean
+  editor: SkillEditorState
+  loadingSkill: boolean
+  saving: boolean
+  onBodyChange: (body: string) => void
+  onCancel: () => void
+  onDelete: () => void
+  onDescriptionChange: (description: string) => void
+  onNameChange: (name: string) => void
+  onSave: () => void
+}): React.JSX.Element {
+  const disabled = saving || deleting || loadingSkill
+
+  return (
+    <DialogContent className="max-w-3xl">
+      <DialogHeader>
+        <DialogTitle>{editor.mode === 'create' ? 'Create skill' : 'Edit skill'}</DialogTitle>
+        <DialogDescription>
+          Save frontmatter and instructions to this agent&apos;s SKILL.md file.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-3">
+        <FormField label="Skill name">
+          <Input
+            value={editor.name}
+            onChange={(event) => onNameChange(event.target.value)}
+            placeholder="Strategy review"
+            disabled={loadingSkill}
+          />
+        </FormField>
+        <label className="grid gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Description</span>
+          <textarea
+            className="ordinus-scrollbar min-h-28 resize-y rounded-lg border bg-card p-3 text-sm leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            value={editor.description}
+            onChange={(event) => onDescriptionChange(event.target.value)}
+            placeholder="When should this skill be used?"
+            disabled={loadingSkill}
+          />
+        </label>
+        <label className="grid gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Skill instructions</span>
+          <textarea
+            className="ordinus-scrollbar min-h-80 resize-y rounded-lg border bg-card p-3 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            value={loadingSkill ? 'Loading skill...' : editor.body}
+            onChange={(event) => onBodyChange(event.target.value)}
+            placeholder="# Skill name"
+            disabled={loadingSkill}
+          />
+        </label>
+      </div>
+      <DialogFooter>
+        {editor.mode === 'edit' ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled}
+            className="mr-auto border-status-attention/40 text-status-attention hover:bg-status-attention/10"
+            onClick={onDelete}
+          >
+            <Trash2 />
+            Delete skill
+          </Button>
+        ) : null}
+        <Button type="button" variant="ghost" disabled={disabled} onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" disabled={!editor.name.trim() || disabled} onClick={onSave}>
+          {saving ? <Loader2 className="animate-spin" /> : null}
+          {editor.mode === 'create' ? 'Create skill' : 'Save skill'}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  )
+}
+
+function DeleteSkillDialog({
+  deleting,
+  open,
+  skillName,
+  onDelete,
+  onOpenChange
+}: {
+  deleting: boolean
+  open: boolean
+  skillName: string
+  onDelete: () => void
+  onOpenChange: (open: boolean) => void
+}): React.JSX.Element {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-status-attention" />
+            Delete skill
+          </DialogTitle>
+          <DialogDescription>
+            This removes {skillName || 'this skill'} and its entire skill folder. This cannot be
+            undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={deleting}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" disabled={deleting} onClick={onDelete}>
+            {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            Delete permanently
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1358,8 +1642,6 @@ function InstructionsPanel({
   const [error, setError] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const dirty = instructions !== savedInstructions
-
   // Revert target — son kaydedilen, session boyunca tutulur
   const revertTargetRef = useRef<string>(savedInstructions)
 
@@ -1809,7 +2091,6 @@ function SandboxField({
   value: AgentSandbox
   onChange: (value: AgentSandbox) => void
 }): React.JSX.Element {
-  const selected = sandboxOptions.find((o) => o.value === value) ?? sandboxOptions[0]
   const isFullAccess = value === 'full-access'
 
   return (

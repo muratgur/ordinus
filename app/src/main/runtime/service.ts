@@ -178,6 +178,7 @@ export function createRuntimeService(): RuntimeService {
           sandbox: input.sandbox,
           workspaceRoot: input.workspaceRoot,
           workingRoot: input.workingRoot,
+          agentHomePath: input.agentHomePath,
           agentName: input.agentName,
           agentRole: input.agentRole,
           instructions: input.instructions,

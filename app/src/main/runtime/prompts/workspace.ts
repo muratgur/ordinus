@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 const markdownDocumentPolicy = [
   'Markdown document policy:',
   '- For new user-facing Markdown documents you create, start the file with short, human-readable YAML frontmatter.',
@@ -20,5 +22,22 @@ export function buildWorkspaceWorkingFolderInstructions(workingRoot: string): st
     '- Report created or modified files as workspace-relative paths only.',
     '- Do not report absolute paths or paths with "..".',
     ...markdownDocumentPolicy
+  ].join('\n')
+}
+
+export function buildAgentPrivateFolderInstructions(agentHomePath: string): string {
+  const skillsPath = join(agentHomePath, 'skills')
+
+  return [
+    'Agent private folder policy:',
+    `- Agent private folder: ${agentHomePath}`,
+    `- Agent skills folder: ${skillsPath}`,
+    '- Before answering each turn, check whether the skills folder exists.',
+    '- If it exists, inspect immediate child skill folders and read each SKILL.md frontmatter.',
+    '- Do not assume no skill applies until you have checked the available skill frontmatter.',
+    '- If a skill description matches the current user request or needed context, read that full SKILL.md before answering.',
+    '- Use only skills that match the current task.',
+    '- Do not ask the user to provide information that is already available in a matching skill.',
+    '- Files in the agent private folder are not workspace artifacts. Do not report them as created or modified workspace files.'
   ].join('\n')
 }

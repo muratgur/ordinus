@@ -37,7 +37,10 @@ import {
   buildConversationOutcomeInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
-import { buildWorkspaceWorkingFolderInstructions } from '../../prompts/workspace'
+import {
+  buildAgentPrivateFolderInstructions,
+  buildWorkspaceWorkingFolderInstructions
+} from '../../prompts/workspace'
 import {
   addCliModelArg,
   connectCliProvider,
@@ -175,6 +178,8 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
       input.sandbox,
       '-C',
       input.workspaceRoot,
+      '--add-dir',
+      input.agentHomePath,
       'resume',
       input.providerSessionRef,
       '-',
@@ -199,6 +204,8 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     input.sandbox,
     '-C',
     input.workspaceRoot,
+    '--add-dir',
+    input.agentHomePath,
     '--output-schema',
     schemaPath,
     '--output-last-message',
@@ -220,6 +227,8 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
     '',
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
+    buildAgentPrivateFolderInstructions(input.agentHomePath),
+    '',
     buildConversationOutcomeInstructions(),
     '',
     'User message:',
@@ -230,6 +239,8 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
 function buildCodexResumePrompt(input: RuntimeConversationTurnInput): string {
   return [
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
+    '',
+    buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
     buildConversationOutcomeInstructions(),
     '',

@@ -9,7 +9,12 @@ import type {
   AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
+  AgentSkillDeleteInput,
+  AgentSkillDeleteResult,
+  AgentSkillDetail,
+  AgentSkillGetInput,
   AgentSkillsListInput,
+  AgentSkillUpdateInput,
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
@@ -89,7 +94,10 @@ export type OrdinusApi = {
     updateSettings: (input: AgentUpdateSettingsInput) => Promise<Agent>
     delete: (input: AgentDeleteInput) => Promise<AgentDeleteResult>
     listSkills: (input: AgentSkillsListInput) => Promise<AgentSkill[]>
+    getSkill: (input: AgentSkillGetInput) => Promise<AgentSkillDetail>
     createSkill: (input: AgentSkillCreateInput) => Promise<AgentSkill>
+    updateSkill: (input: AgentSkillUpdateInput) => Promise<AgentSkill>
+    deleteSkill: (input: AgentSkillDeleteInput) => Promise<AgentSkillDeleteResult>
   }
   conversations: {
     list: () => Promise<ConversationListItem[]>
