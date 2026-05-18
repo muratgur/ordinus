@@ -103,10 +103,10 @@ The first implementation started with Datadog over `mcp-http` + OAuth and a
 Claude `--mcp-config` materialization path, establishing the registry / vault /
 oauth-broker / materialize skeleton. The implementation has since expanded to
 multiple OAuth MCP connectors in the static catalog (`datadog`, `linear`,
-`notion`, and `canva`) and provider-specific materialization for Claude, Codex,
-and Gemini. Other transports (`api-key`, `mcp-stdio`, direct `api`) should
-follow the same broker/vault/materialization model before they are exposed to
-agents.
+`notion`, `canva`, and `atlassian`) and provider-specific materialization for
+Claude, Codex, and Gemini. Other transports (`api-key`, `mcp-stdio`, direct
+`api`) should follow the same broker/vault/materialization model before they
+are exposed to agents.
 
 OAuth follows the MCP authorization spec rather than a manually configured
 client: at connect time Ordinus discovers the protected-resource and
