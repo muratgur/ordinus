@@ -163,6 +163,7 @@ export const AgentUpdateInstructionsInputSchema = z.object({
 export const AgentUpdateSettingsInputSchema = z.object({
   id: z.string().min(1),
   name: z.string().trim().min(1, 'Agent name is required.').max(80),
+  role: z.string().trim().min(1, 'Role is required.').max(120),
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,

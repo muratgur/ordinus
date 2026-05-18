@@ -618,6 +618,7 @@ export class OrdinusDatabase {
       .update(agents)
       .set({
         name: parsed.name,
+        role: parsed.role,
         providerId: parsed.providerId,
         model: parsed.model,
         sandbox: parsed.sandbox,
