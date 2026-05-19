@@ -2095,7 +2095,7 @@ function SettingsPanel({
             <div>
               <h3 className="text-sm font-semibold leading-tight">Connectors</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                External systems this agent may use. Authorize connections in the Connections screen
+                External systems this agent may use. Authorize connections in Settings → Connections
                 — an agent can be enabled here before its connection is set up.
               </p>
             </div>
