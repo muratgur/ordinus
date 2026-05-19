@@ -1,0 +1,4 @@
+interface:
+  display_name: "IPC Contract Design"
+  short_description: "Design small typed window.ordinus IPC contracts"
+  default_prompt: "Use this skill when adding or changing IPC channels, preload methods, shared contracts, Zod schemas, main handlers, or renderer calls into main process."

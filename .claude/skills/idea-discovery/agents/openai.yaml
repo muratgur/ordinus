@@ -1,0 +1,4 @@
+interface:
+  display_name: "Idea Discovery"
+  short_description: "Explore ideas before ADRs or implementation"
+  default_prompt: "Use $idea-discovery to explore this product or technical idea before deciding what to build."

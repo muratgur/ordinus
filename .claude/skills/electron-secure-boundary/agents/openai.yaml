@@ -1,0 +1,4 @@
+interface:
+  display_name: "Electron Secure Boundary"
+  short_description: "Preserve Ordinus main/preload/renderer security boundaries"
+  default_prompt: "Use this skill when changing Electron security settings, preload APIs, renderer privileges, or any code that touches filesystem, database, process execution, or OS access."
