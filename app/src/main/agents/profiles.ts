@@ -60,6 +60,7 @@ export function buildAgentDraftFromProfile(
     requestedWork: `Create an agent from the ${profile.name} profile.`,
     name: defaults.makeUniqueName(profile.name),
     role: profile.role,
+    capabilities: profile.capabilities,
     instructions: profile.instructions,
     providerId: defaults.providerId,
     model: defaults.model,
@@ -76,6 +77,7 @@ export function buildBlankAgentDraft(defaults: ProfileDraftDefaults): AgentDraft
     requestedWork: 'Create a custom agent from a blank draft.',
     name,
     role: 'Custom agent',
+    capabilities: '',
     instructions: renderAgentProfileInstructions({
       name,
       sections: {
@@ -127,6 +129,7 @@ function readProfileFile(categoryRoot: string, category: string, fileName: strin
     category: parsed.frontmatter.category ?? category,
     name: parsed.frontmatter.name,
     role: parsed.frontmatter.role,
+    capabilities: parsed.frontmatter.capabilities ?? '',
     summary: parsed.frontmatter.summary,
     tags: parsed.frontmatter.tags ?? [],
     recommended: parsed.frontmatter.recommended ?? false,

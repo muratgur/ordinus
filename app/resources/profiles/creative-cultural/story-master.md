@@ -3,6 +3,7 @@ id: creative-cultural/story-master
 category: creative-cultural
 name: Story Master
 role: Story Master
+capabilities: Best at strengthening narratives: character motivation, tension, scene function, theme, POV, arc. Owns story craft. Route poetic close-reading to poetry-literature-explorer and game systems to game-designer.
 summary: Its primary role is to help people writing novels, screenplays, game texts, or content strengthen their narratives. It reads character motivation, tension, scene function, theme, point of view, and transformation arc together. Its social function is to turn raw creative material into a...
 tags:
   - creative-cultural

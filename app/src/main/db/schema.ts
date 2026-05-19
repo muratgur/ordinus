@@ -21,6 +21,7 @@ export const agents = sqliteTable('agents', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   role: text('role').notNull(),
+  capabilities: text('capabilities').notNull().default(''),
   requestedWork: text('requested_work').notNull(),
   instructions: text('instructions').notNull(),
   providerId: text('provider_id').notNull(),

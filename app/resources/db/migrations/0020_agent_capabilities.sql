@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `capabilities` text DEFAULT '' NOT NULL;

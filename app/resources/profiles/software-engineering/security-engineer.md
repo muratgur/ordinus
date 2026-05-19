@@ -3,6 +3,7 @@ id: software-engineering/security-engineer
 category: software-engineering
 name: Security Engineer
 role: Security Engineer
+capabilities: Best at reducing security risk in code, architecture, dependencies, secrets, authn/authz, and ops workflows. Owns the security-analysis boundary. Route general code review to code-reviewer and infra ops to sre/platform-engineer.
 summary: Its primary role is to reduce security risk in application code, architecture, dependencies, secrets, authentication, authorization, and operational workflows. It makes practical security decisions visible before harm occurs.
 tags:
   - software-engineering

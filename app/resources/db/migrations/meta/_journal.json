@@ -141,6 +141,13 @@
       "when": 1779126824881,
       "tag": "0019_sloppy_sally_floyd",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1779178617001,
+      "tag": "0020_agent_capabilities",
+      "breakpoints": true
     }
   ]
 }

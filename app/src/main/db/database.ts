@@ -619,6 +619,7 @@ export class OrdinusDatabase {
       .set({
         name: parsed.name,
         role: parsed.role,
+        capabilities: parsed.capabilities,
         providerId: parsed.providerId,
         model: parsed.model,
         sandbox: parsed.sandbox,

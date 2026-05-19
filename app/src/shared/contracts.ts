@@ -115,10 +115,17 @@ export const SetupStatusSchema = z.object({
   providers: z.array(ProviderStatusSchema)
 })
 
+export const AgentCapabilitiesSchema = z
+  .string()
+  .trim()
+  .max(300, 'Capabilities must be 300 characters or fewer.')
+  .default('')
+
 export const AgentSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   role: z.string().min(1),
+  capabilities: AgentCapabilitiesSchema,
   requestedWork: z.string().min(1),
   instructions: z.string().min(1),
   providerId: ProviderIdSchema,
@@ -146,6 +153,7 @@ export const AgentProfileSchema = z.object({
   category: z.string().min(1),
   name: z.string().min(1).max(80),
   role: z.string().min(1).max(120),
+  capabilities: AgentCapabilitiesSchema,
   summary: z.string().min(1).max(300),
   tags: z.array(z.string().min(1).max(40)).default([]),
   recommended: z.boolean().default(false),
@@ -172,6 +180,7 @@ export const AgentDraftSchema = z.object({
   requestedWork: z.string().min(1),
   name: z.string().min(1).max(80),
   role: z.string().min(1).max(120),
+  capabilities: AgentCapabilitiesSchema,
   instructions: z.string().min(1),
   providerId: ProviderIdSchema,
   model: z.string().min(1),
@@ -191,6 +200,7 @@ export const AgentUpdateSettingsInputSchema = z.object({
   id: z.string().min(1),
   name: z.string().trim().min(1, 'Agent name is required.').max(80),
   role: z.string().trim().min(1, 'Role is required.').max(120),
+  capabilities: AgentCapabilitiesSchema,
   providerId: ProviderIdSchema,
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
