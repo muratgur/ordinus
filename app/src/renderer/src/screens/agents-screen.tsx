@@ -56,6 +56,7 @@ type ReviewBackStep = 'catalog' | 'describe'
 type SettingsDraft = {
   name: string
   role: string
+  capabilities: string
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox
@@ -381,6 +382,7 @@ function CreateAgentDialog({
   const [intent, setIntent] = useState('')
   const [draft, setDraft] = useState<AgentDraft | null>(null)
   const [busy, setBusy] = useState(false)
+  const [improvingCapabilities, setImprovingCapabilities] = useState(false)
   const [error, setError] = useState('')
   const canDraft = intent.trim().length >= 12 && !busy
   const nameIssue = draft ? getAgentNameIssue(draft.name, '', agents, '') : null
@@ -510,6 +512,31 @@ function CreateAgentDialog({
     updateDraft({ providerId, model: getDefaultModelForProvider(providerId) })
   }
 
+  async function handleImproveCapabilities(): Promise<void> {
+    if (!draft || improvingCapabilities) {
+      return
+    }
+
+    const source = draft.instructions.trim()
+    if (source.length < 12) {
+      return
+    }
+
+    try {
+      setImprovingCapabilities(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftFromIntent({
+        requestedWork: source,
+        sandbox: draft.sandbox
+      })
+      updateDraft({ capabilities: nextDraft.capabilities })
+    } catch (improveError) {
+      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
+    } finally {
+      setImprovingCapabilities(false)
+    }
+  }
+
   async function handleCreateAgent(): Promise<void> {
     if (!draft || !canCreate) {
       return
@@ -586,7 +613,9 @@ function CreateAgentDialog({
             draft={draft}
             error={error}
             nameIssue={nameIssue}
+            improvingCapabilities={improvingCapabilities}
             onDraftChange={updateDraft}
+            onImproveCapabilities={() => void handleImproveCapabilities()}
             onProviderChange={handleProviderChange}
           />
         ) : null}
@@ -1067,17 +1096,73 @@ function AgentBriefGuide(): React.JSX.Element {
   )
 }
 
+const CAPABILITIES_MAX_LENGTH = 300
+
+function CapabilitiesField({
+  value,
+  onChange,
+  onImprove,
+  improving,
+  canImprove
+}: {
+  value: string
+  onChange: (value: string) => void
+  onImprove: () => void
+  improving: boolean
+  canImprove: boolean
+}): React.JSX.Element {
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">Capabilities</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-xs"
+          disabled={improving || !canImprove}
+          onClick={onImprove}
+        >
+          {improving ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <WandSparkles className="size-3.5" />
+          )}
+          Improve with AI
+        </Button>
+      </div>
+      <textarea
+        className="ordinus-scrollbar min-h-20 resize-y rounded-lg border bg-card p-3 text-sm leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        maxLength={CAPABILITIES_MAX_LENGTH}
+        placeholder="What this agent is best at, the capability or connector boundary it owns, and when to route work to another agent."
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <p className="flex items-center justify-between gap-3 text-xs leading-5 text-muted-foreground">
+        <span>Used by the planner to assign work to the right specialist.</span>
+        <span className="shrink-0 tabular-nums">
+          {value.length}/{CAPABILITIES_MAX_LENGTH}
+        </span>
+      </p>
+    </div>
+  )
+}
+
 function ReviewAgentStep({
   draft,
   error,
   nameIssue,
+  improvingCapabilities,
   onDraftChange,
+  onImproveCapabilities,
   onProviderChange
 }: {
   draft: AgentDraft
   error: string
   nameIssue: string | null
+  improvingCapabilities: boolean
   onDraftChange: (draft: Partial<AgentDraft>) => void
+  onImproveCapabilities: () => void
   onProviderChange: (providerId: ProviderId) => void
 }): React.JSX.Element {
   return (
@@ -1111,6 +1196,14 @@ function ReviewAgentStep({
           >
             {nameIssue ?? 'Agent names must be distinct so assignment lists stay clear.'}
           </p>
+
+          <CapabilitiesField
+            value={draft.capabilities}
+            improving={improvingCapabilities}
+            canImprove={draft.instructions.trim().length >= 12}
+            onChange={(capabilities) => onDraftChange({ capabilities })}
+            onImprove={onImproveCapabilities}
+          />
 
           <label className="grid gap-2">
             <span className="text-xs font-medium text-muted-foreground">Instructions</span>
@@ -1751,6 +1844,7 @@ function SettingsPanel({
   const [savedSettings, setSavedSettings] = useState<SettingsDraft>(initialSettings)
   const [draft, setDraft] = useState<SettingsDraft>(getEditableSettingsDraft(initialSettings))
   const [saving, setSaving] = useState(false)
+  const [improvingCapabilities, setImprovingCapabilities] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
@@ -1794,6 +1888,31 @@ function SettingsPanel({
       }
       return merged
     })
+  }
+
+  async function handleImproveCapabilities(): Promise<void> {
+    if (improvingCapabilities) {
+      return
+    }
+
+    const source = agent.instructions.trim()
+    if (source.length < 12) {
+      return
+    }
+
+    try {
+      setImprovingCapabilities(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftFromIntent({
+        requestedWork: source,
+        sandbox: draft.sandbox
+      })
+      updateDraft({ capabilities: nextDraft.capabilities })
+    } catch (improveError) {
+      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
+    } finally {
+      setImprovingCapabilities(false)
+    }
   }
 
   async function handleSave(): Promise<void> {
@@ -1857,6 +1976,15 @@ function SettingsPanel({
             onChange={(event) => updateDraft({ role: event.target.value })}
           />
         </FormField>
+
+        {/* Capabilities */}
+        <CapabilitiesField
+          value={draft.capabilities}
+          improving={improvingCapabilities}
+          canImprove={agent.instructions.trim().length >= 12}
+          onChange={(capabilities) => updateDraft({ capabilities })}
+          onImprove={() => void handleImproveCapabilities()}
+        />
 
         {/* Runtime */}
         <div className="grid gap-3">
@@ -2237,6 +2365,7 @@ function getPersistedSettingsDraft(agent: Agent): SettingsDraft {
   return {
     name: agent.name,
     role: agent.role,
+    capabilities: agent.capabilities,
     providerId: agent.providerId,
     model: agent.model,
     sandbox: agent.sandbox,
@@ -2256,6 +2385,7 @@ function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): bo
   return (
     draft.name !== savedSettings.name ||
     draft.role !== savedSettings.role ||
+    draft.capabilities !== savedSettings.capabilities ||
     draft.providerId !== savedSettings.providerId ||
     draft.model !== savedSettings.model ||
     draft.sandbox !== savedSettings.sandbox ||

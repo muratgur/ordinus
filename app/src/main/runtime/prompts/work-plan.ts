@@ -128,23 +128,30 @@ Field notes:
 ============================================================
 SPLITTING PRINCIPLE (most important rule)
 ============================================================
-Default to the SMALLEST number of Work Items that fully covers the request.
+Split work at capability and connector boundaries. Within a single boundary, keep the work as ONE item.
 
-Split into multiple items ONLY when at least one of these is true:
-  (a) Different agents are genuinely better suited for different parts.
-  (b) Two parts can run in parallel and the user benefits from that parallelism.
-  (c) A later step needs the concrete output of an earlier step before its instruction can be written precisely.
+Create a separate Work Item when at least one of these objective triggers is true:
+  (a) Capability boundary: the step needs a clearly different specialization than an adjacent step, and the available agents' "capabilities" describe that specialization as belonging to different agents.
+  (b) Connector boundary: the step needs an external connector that a different agent has, or that no single agent covers together with the adjacent step's connector.
+  (c) Parallelism: two parts have no boundary between them but can genuinely run in parallel and the user benefits from that.
+  (d) Output dependency: a later step's instruction cannot be written precisely until an earlier step's concrete output exists.
 
-Do NOT split just to:
-  - Make the plan look more thorough or structured.
-  - Separate "thinking" from "doing" when one agent can do both.
+Keep work as a single item when:
+  - One agent's capabilities cover the whole request, even if it has several internal steps.
+  - The work stays within one connector (or needs no connector at all).
+  - You would only be separating "thinking" from "doing", or splitting to look more thorough.
+
+Connectors are an optional signal, not a requirement:
+  - An empty "connectors" list is neutral. Never split a request only because an agent has no connectors, and never treat a connectorless agent as less suitable.
+  - When no agent has connectors, decide splitting purely from capability boundaries (a), parallelism (c), and output dependency (d).
 
 ============================================================
 AGENT ASSIGNMENT
 ============================================================
 - Use only assignedAgentId values from the available agents list.
-- Match each Work Item to the agent whose described capabilities most directly cover the instruction.
-- If multiple agents could do the work, pick the most specialized one.
+- Match each Work Item to the agent whose "capabilities" (and, when relevant, "connectors") most directly cover the instruction; use role and requestedWork as weaker fallback signals when capabilities are sparse.
+- If a step needs a specific connector, prefer an agent that has it. If none has it, still assign the closest-capability agent and note the missing connector briefly inside the instruction.
+- If multiple agents could do the work, pick the most specialized one for that boundary.
 - If no agent is a clean fit, still produce the plan: pick the closest match and note the mismatch briefly inside the instruction field so the agent knows.
 - The user may provide preferred agent hints. Prefer those agents when they fit the work, but use another available agent when the hinted agents are clearly not suitable.
 
@@ -219,6 +226,15 @@ User request: "Frontend'de login formu yap, backend'de de auth endpoint'i yaz."
 Good plan: 2 items, independent (both dependsOnTempIds: []), different agents.
 Bad plan for the same request: 4 items (design, implement frontend, implement backend, integrate). This is over-split - there is no integration step the user asked for, and design is part of implementation here.
 
+Example 4 - capability/connector boundary split:
+User request: "Bu Jira maddesini cek, icindeki alert numarasini Datadog'da incele ve bana bir inceleme raporu olustur."
+Good plan: 3 items.
+  - item-1: pull the Jira item and extract the alert number (agent whose capabilities/connectors cover Jira), dependsOnTempIds: [].
+  - item-2: investigate that alert in Datadog (agent whose capabilities/connectors cover observability/Datadog), dependsOnTempIds: ["item-1"].
+  - item-3: write the investigation report (agent whose capabilities cover report writing), dependsOnTempIds: ["item-2"].
+Why: Each step crosses a connector or capability boundary, and each step's instruction needs the prior step's concrete output.
+Note: If one agent's capabilities and connectors cover Jira AND Datadog AND reporting together, this becomes 1 item - the boundary, not the step count, drives the split.
+
 ============================================================
 PLANNING INPUT
 ============================================================
@@ -229,6 +245,8 @@ ${JSON.stringify(
       id: agent.id,
       name: agent.name,
       role: agent.role,
+      capabilities: agent.capabilities,
+      connectors: agent.connectors,
       requestedWork: agent.requestedWork,
       providerId: agent.providerId,
       model: agent.model

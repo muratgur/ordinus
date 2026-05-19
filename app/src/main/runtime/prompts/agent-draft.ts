@@ -17,6 +17,11 @@ export const agentDraftOutputJsonSchema = {
       minLength: 1,
       maxLength: 120
     },
+    capabilities: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 300
+    },
     profile: {
       type: 'object',
       additionalProperties: false,
@@ -71,12 +76,13 @@ export const agentDraftOutputJsonSchema = {
       ]
     }
   },
-  required: ['name', 'role', 'profile']
+  required: ['name', 'role', 'capabilities', 'profile']
 } as const
 
 export const AgentDraftOutputSchema = AgentDraftSchema.pick({
   name: true,
-  role: true
+  role: true,
+  capabilities: true
 }).extend({
   profile: z.object({
     archetypalIdentity: z.string().trim().min(1),
@@ -97,6 +103,7 @@ export function buildAgentDraft(
     requestedWork: input.requestedWork,
     name: draftJson.name,
     role: draftJson.role,
+    capabilities: draftJson.capabilities,
     instructions: renderAgentProfileInstructions({
       name: draftJson.name,
       sections: draftJson.profile
@@ -116,6 +123,7 @@ Output:
 {
   "name": "...",
   "role": "...",
+  "capabilities": "...",
   "profile": {
     "archetypalIdentity": "...",
     "roleAndSocialFunction": "...",
@@ -130,6 +138,7 @@ Output:
 Rules:
 - Use the same language as the user's request.
 - Build the profile in the same section standard as Ordinus built-in profiles.
+- capabilities is a single planner-facing line of at most 300 characters. State what work this agent is best at, which capability or connector boundary it owns, and when work should be routed to a different agent. Keep it concrete and free of personality or tone.
 - Keep each profile field ready to render as runtime behavior, not a short label.
 - archetypalIdentity explains what kind of agent this is and how it sees the work.
 - roleAndSocialFunction explains the practical role, responsibility surface, and why it exists in a workspace.
