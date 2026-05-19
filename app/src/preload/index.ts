@@ -52,6 +52,8 @@ import type {
   SetupStatus,
   SystemPaths,
   WorkboardAnswerInputRequestInput,
+  PendingPlan,
+  PendingPlanCreateInput,
   WorkboardData,
   WorkboardDirectStartInput,
   WorkboardDraftPlan,
@@ -179,6 +181,12 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workboardGenerateFollowUpPlan, input),
     startFollowUp: async (input: WorkboardStartFollowUpInput): Promise<WorkboardData> =>
       ipcRenderer.invoke(ipcChannels.workboardStartFollowUp, input),
+    listPendingPlans: async (): Promise<PendingPlan[]> =>
+      ipcRenderer.invoke(ipcChannels.workboardListPendingPlans),
+    createPendingPlan: async (input: PendingPlanCreateInput): Promise<PendingPlan> =>
+      ipcRenderer.invoke(ipcChannels.workboardCreatePendingPlan, input),
+    deletePendingPlan: async (id: string): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.workboardDeletePendingPlan, id),
     cancelRun: async (input: WorkRunActionInput): Promise<WorkboardData> =>
       ipcRenderer.invoke(ipcChannels.workboardCancelRun, input),
     answerInputRequest: async (input: WorkboardAnswerInputRequestInput): Promise<WorkboardData> =>

@@ -21,6 +21,7 @@ import {
   FileText,
   GitBranch,
   Loader2,
+  PanelRight,
   Plus,
   Search,
   Play,
@@ -66,6 +67,8 @@ import {
 } from '@renderer/components/ui/dialog'
 import { SelectControl } from '@renderer/components/select-control'
 import { cn } from '@renderer/lib/utils'
+import { useLiveness } from '@renderer/app/liveness'
+import type { PlanOperationsController } from '@renderer/app/plan-operations'
 import {
   emptyWorkboardDraftReviewState,
   type WorkComposerTarget,
@@ -124,18 +127,20 @@ const draftPriorityOptions = [
   { label: 'High', value: 1 }
 ] as const
 
-const draftFieldClassName = 'grid min-w-0 gap-1 text-xs font-medium text-muted-foreground'
+const draftFieldClassName = 'grid min-w-0 gap-1.5 text-xs font-medium text-foreground'
 const draftInputClassName =
-  'h-10 min-w-0 rounded-md border bg-background px-3 text-sm font-normal text-foreground'
+  'h-10 min-w-0 rounded-md border border-input bg-card px-3 text-sm font-normal text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background'
 const draftTextareaClassName =
-  'ordinus-scrollbar min-w-0 resize-none rounded-md border bg-background px-3 py-2 text-sm font-normal leading-6 text-foreground'
+  'ordinus-scrollbar min-w-0 resize-none rounded-md border border-input bg-card px-3 py-2 text-sm font-normal leading-6 text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background'
 
 export function WorkboardScreen({
   draftReview,
-  onDraftReviewChange
+  onDraftReviewChange,
+  planOperations
 }: {
   draftReview: WorkboardDraftReviewState
   onDraftReviewChange: Dispatch<SetStateAction<WorkboardDraftReviewState>>
+  planOperations: PlanOperationsController
 }): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [data, setData] = useState<WorkboardData>({
@@ -154,6 +159,8 @@ export function WorkboardScreen({
   const [workSearch, setWorkSearch] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
+  const [watchedOpId, setWatchedOpId] = useState<string | null>(null)
 
   async function loadWorkboard(options: { quiet?: boolean } = {}): Promise<void> {
     if (!options.quiet) setBusy('load')
@@ -216,22 +223,56 @@ export function WorkboardScreen({
   const selectedDraftId = draftReview.selectedItemId
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
   const selectedRequest = data.requests.find((item) => item.id === requestFilter) ?? null
+  const watchedOp = watchedOpId
+    ? (planOperations.operations.find((op) => op.id === watchedOpId) ?? null)
+    : null
+  const planWatching: PlanWatching | null =
+    !draftPlan && watchedOp && watchedOp.status !== 'ready'
+      ? { status: watchedOp.status, createdAt: watchedOp.createdAt, error: watchedOp.error }
+      : null
+
+  useEffect(() => {
+    if (!watchedOpId) return
+    const op = planOperations.operations.find((candidate) => candidate.id === watchedOpId)
+    if (!op || op.status !== 'ready' || !op.plan) return
+    // One-shot promotion when the watched background op finishes: copy its
+    // plan into the editable review state, then stop watching. Self-
+    // terminating (watchedOpId is cleared), so it cannot cascade.
+    onDraftReviewChange({
+      plan: op.plan,
+      context: {
+        target: op.target,
+        request: op.request,
+        runVersion: op.runVersion,
+        persistedId: op.persistedId
+      },
+      selectedItemId: op.plan.items[0]?.tempId ?? ''
+    })
+    planOperations.dismissPlanOp(op.id)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- external async completion sync, one-shot
+    setWatchedOpId(null)
+  }, [watchedOpId, planOperations, onDraftReviewChange])
 
   async function handleSubmitComposer(nextComposer = composer): Promise<void> {
     if (nextComposer.request.trim().length < 12 || enabledAgents.length === 0 || busy) return
-    setBusy('submit')
     setError('')
     const submittedRequest = nextComposer.request.trim()
     const target = buildComposerTarget(nextComposer, data)
 
+    if (reviewBeforeStart) {
+      const opId = planOperations.startPlanOp(
+        target,
+        submittedRequest,
+        computeContinuationVersion(data.runs, target.destinationRequestId)
+      )
+      setWatchedOpId(opId)
+      setComposer(emptyComposerState)
+      return
+    }
+
+    setBusy('submit')
     try {
       const plan = await generateDraftPlan(target, submittedRequest)
-      if (reviewBeforeStart) {
-        openDraftPlan(plan, target, submittedRequest)
-        setComposer(emptyComposerState)
-        return
-      }
-
       if (plan.items.length > 8) {
         openDraftPlan(plan, target, submittedRequest)
         setComposer(emptyComposerState)
@@ -247,13 +288,24 @@ export function WorkboardScreen({
     }
   }
 
-  async function handleStartDraft(): Promise<void> {
+  function isDraftStale(): boolean {
+    if (!draftContext || !draftContext.target.destinationRequestId) return false
+    if (draftContext.runVersion === null) return false
+    return (
+      draftContext.runVersion !==
+      computeContinuationVersion(data.runs, draftContext.target.destinationRequestId)
+    )
+  }
+
+  async function proceedStartDraft(): Promise<void> {
     if (!draftPlan || !draftContext) return
+    setStaleConfirmOpen(false)
     setBusy('start-draft')
     setError('')
 
     try {
       await startDraftPlan(draftPlan, draftContext.target, draftContext.request)
+      planOperations.removePersisted(draftContext.persistedId)
     } catch (startError) {
       setError(getStartErrorMessage(startError, draftContext.target))
     } finally {
@@ -261,22 +313,25 @@ export function WorkboardScreen({
     }
   }
 
-  async function handleRegenerateDraft(): Promise<void> {
-    if (!draftContext) return
-    setBusy('regenerate')
-    setError('')
-    try {
-      const plan = await generateDraftPlan(draftContext.target, draftContext.request)
-      openDraftPlan(plan, draftContext.target, draftContext.request)
-    } catch (regenerateError) {
-      setError(
-        regenerateError instanceof Error
-          ? regenerateError.message
-          : 'Plan could not be regenerated.'
-      )
-    } finally {
-      setBusy('')
+  async function handleStartDraft(): Promise<void> {
+    if (!draftPlan || !draftContext) return
+    if (isDraftStale()) {
+      setStaleConfirmOpen(true)
+      return
     }
+    await proceedStartDraft()
+  }
+
+  function handleRegenerateDraft(): void {
+    if (!draftContext) return
+    const opId = planOperations.startPlanOp(
+      draftContext.target,
+      draftContext.request,
+      computeContinuationVersion(data.runs, draftContext.target.destinationRequestId)
+    )
+    setStaleConfirmOpen(false)
+    onDraftReviewChange(emptyWorkboardDraftReviewState)
+    setWatchedOpId(opId)
   }
 
   function setDraftPlan(plan: WorkboardDraftPlan | null): void {
@@ -316,7 +371,12 @@ export function WorkboardScreen({
   ): void {
     onDraftReviewChange({
       plan,
-      context: { target, request: originalRequest },
+      context: {
+        target,
+        request: originalRequest,
+        runVersion: computeContinuationVersion(data.runs, target.destinationRequestId),
+        persistedId: null
+      },
       selectedItemId: plan.items[0]?.tempId ?? ''
     })
   }
@@ -471,23 +531,56 @@ export function WorkboardScreen({
       />
 
       <PlanReviewDialog
-        open={Boolean(draftPlan)}
-        request={draftContext?.request ?? composer.request}
-        target={draftContext?.target ?? newWorkComposerTarget}
+        open={Boolean(draftPlan) || planWatching !== null}
+        request={draftContext?.request ?? watchedOp?.request ?? composer.request}
+        target={draftContext?.target ?? watchedOp?.target ?? newWorkComposerTarget}
         plan={draftPlan}
         agents={enabledAgents}
         selectedItem={selectedDraftItem}
         selectedItemId={selectedDraftId}
         busy={busy}
+        watching={planWatching}
         onSelectItem={setSelectedDraftId}
         onUpdatePlan={setDraftPlan}
         onUpdateItem={updateDraftItem}
         onStart={() => void handleStartDraft()}
         onRegenerate={() => void handleRegenerateDraft()}
+        onBackground={() => setWatchedOpId(null)}
+        onRetryWatched={() => {
+          if (watchedOpId) planOperations.retryPlanOp(watchedOpId)
+        }}
         onDiscard={() => {
+          planOperations.removePersisted(draftContext?.persistedId ?? null)
           onDraftReviewChange(emptyWorkboardDraftReviewState)
         }}
       />
+
+      <Dialog
+        open={staleConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setStaleConfirmOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Work request changed</DialogTitle>
+            <DialogDescription>
+              This plan was prepared against an earlier state of the work request, which has
+              changed since (another continuation may have been added). Applying it now could
+              conflict with that work.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setStaleConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="outline" onClick={() => handleRegenerateDraft()}>
+              Regenerate
+            </Button>
+            <Button onClick={() => void proceedStartDraft()}>Apply anyway</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <RunDetailDrawer
         run={selectedRun}
@@ -641,7 +734,7 @@ function RequestComposerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onClose() : undefined)}>
-      <DialogContent className="grid h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0 sm:h-[min(820px,calc(100vh-2rem))] sm:max-h-[calc(100vh-2rem)]">
+      <DialogContent className="grid max-h-[calc(100vh-2rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0">
         <DialogHeader className="border-b px-5 py-3 pr-12 sm:px-6">
           <DialogTitle>New request</DialogTitle>
         </DialogHeader>
@@ -1066,9 +1159,6 @@ function FileContextPanel({
       <div className="flex flex-col gap-3 border-b px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-foreground">References</h3>
-          <p className="text-xs text-muted-foreground">
-            Suggested files follow the selected Work Request and Work Items.
-          </p>
         </div>
         <div className="flex flex-wrap gap-1 rounded-md border bg-background p-1">
           {referenceViews.map((referenceView) => (
@@ -1620,6 +1710,52 @@ function formatElapsedSeconds(value: number): string {
   return `${totalSeconds}s`
 }
 
+type PlanWatching = {
+  status: 'generating' | 'failed'
+  createdAt: number
+  error: string
+}
+
+function PlanWaitingBody({ watching }: { watching: PlanWatching }): React.JSX.Element {
+  const liveness = useLiveness(watching.createdAt, watching.status === 'generating')
+
+  if (watching.status === 'failed') {
+    return (
+      <div className="flex min-h-0 flex-col items-center justify-center gap-3 p-10 text-center">
+        <span className="flex size-12 items-center justify-center rounded-full bg-status-attention/15">
+          <span className="size-2.5 rounded-full bg-status-attention" />
+        </span>
+        <p className="text-base font-semibold text-status-attention">Plan generation failed</p>
+        <p className="max-w-md text-sm text-muted-foreground">
+          {watching.error || 'The plan could not be generated.'}
+        </p>
+      </div>
+    )
+  }
+
+  const phase = liveness.phase
+  const reassurance = liveness.reassurance ?? 'Setting things up…'
+  const elapsedLabel = liveness.elapsedLabel
+
+  return (
+    <div className="flex min-h-0 flex-col items-center justify-center gap-5 p-10 text-center">
+      <span className="relative flex size-14 items-center justify-center">
+        <span className="absolute inline-flex size-14 animate-ping rounded-full bg-primary/20" />
+        <span className="relative inline-flex size-3 rounded-full bg-primary" />
+      </span>
+      <div className="grid gap-1.5">
+        <p className="text-lg font-semibold">{phase}</p>
+        <p className="text-sm text-muted-foreground">{reassurance}</p>
+      </div>
+      <p className="text-3xl font-semibold tabular-nums text-muted-foreground">{elapsedLabel}</p>
+      <p className="max-w-sm text-xs text-muted-foreground">
+        You can keep working — choose “Continue in the background” and we&apos;ll notify you when
+        the plan is ready.
+      </p>
+    </div>
+  )
+}
+
 function PlanReviewDialog({
   open,
   request,
@@ -1629,12 +1765,15 @@ function PlanReviewDialog({
   selectedItem,
   selectedItemId,
   busy,
+  watching,
   onSelectItem,
   onUpdatePlan,
   onUpdateItem,
   onStart,
   onRegenerate,
-  onDiscard
+  onDiscard,
+  onBackground,
+  onRetryWatched
 }: {
   open: boolean
   request: string
@@ -1644,51 +1783,107 @@ function PlanReviewDialog({
   selectedItem: WorkboardDraftItem | null
   selectedItemId: string
   busy: string
+  watching: PlanWatching | null
   onSelectItem: (tempId: string) => void
   onUpdatePlan: (plan: WorkboardDraftPlan | null) => void
   onUpdateItem: (tempId: string, patch: Partial<WorkboardDraftItem>) => void
   onStart: () => void
   onRegenerate: () => void
   onDiscard: () => void
+  onBackground: () => void
+  onRetryWatched: () => void
 }): React.JSX.Element {
   const levels = useMemo(() => (plan ? buildDraftLevels(plan.items) : []), [plan])
   const stageById = useMemo(() => buildDraftStageMap(levels), [levels])
   const isContinuation = Boolean(target.destinationRequestId)
   const targetRequestTitle = target.destinationRequestTitle ?? ''
-  const itemCount = plan?.items.length ?? 0
-  const parallelStageCount = levels.filter((level) => level.length > 1).length
+  const isWaiting = !plan && watching !== null
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(false)
+
+  useEffect(() => {
+    // Focus is the default posture: every time a (new) plan is shown the
+    // detail panel starts closed. Resets only on plan identity change, so
+    // toggling within the same plan is preserved.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot reset on plan change
+    setPanelOpen(false)
+  }, [plan])
+
+  function requestClose(): void {
+    if (isWaiting) {
+      onBackground()
+      return
+    }
+    setDiscardConfirmOpen(true)
+  }
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onDiscard() : undefined)}>
-      <DialogContent className="grid h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0 sm:h-[min(860px,calc(100vh-2rem))] sm:max-h-[calc(100vh-2rem)]">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) return
+        requestClose()
+      }}
+    >
+      <DialogContent
+        hideClose
+        onEscapeKeyDown={(event) => {
+          if (isWaiting) event.preventDefault()
+        }}
+        onInteractOutside={(event) => {
+          if (isWaiting) event.preventDefault()
+        }}
+        className={cn(
+          'grid max-h-[calc(100vh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0 transition-[max-width] duration-200 ease-out',
+          panelOpen ? 'max-w-5xl' : 'max-w-3xl'
+        )}
+      >
         <DialogHeader className="border-b px-5 py-4 pr-12 sm:px-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <DialogTitle>
-                {isContinuation ? 'Review Continuation' : 'Review Work Request'}
+                {isWaiting
+                  ? isContinuation
+                    ? 'Preparing continuation'
+                    : 'Preparing your plan'
+                  : isContinuation
+                    ? 'Review Continuation'
+                    : 'Review Work Request'}
               </DialogTitle>
               <DialogDescription className="mt-1">
-                {isContinuation
-                  ? `Add these Work Items to ${targetRequestTitle}.`
-                  : 'Review assignments and dependencies before agents start.'}
+                {isWaiting
+                  ? 'You can keep working while we draft this in the background.'
+                  : isContinuation
+                    ? `Add these Work Items to ${targetRequestTitle}.`
+                    : 'Review assignments and dependencies before agents start.'}
               </DialogDescription>
             </div>
             {plan ? (
-              <div className="flex flex-wrap gap-2 text-left">
-                <Badge variant="secondary">{itemCount} Work Items</Badge>
-                <Badge variant="outline">{levels.length} Stages</Badge>
-                {target.contextLabels.length > 0 ? (
-                  <Badge variant="outline">{target.contextLabels.length} Context refs</Badge>
-                ) : null}
-                {parallelStageCount > 0 ? (
-                  <Badge variant="outline">{parallelStageCount} Parallel stages</Badge>
-                ) : null}
+              <div className="flex flex-wrap items-center gap-2 text-left">
+                <Button
+                  type="button"
+                  variant={panelOpen ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-xs"
+                  aria-pressed={panelOpen}
+                  onClick={() => setPanelOpen((current) => !current)}
+                >
+                  <PanelRight className="size-3.5" />
+                  {panelOpen ? 'Hide details' : 'Show details'}
+                </Button>
               </div>
             ) : null}
           </div>
         </DialogHeader>
         {plan ? (
-          <div className="grid min-h-0 grid-cols-1 overflow-y-auto ordinus-scrollbar lg:grid-cols-[minmax(0,1fr)_460px] lg:overflow-hidden xl:grid-cols-[minmax(0,1fr)_480px]">
+          <div
+            className={cn(
+              'grid min-h-0 grid-cols-1 overflow-y-auto ordinus-scrollbar transition-[grid-template-columns] duration-200 ease-out lg:overflow-hidden',
+              panelOpen
+                ? 'lg:grid-cols-[minmax(0,1fr)_460px] xl:grid-cols-[minmax(0,1fr)_480px]'
+                : 'lg:grid-cols-1'
+            )}
+          >
             <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden p-5 ordinus-scrollbar sm:p-6 lg:min-h-0 lg:overflow-y-auto">
               <section className="grid gap-3" aria-label="Work request">
                 <label className={draftFieldClassName}>
@@ -1711,13 +1906,12 @@ function PlanReviewDialog({
 
               <DraftStageTimeline
                 levels={levels}
-                stageById={stageById}
                 agents={agents}
                 selectedItemId={selectedItemId}
                 onSelectItem={onSelectItem}
               />
 
-              <div className="rounded-lg border bg-background p-4">
+              <div className="rounded-lg bg-muted/50 p-4">
                 <h3 className="text-sm font-semibold">
                   {isContinuation ? 'Continuation request' : 'Your original request'}
                 </h3>
@@ -1736,83 +1930,115 @@ function PlanReviewDialog({
               </div>
             </div>
 
-            <div className="min-w-0 overflow-x-hidden border-t bg-card p-4 ordinus-scrollbar lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
-              {selectedItem ? (
-                <DraftItemEditor
-                  item={selectedItem}
-                  items={plan.items}
-                  agents={agents}
-                  stageById={stageById}
-                  onChange={(patch) => onUpdateItem(selectedItem.tempId, patch)}
-                />
-              ) : (
-                <p className="text-sm text-muted-foreground">Select a Work Item.</p>
-              )}
-            </div>
+            {panelOpen ? (
+              <div className="min-w-0 overflow-x-hidden border-t bg-card p-4 ordinus-scrollbar lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
+                {selectedItem ? (
+                  <DraftItemEditor
+                    item={selectedItem}
+                    items={plan.items}
+                    agents={agents}
+                    stageById={stageById}
+                    onChange={(patch) => onUpdateItem(selectedItem.tempId, patch)}
+                  />
+                ) : (
+                  <p className="text-sm text-muted-foreground">Select a Work Item.</p>
+                )}
+              </div>
+            ) : null}
           </div>
+        ) : watching ? (
+          <PlanWaitingBody watching={watching} />
         ) : null}
         <DialogFooter className="border-t bg-background px-5 py-4 sm:px-6">
-          <Button variant="outline" onClick={onDiscard}>
-            Discard
-          </Button>
-          <Button variant="outline" onClick={onRegenerate} disabled={busy === 'regenerate'}>
-            {busy === 'regenerate' ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
-            Regenerate
-          </Button>
-          <Button onClick={onStart} disabled={busy === 'start-draft'}>
-            {busy === 'start-draft' ? <Loader2 className="animate-spin" /> : <Play />}
-            {isContinuation ? 'Add continuation' : 'Start work'}
-          </Button>
+          {isWaiting && watching ? (
+            <>
+              {watching.status === 'failed' ? (
+                <Button variant="outline" onClick={onRetryWatched}>
+                  <RefreshCcw />
+                  Retry
+                </Button>
+              ) : null}
+              <Button onClick={onBackground}>Continue in the background</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => setDiscardConfirmOpen(true)}>
+                Discard
+              </Button>
+              <Button variant="outline" onClick={onRegenerate}>
+                <RefreshCcw />
+                Regenerate
+              </Button>
+              <Button onClick={onStart} disabled={busy === 'start-draft'}>
+                {busy === 'start-draft' ? <Loader2 className="animate-spin" /> : <Play />}
+                {isContinuation ? 'Add continuation' : 'Start work'}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
+
+      <Dialog
+        open={discardConfirmOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setDiscardConfirmOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Discard this plan?</DialogTitle>
+            <DialogDescription>
+              The draft plan will be removed. This cannot be undone — you would need to generate
+              it again.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDiscardConfirmOpen(false)}>
+              Keep plan
+            </Button>
+            <Button
+              onClick={() => {
+                setDiscardConfirmOpen(false)
+                onDiscard()
+              }}
+            >
+              Discard
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   )
 }
 
 function DraftStageTimeline({
   levels,
-  stageById,
   agents,
   selectedItemId,
   onSelectItem
 }: {
   levels: WorkboardDraftItem[][]
-  stageById: Map<string, number>
   agents: Agent[]
   selectedItemId: string
   onSelectItem: (tempId: string) => void
 }): React.JSX.Element {
   return (
     <section className="grid gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Columns3 className="size-4 shrink-0 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">Execution stages</h3>
-        </div>
-        <p className="text-xs text-muted-foreground">Items in the same stage can start together.</p>
+      <div className="flex min-w-0 items-center gap-2">
+        <Columns3 className="size-4 shrink-0 text-muted-foreground" />
+        <h3 className="text-sm font-semibold">Execution stages</h3>
       </div>
       <div className="grid gap-3">
         {levels.map((level, index) => (
           <section key={index} className="rounded-lg border bg-background">
-            <header className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h4 className="text-sm font-semibold">Stage {index + 1}</h4>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {index === 0
-                    ? 'Starts as soon as work begins.'
-                    : `Starts after required earlier Work Items complete.`}
-                </p>
-              </div>
-              <Badge variant={level.length > 1 ? 'running' : 'secondary'}>
-                {level.length > 1 ? `${level.length} parallel` : '1 item'}
-              </Badge>
+            <header className="border-b px-4 py-3">
+              <h4 className="text-sm font-semibold">Stage {index + 1}</h4>
             </header>
             <div className="grid gap-2 p-3">
               {level.map((item) => (
                 <DraftStageItemButton
                   key={item.tempId}
                   item={item}
-                  stageById={stageById}
                   agents={agents}
                   selected={item.tempId === selectedItemId}
                   onSelect={() => onSelectItem(item.tempId)}
@@ -1828,13 +2054,11 @@ function DraftStageTimeline({
 
 function DraftStageItemButton({
   item,
-  stageById,
   agents,
   selected,
   onSelect
 }: {
   item: WorkboardDraftItem
-  stageById: Map<string, number>
   agents: Agent[]
   selected: boolean
   onSelect: () => void
@@ -1857,14 +2081,11 @@ function DraftStageItemButton({
             {agentName(agents, item.assignedAgentId)}
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">
-          {dependencyCount > 0 ? (
+        {dependencyCount > 0 ? (
+          <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">
             <Badge variant="outline">Waits for {dependencyCount}</Badge>
-          ) : (
-            <Badge variant="secondary">Ready first</Badge>
-          )}
-          <Badge variant="outline">Stage {stageById.get(item.tempId) ?? 1}</Badge>
-        </div>
+          </div>
+        ) : null}
       </div>
       <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
         {item.expectedOutput || item.instruction}
@@ -3104,6 +3325,28 @@ function insertMention(
     end,
     caret: end + suffix.length
   }
+}
+
+/**
+ * Marker of a continuation target's current run set, captured at generation
+ * time and re-checked at accept time. If it differs, the draft was planned
+ * against a stale view of the work request and merging it blindly could
+ * conflict, so the user is asked to decide. New requests (no destination)
+ * have no shared target and need no guard.
+ */
+function computeContinuationVersion(
+  runs: WorkboardRun[],
+  destinationRequestId: string | undefined
+): string | null {
+  if (!destinationRequestId) {
+    return null
+  }
+  const targetRuns = runs.filter((run) => run.requestId === destinationRequestId)
+  const latestUpdatedAt = targetRuns.reduce(
+    (latest, run) => (run.updatedAt > latest ? run.updatedAt : latest),
+    ''
+  )
+  return `${targetRuns.length}:${latestUpdatedAt}`
 }
 
 function generateDraftPlan(

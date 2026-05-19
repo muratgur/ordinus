@@ -791,6 +791,39 @@ export const WorkboardStartFollowUpInputSchema = z.object({
   plan: WorkboardDraftPlanSchema
 })
 
+export const PendingPlanTargetSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('request'),
+    destinationRequestId: z.string().min(1).optional(),
+    contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
+    requestedAgentIds: z.array(z.string().min(1)).max(16).default([])
+  }),
+  z.object({
+    kind: z.literal('follow_up'),
+    requestId: z.string().min(1),
+    anchorRunId: z.string().min(1).optional()
+  })
+])
+
+export const PendingPlanSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(['request', 'follow_up']),
+  request: z.string().trim().min(1).max(64_000),
+  target: PendingPlanTargetSchema,
+  plan: WorkboardDraftPlanSchema,
+  targetRunVersion: z.string().min(1).nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const PendingPlanCreateInputSchema = PendingPlanSchema.pick({
+  kind: true,
+  request: true,
+  target: true,
+  plan: true,
+  targetRunVersion: true
+})
+
 export const WorkboardDataSchema = z.object({
   requests: z.array(WorkRequestSchema),
   runs: z.array(WorkboardRunSchema),
@@ -1105,6 +1138,9 @@ export type WorkRunCompleteInput = z.infer<typeof WorkRunCompleteInputSchema>
 export type WorkRunFailInput = z.infer<typeof WorkRunFailInputSchema>
 export type WorkboardDraftItem = z.infer<typeof WorkboardDraftItemSchema>
 export type WorkboardDraftPlan = z.infer<typeof WorkboardDraftPlanSchema>
+export type PendingPlanTarget = z.infer<typeof PendingPlanTargetSchema>
+export type PendingPlan = z.infer<typeof PendingPlanSchema>
+export type PendingPlanCreateInput = z.input<typeof PendingPlanCreateInputSchema>
 export type WorkboardGeneratePlanInput = z.infer<typeof WorkboardGeneratePlanInputSchema>
 export type WorkboardStartRequestInput = z.infer<typeof WorkboardStartRequestInputSchema>
 export type WorkboardDirectStartInput = z.infer<typeof WorkboardDirectStartInputSchema>
