@@ -1,0 +1,4 @@
+interface:
+  display_name: "Provider Runtime Adapter"
+  short_description: "Design provider-neutral local AI CLI runtimes"
+  default_prompt: "Use this skill when working on Codex, Claude, Gemini, or future provider detection, auth status, process lifecycle, cancellation, event parsing, or runtime interfaces."

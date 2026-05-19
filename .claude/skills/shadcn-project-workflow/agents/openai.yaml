@@ -1,0 +1,4 @@
+interface:
+  display_name: "shadcn Project Workflow"
+  short_description: "Use shadcn CLI and composition rules in Ordinus"
+  default_prompt: "Use this skill when adding, updating, composing, debugging, or styling shadcn-style components; touching components.json; using npx shadcn; or working in src/renderer/src/components/ui."
