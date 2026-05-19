@@ -7,6 +7,7 @@ import {
   FileText,
   Info,
   Loader2,
+  MoreVertical,
   Plus,
   Search,
   Settings2,
@@ -37,6 +38,7 @@ import { Input } from '@renderer/components/ui/input'
 import { Switch } from '@renderer/components/ui/switch'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
+import { notify } from '@renderer/lib/notifications'
 import type {
   Agent,
   AgentDraft,
@@ -101,6 +103,8 @@ export function AgentsScreen(): React.JSX.Element {
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
     [agents, selectedAgentId]
@@ -169,8 +173,28 @@ export function AgentsScreen(): React.JSX.Element {
     setActiveSection('settings')
   }
 
+  async function handleDeleteAgent(): Promise<void> {
+    if (!selectedAgent) {
+      return
+    }
+
+    try {
+      setDeleting(true)
+      await window.ordinus.agents.delete({ id: selectedAgent.id })
+      setDeleteOpen(false)
+      handleAgentDeleted(selectedAgent.id)
+    } catch (deleteError) {
+      notify.error({
+        title: 'Agent could not be deleted',
+        description: getErrorMessage(deleteError, 'Please try again.')
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
-    <div className="grid min-h-[calc(100vh-3rem)] gap-4 py-4 xl:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100vh-3rem)] gap-4 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:grid-cols-[280px_minmax(0,1fr)] xl:overflow-hidden">
       <AgentLibrary
         agents={agents}
         loading={loading}
@@ -179,33 +203,36 @@ export function AgentsScreen(): React.JSX.Element {
         onSelectAgent={setSelectedAgentId}
       />
 
-      <main className="min-w-0">
-        <Card className="flex min-h-[760px] flex-col overflow-hidden">
-          <div className="flex items-stretch gap-0 border-b">
-            {sections.map((section) => {
-              const Icon = section.icon
-              const isActive = activeSection === section.id
-              return (
-                <button
-                  key={section.id}
-                  type="button"
-                  disabled={!selectedAgent}
-                  onClick={() => setActiveSection(section.id)}
-                  className={cn(
-                    'relative flex items-center gap-1.5 px-4 py-3 text-[12.5px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-40',
-                    isActive
-                      ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Icon className="size-3.5 shrink-0" />
-                  {section.label}
-                </button>
-              )
-            })}
+      <main className="min-w-0 xl:min-h-0">
+        <Card className="flex min-h-[760px] flex-col overflow-hidden xl:h-full xl:min-h-0">
+          <div className="flex items-stretch justify-between gap-0 border-b">
+            <div className="flex items-stretch gap-0">
+              {sections.map((section) => {
+                const Icon = section.icon
+                const isActive = activeSection === section.id
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    disabled={!selectedAgent}
+                    onClick={() => setActiveSection(section.id)}
+                    className={cn(
+                      'relative flex items-center gap-1.5 px-4 py-3 text-[12.5px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-40',
+                      isActive
+                        ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    <Icon className="size-3.5 shrink-0" />
+                    {section.label}
+                  </button>
+                )
+              })}
+            </div>
+            {selectedAgent ? <AgentActionsMenu onDelete={() => setDeleteOpen(true)} /> : null}
           </div>
 
-          <CardContent className="flex flex-1 flex-col p-0">
+          <CardContent className="flex min-h-0 flex-1 flex-col p-0">
             {error ? (
               <EmptyState icon={<Bot />} title="Agents unavailable" detail={error} />
             ) : selectedAgent ? (
@@ -214,7 +241,6 @@ export function AgentsScreen(): React.JSX.Element {
                 agents={agents}
                 activeSection={activeSection}
                 onAgentSaved={handleAgentSaved}
-                onAgentDeleted={handleAgentDeleted}
               />
             ) : (
               <EmptyState
@@ -237,6 +263,80 @@ export function AgentsScreen(): React.JSX.Element {
         onAgentCreated={handleAgentCreated}
         onOpenChange={setCreateAgentOpen}
       />
+
+      {selectedAgent ? (
+        <DeleteAgentDialog
+          agentName={selectedAgent.name}
+          deleting={deleting}
+          open={deleteOpen}
+          onDelete={() => void handleDeleteAgent()}
+          onOpenChange={setDeleteOpen}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function AgentActionsMenu({ onDelete }: { onDelete: () => void }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent): void {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  return (
+    <div ref={containerRef} className="relative flex items-center pr-2">
+      <button
+        type="button"
+        aria-label="Agent actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <MoreVertical className="size-4" />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-2 top-[calc(100%-4px)] z-20 min-w-44 rounded-md border bg-card p-1 shadow-md"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-status-attention transition-colors hover:bg-accent"
+            onClick={() => {
+              setOpen(false)
+              onDelete()
+            }}
+          >
+            <Trash2 className="size-3.5" />
+            Delete this agent
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -261,8 +361,8 @@ function AgentLibrary({
   })
 
   return (
-    <aside className="min-w-0">
-      <Card className="sticky top-14 overflow-hidden">
+    <aside className="min-w-0 xl:min-h-0">
+      <Card className="flex flex-col overflow-hidden xl:h-full xl:min-h-0">
         <CardHeader className="border-b">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -289,7 +389,7 @@ function AgentLibrary({
           </div>
         </CardHeader>
 
-        <CardContent className="grid gap-2 p-3">
+        <CardContent className="ordinus-scrollbar grid gap-2 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           {filteredAgents.map((agent) => (
             <button
               key={agent.id}
@@ -325,14 +425,12 @@ function AgentDetail({
   agent,
   agents,
   activeSection,
-  onAgentSaved,
-  onAgentDeleted
+  onAgentSaved
 }: {
   agent: Agent
   agents: Agent[]
   activeSection: AgentSection
   onAgentSaved: (agent: Agent) => void
-  onAgentDeleted: (agentId: string) => void
 }): React.JSX.Element {
   if (activeSection === 'instructions') {
     return <InstructionsPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
@@ -344,13 +442,7 @@ function AgentDetail({
 
   if (activeSection === 'settings') {
     return (
-      <SettingsPanel
-        key={agent.id}
-        agent={agent}
-        agents={agents}
-        onAgentSaved={onAgentSaved}
-        onAgentDeleted={onAgentDeleted}
-      />
+      <SettingsPanel key={agent.id} agent={agent} agents={agents} onAgentSaved={onAgentSaved} />
     )
   }
 
@@ -1832,21 +1924,17 @@ function InstructionsPanel({
 function SettingsPanel({
   agent,
   agents,
-  onAgentSaved,
-  onAgentDeleted
+  onAgentSaved
 }: {
   agent: Agent
   agents: Agent[]
   onAgentSaved: (agent: Agent) => void
-  onAgentDeleted: (agentId: string) => void
 }): React.JSX.Element {
   const initialSettings = getPersistedSettingsDraft(agent)
   const [savedSettings, setSavedSettings] = useState<SettingsDraft>(initialSettings)
   const [draft, setDraft] = useState<SettingsDraft>(getEditableSettingsDraft(initialSettings))
   const [saving, setSaving] = useState(false)
   const [improvingCapabilities, setImprovingCapabilities] = useState(false)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
   const [availableConnectors, setAvailableConnectors] = useState<ConnectorSummary[]>([])
   const dirty = isSettingsDirty(draft, savedSettings)
@@ -1941,117 +2029,107 @@ function SettingsPanel({
     }
   }
 
-  async function handleDelete(): Promise<void> {
-    try {
-      setDeleting(true)
-      setError('')
-      await window.ordinus.agents.delete({ id: agent.id })
-      setDeleteOpen(false)
-      onAgentDeleted(agent.id)
-    } catch (deleteError) {
-      setError(getErrorMessage(deleteError, 'Agent could not be deleted.'))
-    } finally {
-      setDeleting(false)
-    }
-  }
-
   return (
-    <ScrollArea className="h-full min-h-0">
-      <div className="grid gap-5 p-5">
-        {/* Agent adı + Enabled */}
-        <AgentNameField
-          name={draft.name}
-          enabled={draft.enabled}
-          nameIssue={nameIssue}
-          onNameChange={(name) => updateDraft({ name })}
-          onEnabledChange={(enabled) => updateDraft({ enabled })}
-        />
-
-        {/* Role */}
-        <FormField label="Role">
-          <Input
-            maxLength={120}
-            placeholder="Brief description of this agent's purpose"
-            value={draft.role}
-            onChange={(event) => updateDraft({ role: event.target.value })}
+    <div className="relative flex h-full min-h-0 flex-col">
+      <ScrollArea className="h-full min-h-0">
+        <div className={cn('grid gap-5 p-5', dirty && 'pb-24')}>
+          {/* Agent adı + Enabled */}
+          <AgentNameField
+            name={draft.name}
+            enabled={draft.enabled}
+            nameIssue={nameIssue}
+            onNameChange={(name) => updateDraft({ name })}
+            onEnabledChange={(enabled) => updateDraft({ enabled })}
           />
-        </FormField>
 
-        {/* Capabilities */}
-        <CapabilitiesField
-          value={draft.capabilities}
-          improving={improvingCapabilities}
-          canImprove={agent.instructions.trim().length >= 12}
-          onChange={(capabilities) => updateDraft({ capabilities })}
-          onImprove={() => void handleImproveCapabilities()}
-        />
-
-        {/* Runtime */}
-        <div className="grid gap-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <FormField label="Provider">
-              <SelectControl
-                value={draft.providerId}
-                onChange={(value) => updateDraft({ providerId: value as ProviderId })}
-              >
-                <option value="codex">Codex</option>
-                <option value="claude">Claude</option>
-                <option value="gemini">Gemini</option>
-              </SelectControl>
-            </FormField>
-            <ModelField
-              providerId={draft.providerId}
-              model={draft.model}
-              onChange={(model) => updateDraft({ model })}
+          {/* Role */}
+          <FormField label="Role">
+            <Input
+              maxLength={120}
+              placeholder="Brief description of this agent's purpose"
+              value={draft.role}
+              onChange={(event) => updateDraft({ role: event.target.value })}
             />
-          </div>
-          <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
-        </div>
+          </FormField>
 
-        {/* Sandbox */}
-        <SandboxField
-          name="agent-settings-sandbox"
-          value={draft.sandbox}
-          onChange={(sandbox) => updateDraft({ sandbox })}
-        />
+          {/* Capabilities */}
+          <CapabilitiesField
+            value={draft.capabilities}
+            improving={improvingCapabilities}
+            canImprove={agent.instructions.trim().length >= 12}
+            onChange={(capabilities) => updateDraft({ capabilities })}
+            onImprove={() => void handleImproveCapabilities()}
+          />
 
-        {/* Connectors */}
-        <div className="space-y-2">
-          <div>
-            <h3 className="text-sm font-semibold leading-tight">Connectors</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              External systems this agent may use. Authorize connections in the Connections screen —
-              an agent can be enabled here before its connection is set up.
-            </p>
-          </div>
-          {availableConnectors.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No connectors available.</p>
-          ) : (
-            <ul className="divide-y rounded-md border">
-              {availableConnectors.map((connector) => (
-                <li
-                  key={connector.id}
-                  className="flex items-center justify-between gap-4 px-3 py-2"
+          {/* Runtime */}
+          <div className="grid gap-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <FormField label="Provider">
+                <SelectControl
+                  value={draft.providerId}
+                  onChange={(value) => updateDraft({ providerId: value as ProviderId })}
                 >
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium">{connector.label}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {connector.connected ? 'Connected' : 'Not connected'}
-                    </span>
-                  </div>
-                  <Switch
-                    checked={draft.connectors.includes(connector.id)}
-                    onCheckedChange={(checked) => toggleConnector(connector.id, checked)}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+                  <option value="codex">Codex</option>
+                  <option value="claude">Claude</option>
+                  <option value="gemini">Gemini</option>
+                </SelectControl>
+              </FormField>
+              <ModelField
+                providerId={draft.providerId}
+                model={draft.model}
+                onChange={(model) => updateDraft({ model })}
+              />
+            </div>
+            <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
+          </div>
 
-        {/* Save bar — sadece dirty'de belirir, içeriğin hemen altında */}
-        {dirty ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg border bg-accent px-4 py-3">
+          {/* Sandbox */}
+          <SandboxField
+            name="agent-settings-sandbox"
+            value={draft.sandbox}
+            onChange={(sandbox) => updateDraft({ sandbox })}
+          />
+
+          {/* Connectors */}
+          <div className="space-y-2">
+            <div>
+              <h3 className="text-sm font-semibold leading-tight">Connectors</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                External systems this agent may use. Authorize connections in the Connections screen
+                — an agent can be enabled here before its connection is set up.
+              </p>
+            </div>
+            {availableConnectors.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No connectors available.</p>
+            ) : (
+              <ul className="divide-y rounded-md border">
+                {availableConnectors.map((connector) => (
+                  <li
+                    key={connector.id}
+                    className="flex items-center justify-between gap-4 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium">{connector.label}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {connector.connected ? 'Connected' : 'Not connected'}
+                      </span>
+                    </div>
+                    <Switch
+                      checked={draft.connectors.includes(connector.id)}
+                      onCheckedChange={(checked) => toggleConnector(connector.id, checked)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </ScrollArea>
+
+      {/* Save bar — yalnızca dirty'de belirir, panelin altına sabit */}
+      {dirty ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
+          <div className="pointer-events-auto flex items-center justify-between gap-3 rounded-lg border bg-accent px-4 py-3 shadow-md">
             {error ? (
               <p className="text-xs text-status-attention">{error}</p>
             ) : (
@@ -2078,29 +2156,9 @@ function SettingsPanel({
               </Button>
             </div>
           </div>
-        ) : null}
-
-        {/* Delete — içerik akışının sonunda, ince ayırıcıdan sonra */}
-        <div className="border-t pt-2">
-          <button
-            type="button"
-            className="text-xs text-muted-foreground underline-offset-2 hover:text-status-attention hover:underline"
-            disabled={saving || deleting}
-            onClick={() => setDeleteOpen(true)}
-          >
-            {deleting ? 'Deleting…' : 'Delete this agent'}
-          </button>
         </div>
-      </div>
-
-      <DeleteAgentDialog
-        agentName={agent.name}
-        deleting={deleting}
-        open={deleteOpen}
-        onDelete={() => void handleDelete()}
-        onOpenChange={setDeleteOpen}
-      />
-    </ScrollArea>
+      ) : null}
+    </div>
   )
 }
 
