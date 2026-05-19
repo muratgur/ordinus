@@ -577,7 +577,7 @@ export function ConversationsScreen(): React.JSX.Element {
   }
 
   return (
-    <div className="grid h-[calc(100vh-7rem)] min-h-0 gap-4 overflow-hidden py-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="grid min-h-[calc(100vh-3rem)] gap-4 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:grid-cols-[280px_minmax(0,1fr)] xl:overflow-hidden">
       <ConversationList
         conversations={conversations}
         loading={loading}
@@ -587,8 +587,8 @@ export function ConversationsScreen(): React.JSX.Element {
         onSelectConversation={(conversationId) => void selectConversation(conversationId)}
       />
 
-      <main className="min-h-0 min-w-0">
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden">
+      <main className="min-w-0 xl:min-h-0">
+        <Card className="flex min-h-[420px] flex-col overflow-hidden xl:h-full xl:min-h-0">
           {error ? <InlineError message={error} /> : null}
           {detail ? (
             <>
@@ -764,8 +764,8 @@ function ConversationList({
   onSelectConversation: (conversationId: string) => void
 }): React.JSX.Element {
   return (
-    <aside className="min-h-0 min-w-0">
-      <Card className="flex h-full min-h-0 flex-col overflow-hidden">
+    <aside className="min-w-0 xl:min-h-0">
+      <Card className="flex flex-col overflow-hidden xl:h-full xl:min-h-0">
         <CardHeader className="border-b">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1170,9 +1170,7 @@ function TurnCard({
           <TurnStatus status={turn.status} />
         ) : null}
       </div>
-      {turn.status === 'running' ? (
-        null
-      ) : turn.status === 'failed' ? (
+      {turn.status === 'running' ? null : turn.status === 'failed' ? (
         <p className="select-text rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm text-status-attention [overflow-wrap:anywhere]">
           {turn.error || 'This turn failed.'}
         </p>
@@ -1435,8 +1433,7 @@ function TurnActivityTimeline({
               <Badge variant="secondary">{event.kind}</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {new Date(event.timestamp).toLocaleTimeString()} / {event.source} /{' '}
-              {event.confidence}
+              {new Date(event.timestamp).toLocaleTimeString()} / {event.source} / {event.confidence}
             </p>
           </div>
         </div>
@@ -1844,7 +1841,11 @@ function QuestionInput({
           disabled={disabled}
           onChange={(event) => onChange({ type: 'text', text: event.target.value })}
           onKeyDown={(event) =>
-            handleAnswerTextareaKeyDown(event, { type: 'text', text: event.currentTarget.value }, onSubmit)
+            handleAnswerTextareaKeyDown(
+              event,
+              { type: 'text', text: event.currentTarget.value },
+              onSubmit
+            )
           }
         />
       )}
@@ -2037,10 +2038,9 @@ function Composer({
     getMentionOptionId(mention.participantIds)
   )
   const orchestrated = routingMode === 'orchestrated'
-  const placeholder =
-    orchestrated
-      ? 'Describe the work. Mentions are routing hints for Orchestrator.'
-      : 'Ask this agent to inspect, explain, plan, or change something in the workspace.'
+  const placeholder = orchestrated
+    ? 'Describe the work. Mentions are routing hints for Orchestrator.'
+    : 'Ask this agent to inspect, explain, plan, or change something in the workspace.'
 
   useEffect(() => {
     resizeComposerTextarea(textareaRef.current)
@@ -2119,64 +2119,62 @@ function Composer({
   }
 
   return (
-    <div className="border-t bg-background p-4">
+    <div className="border-t">
       {blockedReason ? (
-        <p className="mb-3 rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
+        <p className="mx-4 mt-4 rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-xs text-status-attention">
           {blockedReason}
         </p>
       ) : null}
-      <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
-        <div className="relative">
-          {showMentionPicker ? (
-            <MentionPicker
-              activeIndex={activeMentionIndex}
-              options={mentionOptions}
-              onActiveIndexChange={setActiveMentionIndex}
-              onSelect={(participant) => {
-                if (mentionPicker) {
-                  selectMention(participant, mentionPicker)
-                }
-              }}
-            />
-          ) : null}
-          <textarea
-            ref={textareaRef}
-            className="ordinus-scrollbar max-h-40 min-h-14 w-full resize-none overflow-y-hidden bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-            placeholder={placeholder}
-            value={value}
-            onChange={handleTextareaChange}
-            onKeyDown={handleTextareaKeyDown}
-            onClick={updateMentionPickerFromCaret}
-            onKeyUp={(event) => {
-              if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
-                updateMentionPickerFromCaret(event)
+      <div className="relative">
+        {showMentionPicker ? (
+          <MentionPicker
+            activeIndex={activeMentionIndex}
+            options={mentionOptions}
+            onActiveIndexChange={setActiveMentionIndex}
+            onSelect={(participant) => {
+              if (mentionPicker) {
+                selectMention(participant, mentionPicker)
               }
             }}
           />
+        ) : null}
+        <textarea
+          ref={textareaRef}
+          className="ordinus-scrollbar max-h-40 min-h-14 w-full resize-none overflow-y-hidden bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+          placeholder={placeholder}
+          value={value}
+          onChange={handleTextareaChange}
+          onKeyDown={handleTextareaKeyDown}
+          onClick={updateMentionPickerFromCaret}
+          onKeyUp={(event) => {
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+              updateMentionPickerFromCaret(event)
+            }
+          }}
+        />
+      </div>
+      <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          {participants.length > 1 ? (
+            <>
+              <RoutingModeSwitch
+                orchestrated={orchestrated}
+                disabled={routingDisabled || updatingRoutingMode || sending}
+                onChange={onRoutingModeChange}
+              />
+              <MentionShortcutChips
+                participants={participants}
+                selectedMentionIds={selectedMentionIds}
+                onSelect={selectMention}
+              />
+            </>
+          ) : null}
         </div>
-        <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            {participants.length > 1 ? (
-              <>
-                <RoutingModeSwitch
-                  orchestrated={orchestrated}
-                  disabled={routingDisabled || updatingRoutingMode || sending}
-                  onChange={onRoutingModeChange}
-                />
-                <MentionShortcutChips
-                  participants={participants}
-                  selectedMentionIds={selectedMentionIds}
-                  onSelect={selectMention}
-                />
-              </>
-            ) : null}
-          </div>
-          <Button type="button" size="sm" disabled={disabled} onClick={onSend}>
-            {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
-            Send
-          </Button>
-        </div>
-      </section>
+        <Button type="button" size="sm" disabled={disabled} onClick={onSend}>
+          {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
+          Send
+        </Button>
+      </div>
     </div>
   )
 }
@@ -2187,8 +2185,7 @@ function resizeComposerTextarea(textarea: HTMLTextAreaElement | null): void {
   textarea.style.height = '0px'
   const nextHeight = Math.min(textarea.scrollHeight, composerTextareaMaxHeight)
   textarea.style.height = `${nextHeight}px`
-  textarea.style.overflowY =
-    textarea.scrollHeight > composerTextareaMaxHeight ? 'auto' : 'hidden'
+  textarea.style.overflowY = textarea.scrollHeight > composerTextareaMaxHeight ? 'auto' : 'hidden'
 }
 
 function RoutingModeSwitch({
@@ -2621,8 +2618,7 @@ function shouldShowConversationActivityLabel(
 ): boolean {
   return (
     !running &&
-    (observedRun.lifecycleStatus === 'failed' ||
-      observedRun.lifecycleStatus === 'waiting_for_user')
+    (observedRun.lifecycleStatus === 'failed' || observedRun.lifecycleStatus === 'waiting_for_user')
   )
 }
 

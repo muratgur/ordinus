@@ -316,6 +316,20 @@ Preferred layout structure:
 4. Secondary inspector or details panel when useful.
 5. Compact status or diagnostics surfaces where needed.
 
+### Screen Height
+
+Screens render inside the app shell outlet, below a fixed `3rem` header. The canonical usable height is `calc(100vh - 3rem)`.
+
+At the desktop breakpoint (`xl` and up), a screen's root container should lock to this height with internal scroll, so the page itself never scrolls and the work surface fills the viewport like a desktop application:
+
+- Use `xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:overflow-hidden` on the screen root.
+- Manage the screen's own padding (e.g. `py-4`) inside that border-box height — do not add it on top.
+- Below `xl`, fall back to normal page scroll: keep `min-h-[calc(100vh-3rem)]` and do not force a fixed height or `overflow-hidden`, so narrow or short windows are not cramped into tiny nested scroll regions.
+- Scroll lives in inner regions (lists, panels, boards) via `min-h-0` + `overflow-y-auto` / `ScrollArea`, not on the page.
+- If an inner scroll region has no natural minimum height (e.g. a chat message list or empty board), give its card a sub-`xl` `min-h-[...]` paired with `xl:min-h-0`, so it does not collapse to zero in the page-scroll fallback.
+
+Do not invent per-screen height constants (e.g. `100vh-7rem`). All screens use the same `100vh-3rem` baseline so they align.
+
 ### Spacing
 
 Use a compact 4px-based scale. Most app UI should live between `{spacing.xs}` and `{spacing.xl}`.

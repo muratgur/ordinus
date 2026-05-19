@@ -464,7 +464,7 @@ export function WorkboardScreen({
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] min-h-0 flex-col gap-3 overflow-hidden py-4">
+    <div className="flex min-h-[calc(100vh-3rem)] flex-col gap-3 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:overflow-hidden">
       <section className="flex shrink-0 flex-col gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
