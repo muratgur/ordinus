@@ -53,6 +53,8 @@ import type {
   WorkboardData,
   WorkboardDirectStartInput,
   WorkboardDraftPlan,
+  PendingPlan,
+  PendingPlanCreateInput,
   WorkboardGenerateFollowUpPlanInput,
   WorkboardGeneratePlanInput,
   WorkboardGenerateRequestPlanInput,
@@ -126,6 +128,9 @@ export type OrdinusApi = {
     directStart: (input: WorkboardDirectStartInput) => Promise<WorkboardData>
     generateFollowUpPlan: (input: WorkboardGenerateFollowUpPlanInput) => Promise<WorkboardDraftPlan>
     startFollowUp: (input: WorkboardStartFollowUpInput) => Promise<WorkboardData>
+    listPendingPlans: () => Promise<PendingPlan[]>
+    createPendingPlan: (input: PendingPlanCreateInput) => Promise<PendingPlan>
+    deletePendingPlan: (id: string) => Promise<void>
     cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
     answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
     revealPath: (input: WorkboardRevealPathInput) => Promise<void>

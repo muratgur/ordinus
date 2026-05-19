@@ -12,6 +12,8 @@ import type {
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
 import { NotificationPolicyBridge } from './app/notification-policy-bridge'
+import { usePlanOperations, type PlanOperation } from './app/plan-operations'
+import { PlanQueue } from './app/plan-queue'
 import { defaultAppRoute, appRoutePaths } from './app/routes'
 import { AgentsScreen } from './screens/agents-screen'
 import { ConversationsScreen } from './screens/conversations-screen'
@@ -53,6 +55,24 @@ function App(): React.JSX.Element {
   const [workboardDraftReview, setWorkboardDraftReview] = useState<WorkboardDraftReviewState>(
     emptyWorkboardDraftReviewState
   )
+  const planOperations = usePlanOperations()
+
+  function routeOperationIntoReview(operation: PlanOperation): void {
+    if (!operation.plan) {
+      return
+    }
+    setWorkboardDraftReview({
+      plan: operation.plan,
+      context: {
+        target: operation.target,
+        request: operation.request,
+        runVersion: operation.runVersion,
+        persistedId: operation.persistedId
+      },
+      selectedItemId: operation.plan.items[0]?.tempId ?? ''
+    })
+    planOperations.dismissPlanOp(operation.id)
+  }
 
   async function loadStatus(options: { stayOnSetup?: boolean } = {}): Promise<void> {
     setState((current) => ({ ...current, loading: true, error: '' }))
@@ -178,7 +198,11 @@ function App(): React.JSX.Element {
 
   return (
     <HashRouter>
-      <NotificationPolicyBridge workboardDraftReview={workboardDraftReview} />
+      <NotificationPolicyBridge
+        workboardDraftReview={workboardDraftReview}
+        planOperations={planOperations.operations}
+        onReviewOperation={routeOperationIntoReview}
+      />
       <Routes>
         <Route
           element={
@@ -187,6 +211,9 @@ function App(): React.JSX.Element {
               setupStatus={state.setupStatus}
               loading={state.loading}
               workboardPlanReady={Boolean(workboardDraftReview.plan)}
+              planQueue={
+                <PlanQueue planOperations={planOperations} onReview={routeOperationIntoReview} />
+              }
               onRefreshStatus={() => void loadStatus()}
             />
           }
@@ -200,6 +227,7 @@ function App(): React.JSX.Element {
               <WorkboardScreen
                 draftReview={workboardDraftReview}
                 onDraftReviewChange={setWorkboardDraftReview}
+                planOperations={planOperations}
               />
             }
           />

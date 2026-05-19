@@ -11,11 +11,16 @@ import {
   type NotificationPolicyEvent
 } from '@renderer/lib/workboard-notification-policy'
 import type { WorkboardDraftReviewState } from '@renderer/screens/workboard-draft-review'
+import type { PlanOperation } from './plan-operations'
 
 export function NotificationPolicyBridge({
-  workboardDraftReview
+  workboardDraftReview,
+  planOperations,
+  onReviewOperation
 }: {
   workboardDraftReview: WorkboardDraftReviewState
+  planOperations: PlanOperation[]
+  onReviewOperation: (operation: PlanOperation) => void
 }): null {
   const location = useLocation()
   const navigate = useNavigate()
@@ -24,6 +29,7 @@ export function NotificationPolicyBridge({
   const seenRef = useRef<Set<string>>(new Set())
   const refreshTimerRef = useRef<number | null>(null)
   const planSignatureRef = useRef<string | null>(null)
+  const planOpStatusRef = useRef<Map<string, PlanOperation['status']>>(new Map())
 
   useEffect(() => {
     currentPathRef.current = location.pathname
@@ -152,6 +158,49 @@ export function NotificationPolicyBridge({
       showPolicyEvent(event)
     }
   }, [showPolicyEvent, workboardDraftReview.plan])
+
+  useEffect(() => {
+    const previousStatuses = planOpStatusRef.current
+    const nextStatuses = new Map<string, PlanOperation['status']>()
+
+    planOperations.forEach((operation) => {
+      nextStatuses.set(operation.id, operation.status)
+      const previous = previousStatuses.get(operation.id)
+      if (previous === operation.status) {
+        return
+      }
+      // The Workboard surface already shows the queue/drawer locally.
+      if (currentPathRef.current === appRoutePaths.workboard) {
+        return
+      }
+      if (operation.status === 'ready') {
+        notify.success({
+          id: notificationIds.workboardPlanReady,
+          title: 'Plan ready',
+          description: 'Review assignments and dependencies before agents start.',
+          action: {
+            label: 'Review plan',
+            onClick: () => {
+              onReviewOperation(operation)
+              navigate(appRoutePaths.workboard)
+            }
+          }
+        })
+      } else if (operation.status === 'failed') {
+        notify.error({
+          id: `plan-op-fail-${operation.id}`,
+          title: 'Plan generation failed',
+          description: operation.error || 'The plan could not be generated.',
+          action: {
+            label: 'Open plans',
+            onClick: () => navigate(appRoutePaths.workboard)
+          }
+        })
+      }
+    })
+
+    planOpStatusRef.current = nextStatuses
+  }, [navigate, onReviewOperation, planOperations])
 
   return null
 }

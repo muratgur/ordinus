@@ -11,6 +11,8 @@ export type WorkComposerTarget = {
 export type WorkboardDraftPlanContext = {
   target: WorkComposerTarget
   request: string
+  runVersion: string | null
+  persistedId: string | null
 }
 
 export type WorkboardDraftReviewState = {

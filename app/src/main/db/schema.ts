@@ -157,6 +157,17 @@ export const workRequests = sqliteTable('work_requests', {
   completedAt: text('completed_at')
 })
 
+export const pendingPlans = sqliteTable('pending_plans', {
+  id: text('id').primaryKey(),
+  kind: text('kind').notNull(),
+  request: text('request').notNull(),
+  target: text('target', { mode: 'json' }).$type<unknown>().notNull(),
+  plan: text('plan', { mode: 'json' }).$type<unknown>().notNull(),
+  targetRunVersion: text('target_run_version'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
 export const workRunDependencies = sqliteTable('work_run_dependencies', {
   id: text('id').primaryKey(),
   runId: text('run_id').notNull(),

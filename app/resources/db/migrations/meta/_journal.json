@@ -148,6 +148,13 @@
       "when": 1779178617001,
       "tag": "0020_agent_capabilities",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1779186015201,
+      "tag": "0021_pending_plans",
+      "breakpoints": true
     }
   ]
 }

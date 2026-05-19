@@ -33,6 +33,10 @@ import {
   WorkspaceConfigSchema,
   WorkspaceSaveConfigInputSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
+  PendingPlanCreateInputSchema,
+  PendingPlanSchema,
+  type PendingPlan,
+  type PendingPlanCreateInput,
   WorkboardAnswerInputRequestInputSchema,
   WorkboardDataSchema,
   WorkboardDraftPlanSchema,
@@ -115,6 +119,7 @@ import {
   conversationTurns,
   observedRunEvents,
   observedRuns,
+  pendingPlans,
   workRequestAgentSessions,
   workRequests,
   workRunContextReferences,
@@ -631,6 +636,34 @@ export class OrdinusDatabase {
       .run()
 
     return this.getAgent(parsed.id)
+  }
+
+  listPendingPlans(): PendingPlan[] {
+    return this.db
+      .select()
+      .from(pendingPlans)
+      .orderBy(asc(pendingPlans.createdAt))
+      .all()
+      .map((row) => PendingPlanSchema.parse(row))
+  }
+
+  createPendingPlan(input: PendingPlanCreateInput): PendingPlan {
+    const parsed = PendingPlanCreateInputSchema.parse(input)
+    const now = new Date().toISOString()
+    const pendingPlan = PendingPlanSchema.parse({
+      ...parsed,
+      id: `pp-${randomUUID()}`,
+      createdAt: now,
+      updatedAt: now
+    })
+
+    this.db.insert(pendingPlans).values(pendingPlan).run()
+
+    return pendingPlan
+  }
+
+  deletePendingPlan(id: string): void {
+    this.db.delete(pendingPlans).where(eq(pendingPlans.id, id)).run()
   }
 
   createWorkRun(input: WorkRunCreateInput): WorkRun {

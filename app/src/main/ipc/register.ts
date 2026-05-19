@@ -41,6 +41,8 @@ import {
   WorkboardDraftPlanSchema,
   WorkboardGenerateFollowUpPlanInputSchema,
   WorkboardGeneratePlanInputSchema,
+  PendingPlanCreateInputSchema,
+  PendingPlanSchema,
   WorkboardGenerateRequestPlanInputSchema,
   WorkboardRevealPathInputSchema,
   WorkboardStartFollowUpInputSchema,
@@ -438,6 +440,15 @@ export function registerIpcHandlers(
     const request = database.createWorkRequestFollowUp(input)
     startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardListPendingPlans, () => database.listPendingPlans())
+  ipcMain.handle(ipcChannels.workboardCreatePendingPlan, (_event, payload) => {
+    const input = PendingPlanCreateInputSchema.parse(payload)
+    return database.createPendingPlan(input)
+  })
+  ipcMain.handle(ipcChannels.workboardDeletePendingPlan, (_event, payload) => {
+    const id = PendingPlanSchema.shape.id.parse(payload)
+    database.deletePendingPlan(id)
   })
   ipcMain.handle(ipcChannels.workboardCancelRun, (_event, payload) => {
     const input = WorkRunActionInputSchema.parse(payload)

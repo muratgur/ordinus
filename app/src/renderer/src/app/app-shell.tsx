@@ -12,6 +12,7 @@ type AppShellProps = {
   setupStatus: SetupStatus | null
   loading: boolean
   workboardPlanReady: boolean
+  planQueue?: React.ReactNode
   onRefreshStatus: () => void
 }
 
@@ -20,6 +21,7 @@ type ThemeMode = 'light' | 'dark'
 export function AppShell({
   loading,
   workboardPlanReady,
+  planQueue,
   onRefreshStatus
 }: AppShellProps): React.JSX.Element {
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme())
@@ -91,6 +93,7 @@ export function AppShell({
 
           {/* Utility aksiyonlar */}
           <div className="flex shrink-0 items-center gap-1 pl-4">
+            {planQueue}
             <NavLink
               to={appRoutePaths.settings}
               className={({ isActive }) =>
