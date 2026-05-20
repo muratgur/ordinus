@@ -6,6 +6,7 @@ import {
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
   ProviderIdSchema,
+  WORKBOARD_AGENT_LIMIT,
   WorkspaceRelativePathSchema,
   type OrchestrationPlan,
   type AgentDraft,
@@ -48,9 +49,9 @@ const RuntimeWorkboardPlanInputSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string().trim().min(1).default('default'),
   workspaceRoot: z.string().trim().min(1),
-  agents: z.array(AgentSchema).min(1).max(16),
+  agents: z.array(AgentSchema).min(1).max(WORKBOARD_AGENT_LIMIT),
   request: z.string().trim().min(1).max(64_000),
-  requestedAgentIds: z.array(z.string().min(1)).max(16).default([])
+  requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([])
 })
 
 export type RuntimeService = {
