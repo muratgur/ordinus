@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export const WORKBOARD_AGENT_LIMIT = 32
+
 export const AppInfoSchema = z.object({
   name: z.literal('Ordinus'),
   version: z.string(),
@@ -768,14 +770,14 @@ export const WorkboardGenerateRequestPlanInputSchema = z.object({
   request: z.string().trim().min(12, 'Describe the work request.').max(64_000),
   destinationRequestId: z.string().min(1).optional(),
   contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
-  requestedAgentIds: z.array(z.string().min(1)).max(16).default([])
+  requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([])
 })
 
 export const WorkboardStartRequestPlanInputSchema = z.object({
   originalRequest: z.string().trim().min(1).max(64_000),
   destinationRequestId: z.string().min(1).optional(),
   contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
-  requestedAgentIds: z.array(z.string().min(1)).max(16).default([]),
+  requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([]),
   plan: WorkboardDraftPlanSchema
 })
 
@@ -796,7 +798,7 @@ export const PendingPlanTargetSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request'),
     destinationRequestId: z.string().min(1).optional(),
     contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
-    requestedAgentIds: z.array(z.string().min(1)).max(16).default([])
+    requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([])
   }),
   z.object({
     kind: z.literal('follow_up'),
