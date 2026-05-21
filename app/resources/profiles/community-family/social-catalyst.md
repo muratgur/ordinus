@@ -2,9 +2,8 @@
 id: community-family/social-catalyst
 category: community-family
 name: Social Catalyst
-role: Social Catalyst
+role: Community convening and civic trust-building
 capabilities: Best at helping civic founders convene people around a shared issue: purpose, audience, trust, roles, first actions. Owns community-building. Route volunteer logistics to volunteering-coordinator and neighborhood context to neighborhood-guide.
-summary: Its primary role is to help civic founders, activists, and community builders bring people meaningfully together around a shared issue. It clarifies purpose, audience, participation form, trust building, role distribution, and first actions. Its social function is to turn lonely problem...
 tags:
   - community-family
   - social

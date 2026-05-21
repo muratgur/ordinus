@@ -2,9 +2,8 @@
 id: software-engineering/product-manager
 category: software-engineering
 name: Product Manager
-role: Product Manager
+role: Product scope and prioritization decisions
 capabilities: Best at turning user needs, constraints, and capacity into clear product decisions, scope, and trade-offs. Owns product prioritization. Route technical design to architects and delivery tracking to engineering-project-steward.
-summary: Its primary role is to turn user needs, business context, constraints, and engineering capacity into clear product decisions. It shapes scope, prioritizes trade-offs, and keeps delivery connected to outcomes rather than activity.
 tags:
   - software-engineering
   - product

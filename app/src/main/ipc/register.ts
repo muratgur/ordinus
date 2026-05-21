@@ -2,9 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } fr
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
+  AgentArchiveInputSchema,
   AgentDeleteInputSchema,
   AgentDraftFromProfileInputSchema,
   AgentDraftFromIntentInputSchema,
+  AgentMemoryAddInputSchema,
+  AgentMemoryDeactivateInputSchema,
+  AgentMemoryListInputSchema,
+  AgentMemoryUpdateInputSchema,
   AgentSkillCreateInputSchema,
   AgentSkillDeleteInputSchema,
   AgentSkillGetInputSchema,
@@ -93,6 +98,7 @@ import {
   getAgentProfile,
   listAgentProfiles
 } from '../agents/profiles'
+import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { connectConnector, disconnectConnector, listConnectors } from '../integrations/service'
 import {
   ensureWorkspaceRelativeDirectory,
@@ -281,6 +287,35 @@ export function registerIpcHandlers(
     }
     return deleteAgentSkill(input)
   })
+  ipcMain.handle(ipcChannels.agentsListMemory, (_event, payload) => {
+    const input = AgentMemoryListInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return database.listAgentMemoryRules(input)
+  })
+  ipcMain.handle(ipcChannels.agentsAddMemory, (_event, payload) => {
+    const input = AgentMemoryAddInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return database.addAgentMemoryRule(input)
+  })
+  ipcMain.handle(ipcChannels.agentsUpdateMemory, (_event, payload) => {
+    const input = AgentMemoryUpdateInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return database.updateAgentMemoryRule(input)
+  })
+  ipcMain.handle(ipcChannels.agentsDeactivateMemory, (_event, payload) => {
+    const input = AgentMemoryDeactivateInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return database.deactivateAgentMemoryRule(input)
+  })
+  ipcMain.handle(ipcChannels.agentsArchive, (_event, payload) => {
+    const input = AgentArchiveInputSchema.parse(payload)
+    return database.archiveAgent(input.id)
+  })
+  ipcMain.handle(ipcChannels.agentsUnarchive, (_event, payload) => {
+    const input = AgentArchiveInputSchema.parse(payload)
+    return database.unarchiveAgent(input.id)
+  })
+  ipcMain.handle(ipcChannels.agentsListReflection, () => database.getAgentReflectionSummary())
   ipcMain.handle(ipcChannels.conversationsList, () => database.listConversations())
   ipcMain.handle(ipcChannels.conversationsGet, (_event, payload) => {
     const input = ConversationGetInputSchema.parse(payload)
@@ -1000,6 +1035,8 @@ function startPreparedWorkRun(
   mkdirSync(logDir, { recursive: true })
   ensureWorkspaceRelativeDirectory(workspaceContext.workspaceRoot, workspaceContext.workingRoot)
 
+  database.recordAgentUsage(prepared.agent.id)
+
   void runtime
     .sendWorkRun({
       runId: prepared.run.id,
@@ -1012,7 +1049,11 @@ function startPreparedWorkRun(
       agentHomePath: getAgentHome(prepared.agent.id),
       agentName: prepared.agent.name,
       agentRole: prepared.agent.role,
-      instructions: prepared.agent.instructions,
+      instructions: composeInstructionsWithMemory(
+        database,
+        prepared.agent.id,
+        prepared.agent.instructions
+      ),
       connectors: prepared.agent.connectors,
       providerSessionRef,
       title: prepared.run.title,
@@ -1291,6 +1332,8 @@ function startPreparedConversationTurns(
     })
     mkdirSync(logDir, { recursive: true })
 
+    database.recordAgentUsage(agentTurn.agent.id)
+
     void runtime
       .sendConversationTurn({
         turnId: agentTurn.agentTurnId,
@@ -1303,7 +1346,11 @@ function startPreparedConversationTurns(
         agentHomePath: getAgentHome(agentTurn.agent.id),
         agentName: agentTurn.agent.name,
         agentRole: agentTurn.agent.role,
-        instructions: agentTurn.agent.instructions,
+        instructions: composeInstructionsWithMemory(
+          database,
+          agentTurn.agent.id,
+          agentTurn.agent.instructions
+        ),
         connectors: agentTurn.agent.connectors,
         providerSessionRef: agentTurn.providerSessionRef,
         message: agentTurn.message,

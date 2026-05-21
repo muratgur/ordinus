@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { randomUUID } from 'node:crypto'
@@ -9,6 +9,13 @@ import {
   AgentCreateInputSchema,
   AgentDeleteInputSchema,
   AgentDeleteResultSchema,
+  AgentMemoryAddInputSchema,
+  AgentMemoryDeactivateInputSchema,
+  AgentMemoryDeactivateResultSchema,
+  AgentMemoryListInputSchema,
+  AgentMemoryRuleSchema,
+  AgentMemoryUpdateInputSchema,
+  AgentReflectionSummarySchema,
   AgentSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
@@ -59,6 +66,13 @@ import {
   type AgentCreateInput,
   type AgentDeleteInput,
   type AgentDeleteResult,
+  type AgentMemoryAddInput,
+  type AgentMemoryDeactivateInput,
+  type AgentMemoryDeactivateResult,
+  type AgentMemoryListInput,
+  type AgentMemoryRule,
+  type AgentMemoryUpdateInput,
+  type AgentReflectionSummary,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
   type AgentTurnOutcome,
@@ -111,6 +125,7 @@ import {
 import { getSystemPaths } from '../paths'
 import { databaseSchemaVersion, getMigrationsFolder } from './migrations'
 import {
+  agentMemory,
   agents,
   appMeta,
   conversationInputRequests,
@@ -424,6 +439,16 @@ export class OrdinusDatabase {
     return this.db
       .select()
       .from(agents)
+      .where(isNull(agents.archivedAt))
+      .orderBy(desc(agents.createdAt))
+      .all()
+      .map((agent) => AgentSchema.parse(agent))
+  }
+
+  listAgentsIncludingArchived(): Agent[] {
+    return this.db
+      .select()
+      .from(agents)
       .orderBy(desc(agents.createdAt))
       .all()
       .map((agent) => AgentSchema.parse(agent))
@@ -433,10 +458,101 @@ export class OrdinusDatabase {
     return this.db
       .select()
       .from(agents)
-      .where(eq(agents.enabled, true))
+      .where(and(eq(agents.enabled, true), isNull(agents.archivedAt)))
       .orderBy(desc(agents.createdAt))
       .all()
       .map((agent) => AgentSchema.parse(agent))
+  }
+
+  recordAgentUsage(agentId: string): void {
+    if (!this.hasAgent(agentId)) {
+      return
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(agents)
+      .set({
+        lastUsedAt: now,
+        useCount: sql`${agents.useCount} + 1`,
+        updatedAt: now
+      })
+      .where(eq(agents.id, agentId))
+      .run()
+  }
+
+  archiveAgent(agentId: string): Agent {
+    if (!this.hasAgent(agentId)) {
+      throw new Error('Agent was not found.')
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(agents)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(agents.id, agentId))
+      .run()
+    return this.getAgent(agentId)
+  }
+
+  getAgentReflectionSummary(staleThresholdDays = 14): AgentReflectionSummary {
+    const now = Date.now()
+    const dayMs = 24 * 60 * 60 * 1000
+    const thresholdMs = staleThresholdDays * dayMs
+    const agentRows = this.listAgents()
+
+    // Single batched read for all active memory rules across every agent;
+    // group client-side to avoid N+1 SQLite queries when this summary screen
+    // opens.
+    const allRules = this.db
+      .select()
+      .from(agentMemory)
+      .where(eq(agentMemory.active, true))
+      .orderBy(asc(agentMemory.createdAt))
+      .all()
+      .map((row) => AgentMemoryRuleSchema.parse(row))
+
+    const rulesByAgentId = new Map<string, AgentMemoryRule[]>()
+    for (const rule of allRules) {
+      const bucket = rulesByAgentId.get(rule.agentId)
+      if (bucket) {
+        bucket.push(rule)
+      } else {
+        rulesByAgentId.set(rule.agentId, [rule])
+      }
+    }
+
+    const entries = agentRows.map((agent) => {
+      const referenceIso = agent.lastUsedAt ?? agent.createdAt
+      const referenceMs = Date.parse(referenceIso)
+      const ageMs = Number.isNaN(referenceMs) ? Number.POSITIVE_INFINITY : now - referenceMs
+      const daysSinceUsed = agent.lastUsedAt
+        ? Math.floor((now - Date.parse(agent.lastUsedAt)) / dayMs)
+        : null
+      return {
+        agent,
+        rules: rulesByAgentId.get(agent.id) ?? [],
+        isStale: ageMs >= thresholdMs,
+        daysSinceUsed
+      }
+    })
+
+    return AgentReflectionSummarySchema.parse({
+      entries,
+      staleThresholdDays,
+      generatedAt: new Date().toISOString()
+    })
+  }
+
+  unarchiveAgent(agentId: string): Agent {
+    if (!this.hasAgent(agentId)) {
+      throw new Error('Agent was not found.')
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(agents)
+      .set({ archivedAt: null, updatedAt: now })
+      .where(eq(agents.id, agentId))
+      .run()
+    return this.getAgent(agentId)
   }
 
   hasAgent(id: string): boolean {
@@ -596,6 +712,7 @@ export class OrdinusDatabase {
         tx.delete(conversations).where(inArray(conversations.id, emptyConversationIds)).run()
       }
 
+      tx.delete(agentMemory).where(eq(agentMemory.agentId, agent.id)).run()
       tx.delete(agents).where(eq(agents.id, agent.id)).run()
 
       return AgentDeleteResultSchema.parse({
@@ -630,6 +747,7 @@ export class OrdinusDatabase {
         sandbox: parsed.sandbox,
         connectors: parsed.connectors,
         enabled: parsed.enabled,
+        ...(parsed.avatar !== undefined ? { avatar: parsed.avatar } : {}),
         updatedAt: now
       })
       .where(eq(agents.id, parsed.id))
@@ -664,6 +782,87 @@ export class OrdinusDatabase {
 
   deletePendingPlan(id: string): void {
     this.db.delete(pendingPlans).where(eq(pendingPlans.id, id)).run()
+  }
+
+  listAgentMemoryRules(input: AgentMemoryListInput): AgentMemoryRule[] {
+    const parsed = AgentMemoryListInputSchema.parse(input)
+    const condition = parsed.includeInactive
+      ? eq(agentMemory.agentId, parsed.agentId)
+      : and(eq(agentMemory.agentId, parsed.agentId), eq(agentMemory.active, true))
+
+    return this.db
+      .select()
+      .from(agentMemory)
+      .where(condition)
+      .orderBy(asc(agentMemory.createdAt))
+      .all()
+      .map((row) => AgentMemoryRuleSchema.parse(row))
+  }
+
+  addAgentMemoryRule(input: AgentMemoryAddInput): AgentMemoryRule {
+    const parsed = AgentMemoryAddInputSchema.parse(input)
+    if (!this.hasAgent(parsed.agentId)) {
+      throw new Error('Agent was not found.')
+    }
+
+    const now = new Date().toISOString()
+    const rule = AgentMemoryRuleSchema.parse({
+      id: `am-${randomUUID()}`,
+      agentId: parsed.agentId,
+      rule: parsed.rule,
+      sourceFeedbackId: parsed.sourceFeedbackId ?? null,
+      active: true,
+      createdAt: now,
+      updatedAt: now
+    })
+
+    this.db.insert(agentMemory).values(rule).run()
+
+    return rule
+  }
+
+  updateAgentMemoryRule(input: AgentMemoryUpdateInput): AgentMemoryRule {
+    const parsed = AgentMemoryUpdateInputSchema.parse(input)
+    const existing = this.db
+      .select()
+      .from(agentMemory)
+      .where(and(eq(agentMemory.id, parsed.ruleId), eq(agentMemory.agentId, parsed.agentId)))
+      .get()
+
+    if (!existing) {
+      throw new Error('Memory rule was not found.')
+    }
+
+    const now = new Date().toISOString()
+    this.db
+      .update(agentMemory)
+      .set({ rule: parsed.rule, updatedAt: now })
+      .where(eq(agentMemory.id, parsed.ruleId))
+      .run()
+
+    return AgentMemoryRuleSchema.parse({ ...existing, rule: parsed.rule, updatedAt: now })
+  }
+
+  deactivateAgentMemoryRule(input: AgentMemoryDeactivateInput): AgentMemoryDeactivateResult {
+    const parsed = AgentMemoryDeactivateInputSchema.parse(input)
+    const existing = this.db
+      .select({ id: agentMemory.id })
+      .from(agentMemory)
+      .where(and(eq(agentMemory.id, parsed.ruleId), eq(agentMemory.agentId, parsed.agentId)))
+      .get()
+
+    if (!existing) {
+      throw new Error('Memory rule was not found.')
+    }
+
+    const now = new Date().toISOString()
+    this.db
+      .update(agentMemory)
+      .set({ active: false, updatedAt: now })
+      .where(eq(agentMemory.id, parsed.ruleId))
+      .run()
+
+    return AgentMemoryDeactivateResultSchema.parse({ deactivatedRuleId: parsed.ruleId })
   }
 
   createWorkRun(input: WorkRunCreateInput): WorkRun {

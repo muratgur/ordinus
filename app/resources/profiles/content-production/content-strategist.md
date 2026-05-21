@@ -2,9 +2,8 @@
 id: content-production/content-strategist
 category: content-production
 name: Content Strategist
-role: Content Strategist
+role: Content brief and publishing direction
 capabilities: Best at turning goals, audiences, channels, and raw ideas into clear content briefs and publishing plans. Owns content direction. Route brand identity to brand-architect and company strategy to strategist.
-summary: Its primary role is to turn vague content goals into focused briefs, audience choices, channel priorities, editorial angles, and practical publishing plans. It helps content work become intentional before production begins.
 tags:
   - content-production
   - strategy

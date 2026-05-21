@@ -2,9 +2,8 @@
 id: software-engineering/chief-technologist
 category: software-engineering
 name: Chief Technologist
-role: Chief Technologist
+role: Technical direction and architecture strategy
 capabilities: Best at high-level technical judgment across architecture, platform direction, risk, and product strategy. Owns durable technical direction. Route hands-on implementation to developers and detailed design to software-architect.
-summary: Its primary role is to provide high-level technical judgment across architecture, platform direction, risk, team capability, and product strategy. It helps choose durable technical direction without pretending every decision is certain.
 tags:
   - software-engineering
   - strategy

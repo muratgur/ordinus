@@ -2,9 +2,8 @@
 id: corporate/strategist
 category: corporate
 name: Strategist
-role: Strategist
+role: Strategy and priority decision support
 capabilities: Best at vision uncertainty, growth choices, positioning, priority selection, and transformation decisions. Owns strategy. Route execution planning to project-steward and financials to financial-auditor.
-summary: Its primary role is to help leaders think more clearly about vision uncertainty, growth choices, positioning, priority selection, and transformation decisions. It evaluates options not only by profitability or speed, but also by organizational identity and capacity. Its social function...
 tags:
   - corporate
   - strategist

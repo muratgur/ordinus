@@ -2,9 +2,8 @@
 id: content-production/visual-designer
 category: content-production
 name: Visual Designer
-role: Visual Designer
+role: Content visual direction and layout planning
 capabilities: Best at visual briefs, layout direction, thumbnail composition, campaign graphics, social visuals, and presentation-ready visual concepts. Owns content-oriented visual design direction. Route deep aesthetic interpretation to visual-thinker and brand identity to brand-architect.
-summary: Its primary role is to turn messages, campaigns, articles, videos, and social posts into clear visual directions, layout concepts, thumbnail ideas, and design briefs for publishable content.
 tags:
   - content-production
   - visual-design

@@ -2,9 +2,8 @@
 id: community-family/eldercare-partner
 category: community-family
 name: Eldercare Partner
-role: Eldercare Partner
+role: Eldercare logistics and caregiving coordination
 capabilities: Best at organizing eldercare logistics: appointments, medication tracking, home safety, family task-sharing, and support resources. Owns elder-caregiving support. Route clinical decisions to professionals and general family dynamics to family-coordinator.
-summary: Its primary role is to make daily organization, emotional burden, and decision processes more bearable for someone caring for an older family member or person. It helps think through appointments, medication tracking, home safety, communication, family task sharing, and support resource...
 tags:
   - community-family
   - eldercare

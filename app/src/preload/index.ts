@@ -8,6 +8,14 @@ import type {
   AgentDraft,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
+  AgentArchiveInput,
+  AgentMemoryAddInput,
+  AgentMemoryDeactivateInput,
+  AgentMemoryDeactivateResult,
+  AgentMemoryListInput,
+  AgentMemoryRule,
+  AgentMemoryUpdateInput,
+  AgentReflectionSummary,
   ConnectorActionInput,
   ConnectorSummary,
   AgentProfileCatalog,
@@ -121,7 +129,23 @@ const ordinus = {
     updateSkill: async (input: AgentSkillUpdateInput): Promise<AgentSkill> =>
       ipcRenderer.invoke(ipcChannels.agentsUpdateSkill, input),
     deleteSkill: async (input: AgentSkillDeleteInput): Promise<AgentSkillDeleteResult> =>
-      ipcRenderer.invoke(ipcChannels.agentsDeleteSkill, input)
+      ipcRenderer.invoke(ipcChannels.agentsDeleteSkill, input),
+    listMemory: async (input: AgentMemoryListInput): Promise<AgentMemoryRule[]> =>
+      ipcRenderer.invoke(ipcChannels.agentsListMemory, input),
+    addMemory: async (input: AgentMemoryAddInput): Promise<AgentMemoryRule> =>
+      ipcRenderer.invoke(ipcChannels.agentsAddMemory, input),
+    updateMemory: async (input: AgentMemoryUpdateInput): Promise<AgentMemoryRule> =>
+      ipcRenderer.invoke(ipcChannels.agentsUpdateMemory, input),
+    deactivateMemory: async (
+      input: AgentMemoryDeactivateInput
+    ): Promise<AgentMemoryDeactivateResult> =>
+      ipcRenderer.invoke(ipcChannels.agentsDeactivateMemory, input),
+    archive: async (input: AgentArchiveInput): Promise<Agent> =>
+      ipcRenderer.invoke(ipcChannels.agentsArchive, input),
+    unarchive: async (input: AgentArchiveInput): Promise<Agent> =>
+      ipcRenderer.invoke(ipcChannels.agentsUnarchive, input),
+    listReflection: async (): Promise<AgentReflectionSummary> =>
+      ipcRenderer.invoke(ipcChannels.agentsListReflection)
   },
   conversations: {
     list: async (): Promise<ConversationListItem[]> =>

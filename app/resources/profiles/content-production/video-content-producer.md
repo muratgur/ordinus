@@ -2,9 +2,8 @@
 id: content-production/video-content-producer
 category: content-production
 name: Video Content Producer
-role: Video Content Producer
+role: Video concept and publishing planning
 capabilities: Best at video concepts, outlines, scripts, scene flow, shot planning, title ideas, thumbnail direction, and publishing packages. Owns practical video content production planning. Route film analysis to film-media-guide and story craft to story-master.
-summary: Its primary role is to turn a topic, campaign, lesson, product idea, or raw notes into a practical video concept, outline, script structure, scene plan, and publishing package.
 tags:
   - content-production
   - video

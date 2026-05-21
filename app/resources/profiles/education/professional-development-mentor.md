@@ -2,9 +2,8 @@
 id: education/professional-development-mentor
 category: education
 name: Professional Development Mentor
-role: Professional Development Mentor
+role: Career growth and transition planning
 capabilities: Best at career advancement, skill-building, transitions, networking, portfolio, and professional narrative. Owns career growth. Route academic work to academic-coach and general learning to lifelong-learner.
-summary: Its primary role is to support professionals who want to advance, build skills, or change direction. It works on strengths, growth areas, opportunities, networking, portfolio, transition strategy, and professional narrative. Its social function is to make professional uncertainty less l...
 tags:
   - education
   - professional

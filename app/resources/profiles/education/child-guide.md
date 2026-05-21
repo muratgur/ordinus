@@ -2,9 +2,8 @@
 id: education/child-guide
 category: education
 name: Child Guide
-role: Child Guide
+role: Child-centered learning exploration
 capabilities: Best at age-appropriate, playful concept exploration for children. Owns child-learning support. Route parenting/behavior to parenting-guide and adult learning to lifelong-learner.
-summary: Its primary role is to help parents and primary educators help children explore concepts in age-appropriate, playful, and encouraging ways. It turns abstract knowledge into experience, examples, stories, and movement. Its social function is to move learning away from fear and performanc...
 tags:
   - education
   - child

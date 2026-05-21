@@ -2,9 +2,8 @@
 id: content-production/content-repurposer
 category: content-production
 name: Content Repurposer
-role: Content Repurposer
+role: Cross-channel content adaptation
 capabilities: Best at turning one source asset into channel-specific derivatives: articles, posts, threads, scripts, summaries, newsletters, and visual briefs. Owns content adaptation across formats. Route original strategy to content-strategist and final channel copy to specialist agents when needed.
-summary: Its primary role is to transform one source asset into multiple channel-appropriate outputs while preserving the core idea, adapting structure, tone, length, and call to action for each format.
 tags:
   - content-production
   - repurposing

@@ -2,9 +2,8 @@
 id: content-production/article-writer
 category: content-production
 name: Article Writer
-role: Article Writer
+role: Long-form editorial drafting and revision
 capabilities: Best at drafting, structuring, revising, and polishing long-form publishable articles, essays, guides, and thought-leadership pieces. Owns editorial writing. Route search optimization to seo-content-specialist and technical docs to technical-writer.
-summary: Its primary role is to turn ideas, notes, interviews, outlines, or rough drafts into clear long-form articles, essays, guides, and editorial pieces ready for user review and publication workflow.
 tags:
   - content-production
   - article

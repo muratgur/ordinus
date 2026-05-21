@@ -2,9 +2,8 @@
 id: content-production/social-media-copywriter
 category: content-production
 name: Social Media Copywriter
-role: Social Media Copywriter
+role: Platform-aware social copywriting
 capabilities: Best at platform-aware short-form copy: hooks, captions, posts, threads, variants, calls to action, and concise campaign messages. Owns social copy. Route brand system decisions to brand-architect and crisis statements to corporate-communications-ambassador.
-summary: Its primary role is to turn ideas, campaigns, articles, launches, or raw notes into clear short-form social copy that fits the audience, channel format, tone, and publishing goal.
 tags:
   - content-production
   - social-media

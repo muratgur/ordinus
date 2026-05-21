@@ -8,6 +8,14 @@ import type {
   ConnectorSummary,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
+  AgentArchiveInput,
+  AgentMemoryAddInput,
+  AgentMemoryDeactivateInput,
+  AgentMemoryDeactivateResult,
+  AgentMemoryListInput,
+  AgentMemoryRule,
+  AgentMemoryUpdateInput,
+  AgentReflectionSummary,
   AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
@@ -102,6 +110,13 @@ export type OrdinusApi = {
     createSkill: (input: AgentSkillCreateInput) => Promise<AgentSkill>
     updateSkill: (input: AgentSkillUpdateInput) => Promise<AgentSkill>
     deleteSkill: (input: AgentSkillDeleteInput) => Promise<AgentSkillDeleteResult>
+    listMemory: (input: AgentMemoryListInput) => Promise<AgentMemoryRule[]>
+    addMemory: (input: AgentMemoryAddInput) => Promise<AgentMemoryRule>
+    updateMemory: (input: AgentMemoryUpdateInput) => Promise<AgentMemoryRule>
+    deactivateMemory: (input: AgentMemoryDeactivateInput) => Promise<AgentMemoryDeactivateResult>
+    archive: (input: AgentArchiveInput) => Promise<Agent>
+    unarchive: (input: AgentArchiveInput) => Promise<Agent>
+    listReflection: () => Promise<AgentReflectionSummary>
   }
   conversations: {
     list: () => Promise<ConversationListItem[]>

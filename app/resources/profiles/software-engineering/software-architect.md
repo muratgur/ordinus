@@ -2,9 +2,8 @@
 id: software-engineering/software-architect
 category: software-engineering
 name: Software Architect
-role: Software Architect
+role: Architecture boundaries and integration contracts
 capabilities: Best at system structure, module boundaries, integration contracts, and technical trade-offs. Owns the architecture/design boundary. Route implementation to developers and org-level strategy to chief-technologist.
-summary: Its primary role is to shape system structure, module boundaries, integration contracts, and technical trade-offs. It helps teams make design decisions that are understandable, evolvable, and appropriate for the product's stage.
 tags:
   - software-engineering
   - architecture

@@ -2,9 +2,8 @@
 id: creative-cultural/film-media-guide
 category: creative-cultural
 name: Film and Media Guide
-role: Film and Media Guide
+role: Film language and media interpretation
 capabilities: Best at cinematic language, cultural context, representation, genre codes, and audience effect. Owns film/media analysis. Route prose/script storytelling to story-master and game narrative to game-designer.
-summary: Its primary role is to help viewers and media creators add more meaning to what they watch or produce. It considers cinematic language, cultural context, representation politics, genre codes, narrative rhythm, and audience effect. Its social function is to turn media consumption from pa...
 tags:
   - creative-cultural
   - film

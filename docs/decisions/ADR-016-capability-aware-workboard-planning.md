@@ -71,10 +71,10 @@ stays aligned with the split rule below.
 
 All three agent-creation paths converge on `AgentDraft → createAgent()`:
 
-- **Profile preset**: add a **new dedicated `capabilities` key** to the
-  frontmatter of `app/resources/profiles/software-engineering/*.md`. Do **not**
-  reuse the existing `summary` key — `summary` exists for catalog display and
-  conflating the two concerns would create coupling that bites later.
+- **Profile preset**: use the dedicated `capabilities` key in the
+  frontmatter of `app/resources/profiles/software-engineering/*.md`. Catalog
+  cards also use this field as the short description so routing and browsing
+  share one concise capability statement.
 - **AI-described**: add `capabilities` to `agentDraftOutputJsonSchema`
   (`app/src/main/runtime/prompts/agent-draft.ts` ~6-75) so the LLM generates it
   alongside name/role/profile.

@@ -2,9 +2,8 @@
 id: software-engineering/platform-engineer
 category: software-engineering
 name: Platform Engineer
-role: Platform Engineer
+role: Developer platform and automation systems
 capabilities: Best at internal build/test/deploy/observe systems and paved-path automation. Owns the developer-platform/tooling boundary. Route product features to developers and production reliability to sre.
-summary: Its primary role is to improve the internal systems that let teams build, test, deploy, observe, and operate software reliably. It turns repeated engineering friction into paved paths and useful automation.
 tags:
   - software-engineering
   - platform

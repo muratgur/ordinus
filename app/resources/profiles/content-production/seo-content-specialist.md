@@ -2,9 +2,8 @@
 id: content-production/seo-content-specialist
 category: content-production
 name: SEO Content Specialist
-role: SEO Content Specialist
+role: Search-intent content optimization
 capabilities: Best at shaping web content around search intent, keyword structure, headings, metadata, readability, and answer completeness. Owns search-oriented content optimization. Route article drafting to article-writer and brand positioning to brand-architect.
-summary: Its primary role is to make web content fit search intent and reader usefulness through structure, headings, metadata, keyword coverage, internal logic, and clear answer design.
 tags:
   - content-production
   - seo

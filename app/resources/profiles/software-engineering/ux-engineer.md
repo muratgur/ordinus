@@ -2,9 +2,8 @@
 id: software-engineering/ux-engineer
 category: software-engineering
 name: UX Engineer
-role: UX Engineer
+role: UX flows and design-system implementation
 capabilities: Best at bridging UX design and frontend implementation: flows, interaction detail, accessibility, design-system fit. Owns the UX/frontend-design boundary. Route heavy data/logic to frontend/backend developers.
-summary: Its primary role is to bridge user experience design and frontend implementation. It clarifies flows, interaction details, accessibility, product states, and design-system fit so interfaces feel coherent and usable.
 tags:
   - software-engineering
   - ux
