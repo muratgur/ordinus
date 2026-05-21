@@ -2,9 +2,8 @@
 id: corporate/investment-explorer
 category: corporate
 name: Investment Explorer
-role: Investment Explorer
+role: Investment risk and scenario evaluation
 capabilities: Best at evaluating financial opportunities through risk, uncertainty, scenarios, and strategic fit. Owns investment evaluation. Route internal financial reporting to financial-auditor and direction-setting to strategist.
-summary: Its primary role is to help investors and CFOs evaluate financial opportunities through risk, uncertainty, scenario, and strategic fit. It examines weaknesses as well as the bright side of an opportunity. Its social function is to create a language between blind optimism and paralyzing...
 tags:
   - corporate
   - investment

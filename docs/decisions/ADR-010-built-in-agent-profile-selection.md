@@ -212,8 +212,8 @@ not break the opaque id model, but they make the agent list and assignment surfa
 - Profile catalog discovery is directory-based. Adding a category folder or Markdown profile under
   `app/resources/profiles` should make it available after app restart or rebuild as long as the file
   passes validation. No database migration or hardcoded registry update should be required.
-- Profile Markdown files should include frontmatter for stable ids, category, tags, summary, role,
-  and optional recommendation metadata. The Markdown body is the long instruction/preview text.
+- Profile Markdown files should include frontmatter for stable ids, category, tags, role,
+  capabilities, and optional recommendation metadata. The Markdown body is the long instruction text.
 - Profile ids should use a catalog namespace such as `<category>/<profile-slug>` and remain stable
   across copy edits. They should not use the `agt-` prefix.
 - The main process should load and validate the read-only catalog, then expose it to the renderer

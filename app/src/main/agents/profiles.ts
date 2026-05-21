@@ -66,6 +66,7 @@ export function buildAgentDraftFromProfile(
     model: defaults.model,
     sandbox: 'workspace-write',
     connectors: profile.suggestedConnectors,
+    avatar: '',
     enabled: true
   }
 }
@@ -107,6 +108,7 @@ export function buildBlankAgentDraft(defaults: ProfileDraftDefaults): AgentDraft
     model: defaults.model,
     sandbox: 'workspace-write',
     connectors: [],
+    avatar: '',
     enabled: true
   }
 }
@@ -130,7 +132,6 @@ function readProfileFile(categoryRoot: string, category: string, fileName: strin
     name: parsed.frontmatter.name,
     role: parsed.frontmatter.role,
     capabilities: parsed.frontmatter.capabilities ?? '',
-    summary: parsed.frontmatter.summary,
     tags: parsed.frontmatter.tags ?? [],
     recommended: parsed.frontmatter.recommended ?? false,
     suggestedConnectors: parsed.frontmatter.suggestedConnectors ?? [],

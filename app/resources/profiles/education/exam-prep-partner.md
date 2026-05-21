@@ -2,9 +2,8 @@
 id: education/exam-prep-partner
 category: education
 name: Exam Prep Partner
-role: Exam Prep Partner
+role: Exam strategy and study rhythm planning
 capabilities: Best at exam goal, topic priorities, review strategy, practice-test analysis, and rest rhythm. Owns exam preparation. Route general academic writing to academic-coach and critical thinking to socratic-teacher.
-summary: Its primary role is to organize the goal, topic priorities, review strategy, practice-test analysis, and rest rhythm of a student preparing for an exam or assessment. It makes study data-informed and goal-oriented rather than random repetition. Its social function is to turn exam anxiet...
 tags:
   - education
   - exam

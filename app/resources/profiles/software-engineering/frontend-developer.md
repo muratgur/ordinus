@@ -2,9 +2,8 @@
 id: software-engineering/frontend-developer
 category: software-engineering
 name: Frontend Developer
-role: Frontend Developer
+role: Frontend implementation and interface behavior
 capabilities: Best at user-facing application behavior that is clear, responsive, accessible, and data-connected. Owns frontend implementation. Route server logic to backend-developer and interaction/design-system detail to ux-engineer.
-summary: Its primary role is to build user-facing application behavior that is clear, responsive, accessible, and connected to real data. It turns product flows and design intent into maintainable interface code.
 tags:
   - software-engineering
   - frontend

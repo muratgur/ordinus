@@ -128,7 +128,44 @@ a {
   -webkit-app-region: no-drag;
 }
 
+@property --ordinus-thinking-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes ordinus-thinking-border {
+  to {
+    --ordinus-thinking-angle: 360deg;
+  }
+}
+
 @layer utilities {
+  .ordinus-thinking-field {
+    --ordinus-thinking-angle: 0deg;
+    background:
+      linear-gradient(hsl(var(--card)), hsl(var(--card))) padding-box,
+      conic-gradient(
+          from var(--ordinus-thinking-angle),
+          hsl(var(--primary) / 0.18),
+          hsl(var(--status-running) / 0.55) 18%,
+          hsl(var(--status-editing) / 0.5) 36%,
+          hsl(var(--primary) / 0.62) 52%,
+          hsl(var(--status-completed) / 0.38) 68%,
+          hsl(var(--primary) / 0.18)
+        )
+        border-box;
+    border: 1px solid transparent;
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.06);
+    animation: ordinus-thinking-border 2.8s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ordinus-thinking-field {
+      animation: none;
+    }
+  }
+
   .ordinus-scrollbar {
     scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
     scrollbar-width: auto;

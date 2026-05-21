@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useRef, useState, useId } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from 'react'
 import {
   AlertTriangle,
-  ArrowLeft,
-  BookOpen,
   Bot,
   FileText,
   Info,
@@ -13,11 +11,9 @@ import {
   Settings2,
   Sparkles,
   Trash2,
-  WandSparkles,
-  X
+  WandSparkles
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
-import { Badge } from '@renderer/components/ui/badge'
 import { SelectControl } from '@renderer/components/select-control'
 import {
   Card,
@@ -39,11 +35,10 @@ import { Switch } from '@renderer/components/ui/switch'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import { notify } from '@renderer/lib/notifications'
+import { AgentCreationFlow } from '@renderer/components/agent-creation-flow'
+import { AgentReflectionDialog } from '@renderer/components/agent-reflection-dialog'
 import type {
   Agent,
-  AgentDraft,
-  AgentProfile,
-  AgentProfileCatalog,
   AgentSandbox,
   AgentSkill,
   ConnectorSummary,
@@ -53,8 +48,6 @@ import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/pro
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
 type AgentSection = 'instructions' | 'skills' | 'settings'
-type CreateAgentStep = 'catalog' | 'describe' | 'review'
-type ReviewBackStep = 'catalog' | 'describe'
 type SettingsDraft = {
   name: string
   role: string
@@ -101,6 +94,7 @@ export function AgentsScreen(): React.JSX.Element {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('')
   const [activeSection, setActiveSection] = useState<AgentSection>('instructions')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  const [reflectionOpen, setReflectionOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -110,39 +104,28 @@ export function AgentsScreen(): React.JSX.Element {
     [agents, selectedAgentId]
   )
 
-  useEffect(() => {
-    let mounted = true
-
-    async function loadAgents(): Promise<void> {
-      try {
-        setLoading(true)
-        const nextAgents = await window.ordinus.agents.list()
-        if (!mounted) return
-
-        setAgents(nextAgents)
-        setSelectedAgentId((current) => {
-          if (nextAgents.some((agent) => agent.id === current)) {
-            return current
-          }
-          return nextAgents[0]?.id ?? ''
-        })
-        setError('')
-      } catch (loadError) {
-        if (!mounted) return
-        setError(getErrorMessage(loadError, 'Agents could not be loaded.'))
-      } finally {
-        if (mounted) {
-          setLoading(false)
+  const reloadAgents = useCallback(async (): Promise<void> => {
+    try {
+      setLoading(true)
+      const nextAgents = await window.ordinus.agents.list()
+      setAgents(nextAgents)
+      setSelectedAgentId((current) => {
+        if (nextAgents.some((agent) => agent.id === current)) {
+          return current
         }
-      }
-    }
-
-    void loadAgents()
-
-    return () => {
-      mounted = false
+        return nextAgents[0]?.id ?? ''
+      })
+      setError('')
+    } catch (loadError) {
+      setError(getErrorMessage(loadError, 'Agents could not be loaded.'))
+    } finally {
+      setLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    void reloadAgents()
+  }, [reloadAgents])
 
   function handleAgentSaved(nextAgent: Agent): void {
     setAgents((currentAgents) => {
@@ -201,6 +184,7 @@ export function AgentsScreen(): React.JSX.Element {
         selectedAgentId={selectedAgent?.id ?? ''}
         onCreateAgent={() => setCreateAgentOpen(true)}
         onSelectAgent={setSelectedAgentId}
+        onOpenReflection={() => setReflectionOpen(true)}
       />
 
       <main className="min-w-0 xl:min-h-0">
@@ -257,11 +241,17 @@ export function AgentsScreen(): React.JSX.Element {
         </Card>
       </main>
 
-      <CreateAgentDialog
-        agents={agents}
+      <AgentCreationFlow
         open={createAgentOpen}
-        onAgentCreated={handleAgentCreated}
         onOpenChange={setCreateAgentOpen}
+        onAgentCreated={handleAgentCreated}
+        existingAgentNames={agents.map((agent) => agent.name)}
+      />
+
+      <AgentReflectionDialog
+        open={reflectionOpen}
+        onOpenChange={setReflectionOpen}
+        onChanged={() => void reloadAgents()}
       />
 
       {selectedAgent ? (
@@ -346,13 +336,15 @@ function AgentLibrary({
   loading,
   selectedAgentId,
   onCreateAgent,
-  onSelectAgent
+  onSelectAgent,
+  onOpenReflection
 }: {
   agents: Agent[]
   loading: boolean
   selectedAgentId: string
   onCreateAgent: () => void
   onSelectAgent: (agentId: string) => void
+  onOpenReflection: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const filteredAgents = agents.filter((agent) => {
@@ -374,9 +366,19 @@ function AgentLibrary({
                 {loading ? 'Loading' : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}
               </CardDescription>
             </div>
-            <Button size="icon" aria-label="Create agent" onClick={onCreateAgent}>
-              <Plus />
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label="Agent reflection"
+                onClick={onOpenReflection}
+              >
+                Reflect
+              </Button>
+              <Button size="icon" aria-label="Create agent" onClick={onCreateAgent}>
+                <Plus />
+              </Button>
+            </div>
           </div>
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -453,741 +455,6 @@ function AgentDetail({
   )
 }
 
-function CreateAgentDialog({
-  agents,
-  open,
-  onAgentCreated,
-  onOpenChange
-}: {
-  agents: Agent[]
-  open: boolean
-  onAgentCreated: (agent: Agent) => void
-  onOpenChange: (open: boolean) => void
-}): React.JSX.Element {
-  const [step, setStep] = useState<CreateAgentStep>('catalog')
-  const [reviewBackStep, setReviewBackStep] = useState<ReviewBackStep>('catalog')
-  const [catalog, setCatalog] = useState<AgentProfileCatalog | null>(null)
-  const [catalogLoading, setCatalogLoading] = useState(false)
-  const [catalogQuery, setCatalogQuery] = useState('')
-  const [selectedCategoryId, setSelectedCategoryId] = useState('all')
-  const [selectedProfileId, setSelectedProfileId] = useState('')
-  const [intent, setIntent] = useState('')
-  const [draft, setDraft] = useState<AgentDraft | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [improvingCapabilities, setImprovingCapabilities] = useState(false)
-  const [error, setError] = useState('')
-  const canDraft = intent.trim().length >= 12 && !busy
-  const nameIssue = draft ? getAgentNameIssue(draft.name, '', agents, '') : null
-  const canCreate =
-    Boolean(
-      draft?.name.trim() && draft.role.trim() && draft.instructions.trim() && draft.model.trim()
-    ) &&
-    !nameIssue &&
-    !busy
-  const selectedProfile =
-    catalog?.profiles.find((profile) => profile.id === selectedProfileId) ?? null
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    let mounted = true
-
-    async function loadCatalog(): Promise<void> {
-      try {
-        setCatalogLoading(true)
-        setError('')
-        const nextCatalog = await window.ordinus.agents.listProfiles()
-        if (!mounted) return
-
-        setCatalog(nextCatalog)
-        setSelectedProfileId('')
-      } catch (loadError) {
-        if (mounted) {
-          setError(getErrorMessage(loadError, 'Agent profiles could not be loaded.'))
-        }
-      } finally {
-        if (mounted) {
-          setCatalogLoading(false)
-        }
-      }
-    }
-
-    void loadCatalog()
-
-    return () => {
-      mounted = false
-    }
-  }, [open])
-
-  function resetDialog(): void {
-    setStep('catalog')
-    setReviewBackStep('catalog')
-    setCatalogQuery('')
-    setSelectedCategoryId('all')
-    setSelectedProfileId('')
-    setIntent('')
-    setDraft(null)
-    setBusy(false)
-    setError('')
-  }
-
-  function handleOpenChange(nextOpen: boolean): void {
-    onOpenChange(nextOpen)
-    if (!nextOpen) {
-      resetDialog()
-    }
-  }
-
-  function updateDraft(next: Partial<AgentDraft>): void {
-    setDraft((current) => (current ? { ...current, ...next } : current))
-  }
-
-  function setReviewDraft(nextDraft: AgentDraft, backStep: ReviewBackStep): void {
-    setDraft({
-      ...nextDraft,
-      model: getSupportedModelOrDefault(nextDraft.providerId, nextDraft.model),
-      enabled: nextDraft.enabled ?? true
-    })
-    setReviewBackStep(backStep)
-    setStep('review')
-  }
-
-  async function handleUseProfile(profileId: string): Promise<void> {
-    try {
-      setBusy(true)
-      setError('')
-      const nextDraft = await window.ordinus.agents.draftFromProfile({ profileId })
-      setReviewDraft(nextDraft, 'catalog')
-    } catch (draftError) {
-      setError(getErrorMessage(draftError, 'Agent draft could not be created from this profile.'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleBlankAgent(): Promise<void> {
-    try {
-      setBusy(true)
-      setError('')
-      const nextDraft = await window.ordinus.agents.draftBlank()
-      setReviewDraft(nextDraft, 'catalog')
-    } catch (draftError) {
-      setError(getErrorMessage(draftError, 'Blank agent draft could not be created.'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleDraftAgent(): Promise<void> {
-    if (!canDraft) {
-      return
-    }
-
-    try {
-      setBusy(true)
-      setError('')
-      const nextDraft = await window.ordinus.agents.draftFromIntent({
-        requestedWork: intent,
-        sandbox: 'workspace-write'
-      })
-      setReviewDraft(nextDraft, 'describe')
-    } catch (draftError) {
-      setError(getErrorMessage(draftError, 'Agent draft could not be generated.'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  function handleProviderChange(providerId: ProviderId): void {
-    updateDraft({ providerId, model: getDefaultModelForProvider(providerId) })
-  }
-
-  async function handleImproveCapabilities(): Promise<void> {
-    if (!draft || improvingCapabilities) {
-      return
-    }
-
-    const source = draft.instructions.trim()
-    if (source.length < 12) {
-      return
-    }
-
-    try {
-      setImprovingCapabilities(true)
-      setError('')
-      const nextDraft = await window.ordinus.agents.draftFromIntent({
-        requestedWork: source,
-        sandbox: draft.sandbox
-      })
-      updateDraft({ capabilities: nextDraft.capabilities })
-    } catch (improveError) {
-      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
-    } finally {
-      setImprovingCapabilities(false)
-    }
-  }
-
-  async function handleCreateAgent(): Promise<void> {
-    if (!draft || !canCreate) {
-      return
-    }
-
-    try {
-      setBusy(true)
-      setError('')
-      const agent = await window.ordinus.agents.create({
-        ...draft,
-        name: draft.name.trim(),
-        role: draft.role.trim(),
-        model: draft.model.trim(),
-        enabled: draft.enabled
-      })
-      onAgentCreated(agent)
-      resetDialog()
-    } catch (createError) {
-      setError(getErrorMessage(createError, 'Agent could not be created.'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="grid h-[min(860px,calc(100vh-2rem))] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
-        <div className="border-b p-5 pr-12">
-          <DialogHeader>
-            <DialogTitle>Add agent</DialogTitle>
-            <DialogDescription>{getCreateAgentDialogDescription(step)}</DialogDescription>
-          </DialogHeader>
-        </div>
-
-        {step === 'catalog' ? (
-          <ProfileCatalogStep
-            busy={busy}
-            catalog={catalog}
-            categoryId={selectedCategoryId}
-            error={error}
-            loading={catalogLoading}
-            query={catalogQuery}
-            selectedProfile={selectedProfile}
-            selectedProfileId={selectedProfileId}
-            onBlankAgent={() => void handleBlankAgent()}
-            onCategoryChange={setSelectedCategoryId}
-            onCloseProfile={() => setSelectedProfileId('')}
-            onDescribeWithAi={() => {
-              setError('')
-              setStep('describe')
-            }}
-            onProfileSelect={setSelectedProfileId}
-            onQueryChange={setCatalogQuery}
-            onUseProfile={(profileId) => void handleUseProfile(profileId)}
-          />
-        ) : step === 'describe' ? (
-          <ScrollArea className="h-full min-h-0">
-            <div className="grid gap-4 p-5">
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold">What should this agent help with?</span>
-                <textarea
-                  className="ordinus-scrollbar min-h-44 resize-y rounded-lg border bg-card p-4 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                  placeholder="Example: I need an agent that reviews pull requests, checks missing tests, and flags risky changes before merge."
-                  value={intent}
-                  onChange={(event) => setIntent(event.target.value)}
-                />
-              </label>
-              <AgentBriefGuide />
-              {error ? <InlineError message={error} /> : null}
-            </div>
-          </ScrollArea>
-        ) : draft ? (
-          <ReviewAgentStep
-            draft={draft}
-            error={error}
-            nameIssue={nameIssue}
-            improvingCapabilities={improvingCapabilities}
-            onDraftChange={updateDraft}
-            onImproveCapabilities={() => void handleImproveCapabilities()}
-            onProviderChange={handleProviderChange}
-          />
-        ) : null}
-
-        <DialogFooter className="border-t bg-accent/50 p-4">
-          {step === 'catalog' ? (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => handleOpenChange(false)}
-            >
-              Cancel
-            </Button>
-          ) : step === 'describe' ? (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  setError('')
-                  setStep('catalog')
-                }}
-              >
-                <ArrowLeft />
-                Back
-              </Button>
-              <Button type="button" disabled={!canDraft} onClick={() => void handleDraftAgent()}>
-                {busy ? <Loader2 className="animate-spin" /> : <WandSparkles />}
-                Review draft
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  setError('')
-                  setStep(reviewBackStep)
-                }}
-              >
-                <ArrowLeft />
-                Back
-              </Button>
-              <Button type="button" disabled={!canCreate} onClick={() => void handleCreateAgent()}>
-                {busy ? <Loader2 className="animate-spin" /> : null}
-                Create agent
-              </Button>
-            </>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function ProfileCatalogStep({
-  busy,
-  catalog,
-  categoryId,
-  error,
-  loading,
-  query,
-  selectedProfile,
-  selectedProfileId,
-  onBlankAgent,
-  onCategoryChange,
-  onCloseProfile,
-  onDescribeWithAi,
-  onProfileSelect,
-  onQueryChange,
-  onUseProfile
-}: {
-  busy: boolean
-  catalog: AgentProfileCatalog | null
-  categoryId: string
-  error: string
-  loading: boolean
-  query: string
-  selectedProfile: AgentProfile | null
-  selectedProfileId: string
-  onBlankAgent: () => void
-  onCategoryChange: (categoryId: string) => void
-  onCloseProfile: () => void
-  onDescribeWithAi: () => void
-  onProfileSelect: (profileId: string) => void
-  onQueryChange: (query: string) => void
-  onUseProfile: (profileId: string) => void
-}): React.JSX.Element {
-  const profiles = getVisibleProfiles(catalog, categoryId, query)
-
-  return (
-    <div className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
-      <div className="grid gap-3 border-b bg-accent/30 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Search profiles"
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" disabled={busy} onClick={onDescribeWithAi}>
-            <WandSparkles />
-            Describe with AI
-          </Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={onBlankAgent}>
-            <Plus />
-            Blank agent
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid min-h-0 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <aside className="min-w-0 border-b p-3 lg:border-b-0 lg:border-r">
-          <ScrollArea className="max-h-40 lg:h-full lg:max-h-none">
-            <div className="flex gap-2 lg:grid">
-              <CategoryButton
-                active={categoryId === 'all'}
-                count={catalog?.profiles.length ?? 0}
-                label="All profiles"
-                onClick={() => onCategoryChange('all')}
-              />
-              {catalog?.categories.map((category) => (
-                <CategoryButton
-                  key={category.id}
-                  active={categoryId === category.id}
-                  count={category.count}
-                  label={category.label}
-                  onClick={() => onCategoryChange(category.id)}
-                />
-              ))}
-            </div>
-          </ScrollArea>
-        </aside>
-
-        <ScrollArea className="h-full min-h-0">
-          <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-            {error ? (
-              <div className="col-span-full">
-                <InlineError message={error} />
-              </div>
-            ) : null}
-
-            {profiles.map((profile) => (
-              <ProfileCard
-                key={profile.id}
-                catalog={catalog}
-                profile={profile}
-                selected={selectedProfileId === profile.id}
-                onSelect={onProfileSelect}
-              />
-            ))}
-
-            {loading ? (
-              <div className="col-span-full grid min-h-48 place-items-center rounded-lg border border-dashed bg-accent p-6 text-center text-sm text-muted-foreground">
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading profiles
-                </span>
-              </div>
-            ) : null}
-
-            {!loading && profiles.length === 0 ? (
-              <EmptyState
-                icon={<BookOpen />}
-                title={catalog?.profiles.length ? 'No profiles match this search' : 'No profiles'}
-                detail={
-                  catalog?.profiles.length
-                    ? 'Try another search term or category.'
-                    : 'Built-in profiles are not available in this build.'
-                }
-              />
-            ) : null}
-          </div>
-        </ScrollArea>
-      </div>
-
-      <ProfileDetailDrawer
-        busy={busy}
-        error={error}
-        open={Boolean(selectedProfile)}
-        profile={selectedProfile}
-        onClose={onCloseProfile}
-        onUseProfile={onUseProfile}
-      />
-    </div>
-  )
-}
-
-function ProfileCard({
-  catalog,
-  profile,
-  selected,
-  onSelect
-}: {
-  catalog: AgentProfileCatalog | null
-  profile: AgentProfile
-  selected: boolean
-  onSelect: (profileId: string) => void
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={cn(
-        'grid min-h-[172px] gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected && 'border-primary/50 bg-primary-soft/50'
-      )}
-      onClick={() => onSelect(profile.id)}
-    >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="line-clamp-2 text-sm font-semibold leading-5">{profile.name}</p>
-          <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{profile.role}</p>
-        </div>
-        {profile.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
-      </div>
-      <p className="line-clamp-3 text-xs leading-5 text-muted-foreground">{profile.summary}</p>
-      <div className="flex flex-wrap gap-1.5">
-        <Badge variant="outline">{getCategoryLabel(catalog, profile.category)}</Badge>
-        {profile.tags.slice(0, 2).map((tag) => (
-          <Badge key={tag} variant="outline">
-            {tag}
-          </Badge>
-        ))}
-      </div>
-    </button>
-  )
-}
-
-function CategoryButton({
-  active,
-  count,
-  label,
-  onClick
-}: {
-  active: boolean
-  count: number
-  label: string
-  onClick: () => void
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={cn(
-        'flex h-10 min-w-36 shrink-0 items-center justify-between gap-3 rounded-md px-3 text-left text-sm transition-colors lg:w-full',
-        active
-          ? 'bg-primary-soft text-foreground'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-      )}
-      onClick={onClick}
-    >
-      <span className="truncate">{label}</span>
-      <span className="shrink-0 text-xs">{count}</span>
-    </button>
-  )
-}
-
-function ProfileDetailDrawer({
-  busy,
-  error,
-  open,
-  profile,
-  onClose,
-  onUseProfile
-}: {
-  busy: boolean
-  error: string
-  open: boolean
-  profile: AgentProfile | null
-  onClose: () => void
-  onUseProfile: (profileId: string) => void
-}): React.JSX.Element {
-  function handleUseProfile(): void {
-    if (!profile) {
-      return
-    }
-
-    onUseProfile(profile.id)
-  }
-
-  return (
-    <div
-      className={cn(
-        'absolute inset-0 z-10 bg-background/45 transition-opacity',
-        open ? 'opacity-100' : 'pointer-events-none opacity-0'
-      )}
-    >
-      <button
-        type="button"
-        className="absolute inset-0 cursor-default"
-        aria-label="Close profile details"
-        onClick={onClose}
-      />
-      <aside
-        className={cn(
-          'absolute bottom-0 right-0 top-0 grid w-full max-w-xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden border-l bg-card shadow-lg transition-transform duration-200 sm:w-[520px]',
-          open ? 'translate-x-0' : 'translate-x-full'
-        )}
-      >
-        <div className="grid gap-2 border-b p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-base font-semibold leading-6">{profile?.name ?? 'Profile'}</p>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">{profile?.role ?? ''}</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {profile?.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
-              <Button type="button" variant="ghost" size="icon" onClick={onClose}>
-                <span className="sr-only">Close profile details</span>
-                <X />
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {profile?.tags.map((tag) => (
-              <Badge key={tag} variant="outline">
-                {tag}
-              </Badge>
-            ))}
-          </div>
-        </div>
-
-        <ScrollArea className="h-full min-h-0">
-          <div className="whitespace-pre-wrap p-4 font-mono text-xs leading-5 text-muted-foreground">
-            {profile?.instructions ?? ''}
-          </div>
-        </ScrollArea>
-
-        <div className="grid gap-3 border-t bg-accent/50 p-4">
-          {error ? <InlineError message={error} /> : null}
-          <Button type="button" disabled={busy || !profile} onClick={handleUseProfile}>
-            {busy ? <Loader2 className="animate-spin" /> : <BookOpen />}
-            Use profile
-          </Button>
-        </div>
-      </aside>
-    </div>
-  )
-}
-
-const agentBriefGuideItems = [
-  {
-    label: 'Role',
-    detail: 'What work should this agent own?',
-    examples: [
-      {
-        weak: 'Help me with work.',
-        strong:
-          'Create an agent that helps manage customer requests. It should sort urgent messages, prepare replies for review, and keep a short follow-up list.'
-      },
-      {
-        weak: 'Make my day easier.',
-        strong:
-          'Create an agent that organizes weekly team tasks, tracks owners, and highlights anything waiting on a decision.'
-      }
-    ]
-  },
-  {
-    label: 'Judgment',
-    detail: 'What should it notice, weigh, or question?',
-    examples: [
-      {
-        weak: 'Make smart decisions.',
-        strong:
-          'It should compare options by time, cost, customer impact, and risk, and call out assumptions when information is missing.'
-      },
-      {
-        weak: 'Tell me the best option.',
-        strong:
-          'It should notice when a request is urgent, unclear, repeated, or likely to affect another team.'
-      }
-    ]
-  },
-  {
-    label: 'Tone',
-    detail: 'How should it speak and report progress?',
-    examples: [
-      {
-        weak: 'Be professional.',
-        strong:
-          'It should be calm, clear, and brief. When there is a problem, it should explain choices without blame.'
-      },
-      {
-        weak: 'Sound nice.',
-        strong:
-          'It should write in plain language, avoid jargon, and separate facts from suggestions.'
-      }
-    ]
-  },
-  {
-    label: 'Boundaries',
-    detail: 'What should it avoid or escalate?',
-    examples: [
-      {
-        weak: 'Handle everything.',
-        strong:
-          'It should not approve refunds, sign contracts, or give medical or legal advice. It should ask me before anything sensitive.'
-      },
-      {
-        weak: 'Do whatever is needed.',
-        strong:
-          'It should pause and ask before sending messages to customers, changing prices, or making commitments.'
-      }
-    ]
-  },
-  {
-    label: 'Output',
-    detail: 'What does a good result look like?',
-    examples: [
-      {
-        weak: 'Give me the result.',
-        strong:
-          'At the end, it should give a short summary, next actions, open decisions, and anything that needs my approval.'
-      },
-      {
-        weak: 'Finish the task.',
-        strong:
-          'It should produce a clear checklist with completed items, blocked items, and recommended next steps.'
-      }
-    ]
-  }
-]
-
-function AgentBriefGuide(): React.JSX.Element {
-  const [selectedGuideItem, setSelectedGuideItem] = useState(agentBriefGuideItems[0].label)
-  const selectedItem =
-    agentBriefGuideItems.find((item) => item.label === selectedGuideItem) ?? agentBriefGuideItems[0]
-
-  return (
-    <section className="grid gap-4 rounded-lg border bg-accent p-4">
-      <div className="grid gap-1">
-        <p className="text-sm font-semibold">Write a stronger brief</p>
-        <p className="text-xs leading-5 text-muted-foreground">
-          Ordinus will turn your description into the same profile sections used by built-in agents.
-          A few concrete details usually produce a stronger agent.
-        </p>
-      </div>
-
-      <div className="grid gap-2 md:grid-cols-5">
-        {agentBriefGuideItems.map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            aria-pressed={selectedGuideItem === item.label}
-            className={cn(
-              'rounded-md border bg-card p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              selectedGuideItem === item.label && 'border-primary bg-primary-soft/60'
-            )}
-            onClick={() => setSelectedGuideItem(item.label)}
-          >
-            <p className="text-xs font-semibold text-foreground">{item.label}</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-3 rounded-md border bg-card p-3 text-xs leading-5">
-        {selectedItem.examples.map((example) => (
-          <div key={example.weak} className="grid gap-1.5">
-            <p>
-              <span className="font-semibold text-status-attention">Weak:</span>{' '}
-              <span className="text-muted-foreground">{example.weak}</span>
-            </p>
-            <p>
-              <span className="font-semibold text-status-completed">Strong:</span>{' '}
-              <span className="text-muted-foreground">{example.strong}</span>
-            </p>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 const CAPABILITIES_MAX_LENGTH = 300
 
 function CapabilitiesField({
@@ -1237,130 +504,6 @@ function CapabilitiesField({
         </span>
       </p>
     </div>
-  )
-}
-
-function ReviewAgentStep({
-  draft,
-  error,
-  nameIssue,
-  improvingCapabilities,
-  onDraftChange,
-  onImproveCapabilities,
-  onProviderChange
-}: {
-  draft: AgentDraft
-  error: string
-  nameIssue: string | null
-  improvingCapabilities: boolean
-  onDraftChange: (draft: Partial<AgentDraft>) => void
-  onImproveCapabilities: () => void
-  onProviderChange: (providerId: ProviderId) => void
-}): React.JSX.Element {
-  return (
-    <ScrollArea className="h-full min-h-0">
-      <div className="p-5">
-        <div className="grid gap-4">
-          <div className="grid gap-2 rounded-lg border bg-accent p-4">
-            <p className="text-xs font-medium text-muted-foreground">Requested work</p>
-            <p className="text-base font-semibold leading-6">{draft.requestedWork}</p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <FormField label="Agent name">
-              <Input
-                value={draft.name}
-                onChange={(event) => onDraftChange({ name: event.target.value })}
-              />
-            </FormField>
-            <FormField label="Role">
-              <Input
-                value={draft.role}
-                onChange={(event) => onDraftChange({ role: event.target.value })}
-              />
-            </FormField>
-          </div>
-          <p
-            className={cn(
-              'text-xs leading-5 text-muted-foreground',
-              nameIssue && 'text-status-attention'
-            )}
-          >
-            {nameIssue ?? 'Agent names must be distinct so assignment lists stay clear.'}
-          </p>
-
-          <CapabilitiesField
-            value={draft.capabilities}
-            improving={improvingCapabilities}
-            canImprove={draft.instructions.trim().length >= 12}
-            onChange={(capabilities) => onDraftChange({ capabilities })}
-            onImprove={onImproveCapabilities}
-          />
-
-          <label className="grid gap-2">
-            <span className="text-xs font-medium text-muted-foreground">Instructions</span>
-            <textarea
-              className="ordinus-scrollbar min-h-[300px] resize-y rounded-lg border bg-card p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              spellCheck={false}
-              value={draft.instructions}
-              onChange={(event) => onDraftChange({ instructions: event.target.value })}
-            />
-          </label>
-
-          <section className="grid gap-4 rounded-lg border bg-card p-4">
-            <div className="grid gap-1">
-              <p className="text-sm font-semibold">Runtime</p>
-              <p className="text-xs leading-5 text-muted-foreground">
-                Choose the CLI and model this agent uses when it runs.
-              </p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <FormField label="Provider CLI">
-                <SelectControl
-                  value={draft.providerId}
-                  onChange={(value) => onProviderChange(value as ProviderId)}
-                >
-                  <option value="codex">Codex</option>
-                  <option value="claude">Claude</option>
-                  <option value="gemini">Gemini</option>
-                </SelectControl>
-              </FormField>
-              <ModelField
-                providerId={draft.providerId}
-                model={draft.model}
-                onChange={(model) => onDraftChange({ model })}
-              />
-            </div>
-            <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
-            <SandboxField
-              name="create-agent-sandbox"
-              value={draft.sandbox}
-              onChange={(sandbox) => onDraftChange({ sandbox })}
-            />
-          </section>
-
-          <section className="grid gap-3 rounded-lg border bg-card p-4">
-            <p className="text-sm font-semibold">Lifecycle</p>
-            <label className="flex items-center justify-between gap-3 rounded-md border bg-accent px-3 py-2">
-              <span className="min-w-0">
-                <span className="block text-sm font-medium">Enabled</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  Agent can be assigned work after creation
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                className="size-4 shrink-0 accent-primary"
-                checked={draft.enabled}
-                onChange={(event) => onDraftChange({ enabled: event.target.checked })}
-              />
-            </label>
-          </section>
-
-          {error ? <InlineError message={error} /> : null}
-        </div>
-      </div>
-    </ScrollArea>
   )
 }
 
@@ -2207,40 +1350,6 @@ function DeleteAgentDialog({
   )
 }
 
-function getCreateAgentDialogDescription(step: CreateAgentStep): string {
-  if (step === 'describe') {
-    return 'Describe the role you need. Ordinus will prepare a standard profile draft for review.'
-  }
-
-  if (step === 'review') {
-    return 'Review and adjust the agent before saving it to this workspace.'
-  }
-
-  return 'Choose a profile, describe a role with AI, or start from blank. Nothing is saved until review.'
-}
-
-function getVisibleProfiles(
-  catalog: AgentProfileCatalog | null,
-  categoryId: string,
-  query: string
-): AgentProfile[] {
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-
-  return (
-    catalog?.profiles.filter((profile) => {
-      const categoryMatches = categoryId === 'all' || profile.category === categoryId
-      const queryMatches =
-        !normalizedQuery || getProfileSearchText(profile).includes(normalizedQuery)
-
-      return categoryMatches && queryMatches
-    }) ?? []
-  )
-}
-
-function getProfileSearchText(profile: AgentProfile): string {
-  return `${profile.name} ${profile.role} ${profile.summary} ${profile.tags.join(' ')}`.toLocaleLowerCase()
-}
-
 function StatusDot({ status }: { status: AgentStatus }): React.JSX.Element {
   return (
     <span
@@ -2506,10 +1615,6 @@ function getAgentNameIssue(
 
 function normalizeAgentName(name: string): string {
   return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
-}
-
-function getCategoryLabel(catalog: AgentProfileCatalog | null, categoryId: string): string {
-  return catalog?.categories.find((category) => category.id === categoryId)?.label ?? categoryId
 }
 
 function getSelectedModelLabel(providerId: ProviderId, model: string): string {

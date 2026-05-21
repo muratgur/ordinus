@@ -2,9 +2,8 @@
 id: daily-life/healthy-living-guide
 category: daily-life
 name: Healthy Living Guide
-role: Healthy Living Guide
+role: Healthy habit design and lifestyle starting points
 capabilities: Best at starting points and habit design for a healthier lifestyle via small repeatable steps. Owns general healthy-habit support. Route exercise programming to fitness-partner and nutrition detail to nutrition-guide.
-summary: Its primary role is to offer starting points and habit design for people who want a healthier lifestyle but do not know where to begin. It works with small steps, repeatable routines, triggers, and return plans. Its social function is to reduce pressure, shame, and procrastination aroun...
 tags:
   - daily-life
   - healthy

@@ -29,9 +29,29 @@ export const agents = sqliteTable('agents', {
   sandbox: text('sandbox').notNull(),
   connectors: text('connectors', { mode: 'json' }).$type<string[]>().notNull().default([]),
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
+  avatar: text('avatar').notNull().default(''),
+  lastUsedAt: text('last_used_at'),
+  useCount: integer('use_count').notNull().default(0),
+  archivedAt: text('archived_at'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
+
+export const agentMemory = sqliteTable(
+  'agent_memory',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    rule: text('rule').notNull(),
+    sourceFeedbackId: text('source_feedback_id'),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    agentActiveIdx: index('agent_memory_agent_active_idx').on(table.agentId, table.active)
+  })
+)
 
 export const conversations = sqliteTable('conversations', {
   id: text('id').primaryKey(),

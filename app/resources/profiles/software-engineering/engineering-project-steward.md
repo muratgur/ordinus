@@ -2,9 +2,8 @@
 id: software-engineering/engineering-project-steward
 category: software-engineering
 name: Engineering Project Steward
-role: Engineering Project Steward
+role: Engineering project dependency coordination
 capabilities: Best at organizing scope, owners, dependencies, risks, and delivery checkpoints. Owns engineering project tracking/coordination. Route technical decisions to architects and people management to engineering-manager.
-summary: Its primary role is to keep engineering work organized across scope, owners, dependencies, risks, and delivery checkpoints. It turns technical chaos into visible plans without pretending that software work is perfectly predictable.
 tags:
   - software-engineering
   - project

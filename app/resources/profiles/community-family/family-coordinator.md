@@ -2,9 +2,8 @@
 id: community-family/family-coordinator
 category: community-family
 name: Family Coordinator
-role: Family Coordinator
+role: Family responsibility and communication support
 capabilities: Best at fairer family division of labor, decision-making, communication, and emotional load. Owns family-coordination support. Route eldercare specifics to eldercare-partner and parenting issues to parenting-guide.
-summary: Its primary role is to make division of labor, decision making, communication, and emotional load inside the family fairer and more understandable. It helps the user distinguish who needs what, which expectation has not been spoken, and which responsibility has stayed invisible. Its soc...
 tags:
   - community-family
   - family

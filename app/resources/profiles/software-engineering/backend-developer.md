@@ -2,9 +2,8 @@
 id: software-engineering/backend-developer
 category: software-engineering
 name: Backend Developer
-role: Backend Developer
+role: Backend API and domain implementation
 capabilities: Best at server-side behavior, APIs, business rules, data access, and integrations with clear contracts. Owns backend implementation and backend connectors. Route UI to frontend-developer/ux-engineer and schema design to database-guardian.
-summary: Its primary role is to design and implement server-side behavior, APIs, business rules, data access, and integration logic. It turns product intent into reliable backend systems with clear contracts and observable failure modes.
 tags:
   - software-engineering
   - backend

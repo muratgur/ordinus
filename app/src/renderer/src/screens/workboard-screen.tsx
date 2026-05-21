@@ -54,6 +54,7 @@ import {
   formatObservedPhase,
   mergeDiagnostics
 } from '@renderer/components/observability-details'
+import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { FileReferenceList } from '@renderer/components/file-reference-list'
 import { getFileReferences } from '@renderer/components/file-reference-utils'
 import { MarkdownContent } from '@renderer/components/markdown-content'
@@ -2129,7 +2130,7 @@ function DraftItemEditor({
           value={item.assignedAgentId}
           onChange={(assignedAgentId) => onChange({ assignedAgentId })}
         >
-          {agents.map((agent) => (
+          {sortAgentsByUsage(agents).map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name}
             </option>
@@ -2668,6 +2669,13 @@ function RunOutputSection({
           <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Depends on</p>
           <DependencyWorkItemList items={linkedItems} onSelectRun={onSelectRun} />
         </div>
+      ) : null}
+      {isTerminalRunStatus(run.status) && run.assignedAgentId ? (
+        <AgentFeedbackPanel
+          agentId={run.assignedAgentId}
+          agentName={run.agentName}
+          sourceFeedbackId={run.id}
+        />
       ) : null}
     </section>
   )
@@ -3255,10 +3263,11 @@ function AgentMentionPicker({
 
 function getAgentMentionOptions(agents: Agent[], query: string): AgentMentionOption[] {
   const normalizedQuery = query.trim().toLocaleLowerCase()
-  const options = agents.map((agent) => ({
+  const ordered = sortAgentsByUsage(agents)
+  const options = ordered.map((agent) => ({
     agentId: agent.id,
     label: agent.name,
-    detail: agent.role
+    detail: buildAgentUsageDetail(agent)
   }))
 
   if (!normalizedQuery) {
@@ -3266,6 +3275,48 @@ function getAgentMentionOptions(agents: Agent[], query: string): AgentMentionOpt
   }
 
   return options.filter((option) => option.label.toLocaleLowerCase().includes(normalizedQuery))
+}
+
+function sortAgentsByUsage(agents: Agent[]): Agent[] {
+  return [...agents].sort((left, right) => {
+    const leftUsed = left.lastUsedAt ? Date.parse(left.lastUsedAt) : 0
+    const rightUsed = right.lastUsedAt ? Date.parse(right.lastUsedAt) : 0
+    if (leftUsed !== rightUsed) {
+      return rightUsed - leftUsed
+    }
+    if (left.useCount !== right.useCount) {
+      return right.useCount - left.useCount
+    }
+    return left.name.localeCompare(right.name)
+  })
+}
+
+function buildAgentUsageDetail(agent: Agent): string {
+  if (!agent.lastUsedAt) {
+    return agent.role
+  }
+  const recency = formatRelativeUsage(agent.lastUsedAt)
+  const frequency = agent.useCount > 0 ? ` · ${agent.useCount} kez` : ''
+  return `${agent.role} · ${recency}${frequency}`
+}
+
+function formatRelativeUsage(iso: string): string {
+  const then = Date.parse(iso)
+  if (Number.isNaN(then)) {
+    return 'kullanıldı'
+  }
+  const diffMs = Date.now() - then
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'az önce kullanıldı'
+  if (minutes < 60) return `${minutes} dk önce`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} saat önce`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} gün önce`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months} ay önce`
+  const years = Math.floor(days / 365)
+  return `${years} yıl önce`
 }
 
 function getActiveMentionPicker(value: string, caret: number): MentionPickerState | null {

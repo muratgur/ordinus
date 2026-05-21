@@ -135,6 +135,10 @@ export const AgentSchema = z.object({
   sandbox: AgentSandboxSchema,
   connectors: AgentConnectorsSchema,
   enabled: z.boolean(),
+  avatar: z.string().default(''),
+  lastUsedAt: z.string().nullable().default(null),
+  useCount: z.number().int().nonnegative().default(0),
+  archivedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -156,7 +160,6 @@ export const AgentProfileSchema = z.object({
   name: z.string().min(1).max(80),
   role: z.string().min(1).max(120),
   capabilities: AgentCapabilitiesSchema,
-  summary: z.string().min(1).max(300),
   tags: z.array(z.string().min(1).max(40)).default([]),
   recommended: z.boolean().default(false),
   suggestedConnectors: AgentConnectorsSchema,
@@ -188,6 +191,7 @@ export const AgentDraftSchema = z.object({
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
   connectors: AgentConnectorsSchema,
+  avatar: z.string().default(''),
   enabled: z.boolean().default(true)
 })
 
@@ -207,6 +211,7 @@ export const AgentUpdateSettingsInputSchema = z.object({
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
   connectors: AgentConnectorsSchema,
+  avatar: z.string().optional(),
   enabled: z.boolean()
 })
 
@@ -261,6 +266,59 @@ export const AgentSkillDeleteInputSchema = AgentSkillGetInputSchema
 
 export const AgentSkillDeleteResultSchema = z.object({
   deletedSkillId: z.string().min(1)
+})
+
+export const AgentMemoryRuleSchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1),
+  rule: z.string().min(1),
+  sourceFeedbackId: z.string().nullable(),
+  active: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const AgentMemoryListInputSchema = z.object({
+  agentId: z.string().min(1),
+  includeInactive: z.boolean().optional()
+})
+
+export const AgentMemoryAddInputSchema = z.object({
+  agentId: z.string().min(1),
+  rule: z.string().trim().min(1, 'Memory rule cannot be empty.').max(2_000),
+  sourceFeedbackId: z.string().min(1).optional()
+})
+
+export const AgentMemoryUpdateInputSchema = z.object({
+  agentId: z.string().min(1),
+  ruleId: z.string().min(1),
+  rule: z.string().trim().min(1, 'Memory rule cannot be empty.').max(2_000)
+})
+
+export const AgentMemoryDeactivateInputSchema = z.object({
+  agentId: z.string().min(1),
+  ruleId: z.string().min(1)
+})
+
+export const AgentMemoryDeactivateResultSchema = z.object({
+  deactivatedRuleId: z.string().min(1)
+})
+
+export const AgentArchiveInputSchema = z.object({
+  id: z.string().min(1)
+})
+
+export const AgentReflectionEntrySchema = z.object({
+  agent: AgentSchema,
+  rules: z.array(AgentMemoryRuleSchema),
+  isStale: z.boolean(),
+  daysSinceUsed: z.number().nullable()
+})
+
+export const AgentReflectionSummarySchema = z.object({
+  entries: z.array(AgentReflectionEntrySchema),
+  staleThresholdDays: z.number().int().positive(),
+  generatedAt: z.string()
 })
 
 export const ConversationModeSchema = z.enum(['direct', 'manual'])
@@ -1081,6 +1139,15 @@ export type AgentSkillCreateInput = z.infer<typeof AgentSkillCreateInputSchema>
 export type AgentSkillUpdateInput = z.infer<typeof AgentSkillUpdateInputSchema>
 export type AgentSkillDeleteInput = z.infer<typeof AgentSkillDeleteInputSchema>
 export type AgentSkillDeleteResult = z.infer<typeof AgentSkillDeleteResultSchema>
+export type AgentMemoryRule = z.infer<typeof AgentMemoryRuleSchema>
+export type AgentMemoryListInput = z.infer<typeof AgentMemoryListInputSchema>
+export type AgentMemoryAddInput = z.infer<typeof AgentMemoryAddInputSchema>
+export type AgentMemoryUpdateInput = z.infer<typeof AgentMemoryUpdateInputSchema>
+export type AgentMemoryDeactivateInput = z.infer<typeof AgentMemoryDeactivateInputSchema>
+export type AgentMemoryDeactivateResult = z.infer<typeof AgentMemoryDeactivateResultSchema>
+export type AgentArchiveInput = z.infer<typeof AgentArchiveInputSchema>
+export type AgentReflectionEntry = z.infer<typeof AgentReflectionEntrySchema>
+export type AgentReflectionSummary = z.infer<typeof AgentReflectionSummarySchema>
 export type ConversationMode = z.infer<typeof ConversationModeSchema>
 export type ConversationRoutingMode = z.infer<typeof ConversationRoutingModeSchema>
 export type ConversationStatus = z.infer<typeof ConversationStatusSchema>
