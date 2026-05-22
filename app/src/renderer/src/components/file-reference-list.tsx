@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { Check, Copy, FolderOpen } from 'lucide-react'
+import { Check, Copy, FileText, FolderOpen } from 'lucide-react'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
 import { cn } from '@renderer/lib/utils'
@@ -9,10 +9,12 @@ import { formatRelativeTime } from './file-reference-utils'
 
 export function FileReferenceList({
   files,
-  onRevealPath
+  onRevealPath,
+  onOpenFile
 }: {
   files: FileReference[]
   onRevealPath: (path: string) => void
+  onOpenFile?: (path: string) => void
 }): JSX.Element {
   const [copiedPath, setCopiedPath] = useState('')
 
@@ -50,6 +52,17 @@ export function FileReferenceList({
               ) : null}
             </div>
           </div>
+          {onOpenFile && isMarkdownPath(file.path) ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={() => onOpenFile(file.path)}
+            >
+              <FileText />
+              <span className="sr-only">Open document</span>
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -78,12 +91,14 @@ export function RequestFileList({
   files,
   missingPaths,
   onRevealPath,
-  onSelectRun
+  onSelectRun,
+  onOpenFile
 }: {
   files: RequestFileProvenance[]
   missingPaths: Set<string>
   onRevealPath: (path: string) => void
   onSelectRun: (runId: string) => void
+  onOpenFile?: (path: string) => void
 }): JSX.Element {
   const [copiedPath, setCopiedPath] = useState('')
 
@@ -119,6 +134,17 @@ export function RequestFileList({
                 <Badge variant="outline" className="shrink-0 px-2 py-0.5 text-[11px]">
                   Missing
                 </Badge>
+              ) : null}
+              {onOpenFile && !missing && isMarkdownPath(file.path) ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0"
+                  onClick={() => onOpenFile(file.path)}
+                >
+                  <FileText />
+                  <span className="sr-only">Open document</span>
+                </Button>
               ) : null}
               <Button
                 variant="ghost"
@@ -172,4 +198,8 @@ export function RequestFileList({
 
 function normalizeFileReferenceKey(path: string): string {
   return path.replaceAll('\\', '/')
+}
+
+function isMarkdownPath(path: string): boolean {
+  return path.toLowerCase().endsWith('.md')
 }

@@ -1,5 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
   AgentArchiveInputSchema,
@@ -21,6 +29,10 @@ import {
   AppInfoSchema,
   ConnectorActionInputSchema,
   ConversationCancelTurnInputSchema,
+  FileReadInputSchema,
+  FileContentSchema,
+  FileWriteInputSchema,
+  FileWriteResultSchema,
   ConversationAnswerInputRequestInputSchema,
   ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
@@ -586,12 +598,59 @@ export function registerIpcHandlers(
     const input = ConnectorActionInputSchema.parse(payload)
     return disconnectConnector(input.connectorId)
   })
+  ipcMain.handle(ipcChannels.filesRead, (_event, payload) => {
+    const input = FileReadInputSchema.parse(payload)
+    const absolutePath = requireWorkspaceMarkdownFile(database, input.path)
+    const stats = statSync(absolutePath)
+    if (stats.size > maxMarkdownFileBytes) {
+      throw new Error('This file is too large to open in the document viewer.')
+    }
+
+    return FileContentSchema.parse({
+      path: input.path,
+      content: readFileSync(absolutePath, 'utf8'),
+      revision: String(stats.mtimeMs)
+    })
+  })
+  ipcMain.handle(ipcChannels.filesWrite, (_event, payload) => {
+    const input = FileWriteInputSchema.parse(payload)
+    const absolutePath = requireWorkspaceMarkdownFile(database, input.path)
+    const currentRevision = String(statSync(absolutePath).mtimeMs)
+    if (currentRevision !== input.expectedRevision) {
+      return FileWriteResultSchema.parse({ status: 'conflict', revision: currentRevision })
+    }
+
+    writeFileSync(absolutePath, input.content, 'utf8')
+    return FileWriteResultSchema.parse({
+      status: 'saved',
+      revision: String(statSync(absolutePath).mtimeMs)
+    })
+  })
 }
 
 function requireAgent(database: OrdinusDatabase, agentId: string): void {
   if (!database.hasAgent(agentId)) {
     throw new Error('Agent was not found.')
   }
+}
+
+const maxMarkdownFileBytes = 5_000_000
+
+function requireWorkspaceMarkdownFile(database: OrdinusDatabase, relativePath: string): string {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before opening files.')
+  }
+  if (!relativePath.toLowerCase().endsWith('.md')) {
+    throw new Error('Only Markdown (.md) files can be opened in the document viewer.')
+  }
+
+  const absolutePath = resolveWorkspaceRelativePath(workspace.workspaceRoot, relativePath)
+  if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) {
+    throw new Error('This file does not exist in the workspace.')
+  }
+
+  return absolutePath
 }
 
 function revealWorkspacePath(database: OrdinusDatabase, relativePath: string): void {

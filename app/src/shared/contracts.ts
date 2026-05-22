@@ -1053,6 +1053,32 @@ export const WorkboardPathStatusSchema = z.object({
 
 export const WorkboardPathStatusListSchema = z.array(WorkboardPathStatusSchema)
 
+export const MarkdownRelativePathSchema = WorkspaceRelativePathSchema.refine(
+  (value) => value.toLowerCase().endsWith('.md'),
+  'Only Markdown (.md) files can be opened in the document viewer.'
+)
+
+export const FileReadInputSchema = z.object({
+  path: MarkdownRelativePathSchema
+})
+
+export const FileContentSchema = z.object({
+  path: MarkdownRelativePathSchema,
+  content: z.string(),
+  revision: z.string().min(1)
+})
+
+export const FileWriteInputSchema = z.object({
+  path: MarkdownRelativePathSchema,
+  content: z.string().max(5_000_000),
+  expectedRevision: z.string().min(1)
+})
+
+export const FileWriteResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('saved'), revision: z.string().min(1) }),
+  z.object({ status: z.literal('conflict'), revision: z.string().min(1) })
+])
+
 export type WorkboardDraftDependencyItem = {
   tempId: string
   dependsOnTempIds: string[]
@@ -1266,5 +1292,9 @@ export type WorkboardCheckPathsInput = z.infer<typeof WorkboardCheckPathsInputSc
 export type WorkboardArchiveRequestInput = z.infer<typeof WorkboardArchiveRequestInputSchema>
 export type WorkboardUnarchiveRequestInput = z.infer<typeof WorkboardUnarchiveRequestInputSchema>
 export type WorkboardPathStatus = z.infer<typeof WorkboardPathStatusSchema>
+export type FileReadInput = z.infer<typeof FileReadInputSchema>
+export type FileContent = z.infer<typeof FileContentSchema>
+export type FileWriteInput = z.infer<typeof FileWriteInputSchema>
+export type FileWriteResult = z.infer<typeof FileWriteResultSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

@@ -53,6 +53,7 @@ import {
 } from '@renderer/components/observability-details'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { FileReferenceList, RequestFileList } from '@renderer/components/file-reference-list'
+import { MarkdownDocumentViewer } from '@renderer/components/markdown-document-viewer'
 import {
   getFileReferences,
   getRequestFileProvenance
@@ -199,6 +200,7 @@ export function WorkboardScreen({
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
   const [watchedOpId, setWatchedOpId] = useState<string | null>(null)
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false)
+  const [openFilePath, setOpenFilePath] = useState<string | null>(null)
 
   async function loadWorkboard(options: { quiet?: boolean } = {}): Promise<void> {
     if (!options.quiet) setBusy('load')
@@ -708,6 +710,7 @@ export function WorkboardScreen({
         onCancel={(runId) => void handleCancelRun(runId)}
         onContinue={handleContinueRun}
         onSelectRun={openLinkedRunDetail}
+        onOpenFile={setOpenFilePath}
         onAnswered={(nextData) => setData(nextData)}
         onError={setError}
       />
@@ -721,7 +724,16 @@ export function WorkboardScreen({
             setFilesDrawerOpen(false)
             openRunDetail(runId)
           }}
+          onOpenFile={setOpenFilePath}
           onError={setError}
+        />
+      ) : null}
+
+      {openFilePath ? (
+        <MarkdownDocumentViewer
+          key={openFilePath}
+          path={openFilePath}
+          onClose={() => setOpenFilePath(null)}
         />
       ) : null}
     </div>
@@ -2808,6 +2820,7 @@ function RunDetailDrawer({
   onCancel,
   onContinue,
   onSelectRun,
+  onOpenFile,
   onAnswered,
   onError
 }: {
@@ -2823,6 +2836,7 @@ function RunDetailDrawer({
   onCancel: (runId: string) => void
   onContinue: (run: WorkboardRun) => void
   onSelectRun: (runId: string) => void
+  onOpenFile: (path: string) => void
   onAnswered: (data: WorkboardData) => void
   onError: (message: string) => void
 }): React.JSX.Element | null {
@@ -2904,6 +2918,7 @@ function RunDetailDrawer({
             onSubmitAnswers={() => void submitAnswers()}
             onRevealPath={(path) => void revealPath(path)}
             onSelectRun={onSelectRun}
+            onOpenFile={onOpenFile}
           />
         </div>
 
@@ -2997,12 +3012,14 @@ function RequestFilesDrawer({
   files,
   onClose,
   onSelectRun,
+  onOpenFile,
   onError
 }: {
   request: WorkboardData['requests'][number]
   files: RequestFileProvenance[]
   onClose: () => void
   onSelectRun: (runId: string) => void
+  onOpenFile: (path: string) => void
   onError: (message: string) => void
 }): React.JSX.Element {
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
@@ -3084,6 +3101,7 @@ function RequestFilesDrawer({
                     missingPaths={missingPaths}
                     onRevealPath={(path) => void revealPath(path)}
                     onSelectRun={onSelectRun}
+                    onOpenFile={onOpenFile}
                   />
                 ) : (
                   <EmptyDetailState>No files in this work&apos;s folder.</EmptyDetailState>
@@ -3099,6 +3117,7 @@ function RequestFilesDrawer({
                     missingPaths={missingPaths}
                     onRevealPath={(path) => void revealPath(path)}
                     onSelectRun={onSelectRun}
+                    onOpenFile={onOpenFile}
                   />
                 </section>
               ) : null}
@@ -3119,7 +3138,8 @@ function RunDetailReport({
   onAnswerChange,
   onSubmitAnswers,
   onRevealPath,
-  onSelectRun
+  onSelectRun,
+  onOpenFile
 }: {
   run: WorkboardRun
   waitsFor: WorkboardRun[]
@@ -3130,6 +3150,7 @@ function RunDetailReport({
   onSubmitAnswers: () => void
   onRevealPath: (path: string) => void
   onSelectRun: (runId: string) => void
+  onOpenFile: (path: string) => void
 }): React.JSX.Element {
   return (
     <div className="grid min-w-0 gap-4">
@@ -3142,6 +3163,7 @@ function RunDetailReport({
         onRevealPath={onRevealPath}
         linkedItems={waitsFor}
         onSelectRun={onSelectRun}
+        onOpenFile={onOpenFile}
       />
       <RunContextSection key={`context-${run.id}`} run={run} />
       <RunActivitySection key={`activity-${run.id}`} run={run} observedRun={observedRun} />
@@ -3169,7 +3191,8 @@ function RunOutputSection({
   onSubmitAnswers,
   onRevealPath,
   linkedItems,
-  onSelectRun
+  onSelectRun,
+  onOpenFile
 }: {
   run: WorkboardRun
   inputRequest?: WorkRunInputRequest
@@ -3179,6 +3202,7 @@ function RunOutputSection({
   onRevealPath: (path: string) => void
   linkedItems: WorkboardRun[]
   onSelectRun: (runId: string) => void
+  onOpenFile: (path: string) => void
 }): React.JSX.Element {
   const files = getFileReferences(run.artifactRefs, run.changedFiles)
 
@@ -3212,7 +3236,7 @@ function RunOutputSection({
       {files.length > 0 ? (
         <div className="mt-5 border-t pt-4">
           <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Produced files</p>
-          <FileReferenceList files={files} onRevealPath={onRevealPath} />
+          <FileReferenceList files={files} onRevealPath={onRevealPath} onOpenFile={onOpenFile} />
         </div>
       ) : null}
       {linkedItems.length > 0 ? (
