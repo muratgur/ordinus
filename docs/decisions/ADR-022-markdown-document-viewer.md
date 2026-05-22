@@ -61,10 +61,11 @@ workspace-relative.
 
 ### Presentation Surface
 
-The viewer is a large overlay drawer that slides up from the bottom, covers the Workboard area,
-and keeps the top navigation bar. It is not a route: closing it animates back down and leaves
-the user on the Workboard. A drawer-on-drawer stack and a narrow side drawer are both rejected
-— `.md` documents are large and need a wide, comfortable surface.
+The viewer is a full-screen overlay that slides up from the bottom and covers the entire
+window, including the top navigation bar, so reading and editing happen with full focus. It is
+not a route: closing it animates back down and leaves the user on the Workboard. A
+drawer-on-drawer stack and a narrow side drawer are both rejected — `.md` documents are large
+and need a wide, comfortable surface.
 
 ### Read and Edit Modes
 
@@ -235,8 +236,8 @@ main-process handler, and a preload bridge method, consistent with the IPC contr
   surface as "overwrite / reload".
 - `files.read` enforces a ~5 MB cap; the provenance panel gates the "Open" action on existence,
   `.md` extension, and size, falling back to reveal-in-OS otherwise.
-- The viewer is a large bottom overlay that preserves the top navigation bar and animates
-  open/close; it is not a route.
+- The viewer is a full-screen bottom overlay that covers the window, including the top
+  navigation bar, and animates open/close; it is not a route.
 - Read mode is a new document component using `react-markdown` + `remark-gfm` with its own
   sheet layout, token-based elevation, theme-aware surface, and reading-scale typography.
 - Frontmatter is parsed for the header card; a parse failure degrades gracefully to a
