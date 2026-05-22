@@ -19,6 +19,7 @@ import {
   CornerDownRight,
   Copy,
   FileText,
+  Files,
   GitBranch,
   Loader2,
   PanelRight,
@@ -55,8 +56,12 @@ import {
   mergeDiagnostics
 } from '@renderer/components/observability-details'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
-import { FileReferenceList } from '@renderer/components/file-reference-list'
-import { getFileReferences } from '@renderer/components/file-reference-utils'
+import { FileReferenceList, RequestFileList } from '@renderer/components/file-reference-list'
+import {
+  getFileReferences,
+  getRequestFileProvenance
+} from '@renderer/components/file-reference-utils'
+import type { RequestFileProvenance } from '@renderer/components/file-reference-utils'
 import { MarkdownContent } from '@renderer/components/markdown-content'
 import {
   Dialog,
@@ -162,6 +167,7 @@ export function WorkboardScreen({
   const [error, setError] = useState('')
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
   const [watchedOpId, setWatchedOpId] = useState<string | null>(null)
+  const [filesDrawerOpen, setFilesDrawerOpen] = useState(false)
 
   async function loadWorkboard(options: { quiet?: boolean } = {}): Promise<void> {
     if (!options.quiet) setBusy('load')
@@ -224,6 +230,17 @@ export function WorkboardScreen({
   const selectedDraftId = draftReview.selectedItemId
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
   const selectedRequest = data.requests.find((item) => item.id === requestFilter) ?? null
+  const selectedRequestRuns = useMemo(
+    () => (selectedRequest ? data.runs.filter((run) => run.requestId === selectedRequest.id) : []),
+    [data.runs, selectedRequest]
+  )
+  const selectedRequestFiles = useMemo(
+    () =>
+      selectedRequest
+        ? getRequestFileProvenance(selectedRequestRuns, selectedRequest.workingRoot)
+        : [],
+    [selectedRequest, selectedRequestRuns]
+  )
   const watchedOp = watchedOpId
     ? (planOperations.operations.find((op) => op.id === watchedOpId) ?? null)
     : null
@@ -424,6 +441,11 @@ export function WorkboardScreen({
     closeRunDetail()
   }
 
+  function changeRequestFilter(nextFilter: string): void {
+    setRequestFilter(nextFilter)
+    setFilesDrawerOpen(false)
+  }
+
   function openRunDetail(runId: string): void {
     setRunDetailBackStack([])
     setSelectedRunId(runId)
@@ -505,9 +527,11 @@ export function WorkboardScreen({
         activeCount={activeRunCount}
         requestStats={requestStats}
         selectedRequest={selectedRequest}
+        requestFileCount={selectedRequestFiles.length}
         workSearch={workSearch}
-        onFilterChange={setRequestFilter}
+        onFilterChange={changeRequestFilter}
         onContinueRequest={handleContinueRequest}
+        onOpenRequestFiles={() => setFilesDrawerOpen(true)}
         onWorkSearchChange={setWorkSearch}
       />
 
@@ -599,6 +623,19 @@ export function WorkboardScreen({
         onAnswered={(nextData) => setData(nextData)}
         onError={setError}
       />
+
+      {filesDrawerOpen && selectedRequest ? (
+        <RequestFilesDrawer
+          request={selectedRequest}
+          files={selectedRequestFiles}
+          onClose={() => setFilesDrawerOpen(false)}
+          onSelectRun={(runId) => {
+            setFilesDrawerOpen(false)
+            openRunDetail(runId)
+          }}
+          onError={setError}
+        />
+      ) : null}
     </div>
   )
 }
@@ -1270,9 +1307,11 @@ function WorkFilterBar({
   activeCount,
   requestStats,
   selectedRequest,
+  requestFileCount,
   workSearch,
   onFilterChange,
   onContinueRequest,
+  onOpenRequestFiles,
   onWorkSearchChange
 }: {
   filter: string
@@ -1280,9 +1319,11 @@ function WorkFilterBar({
   activeCount: number
   requestStats: RequestFilterStat[]
   selectedRequest: WorkboardData['requests'][number] | null
+  requestFileCount: number
   workSearch: string
   onFilterChange: (filter: string) => void
   onContinueRequest: (requestId: string) => void
+  onOpenRequestFiles: () => void
   onWorkSearchChange: (search: string) => void
 }): React.JSX.Element {
   const [requestPickerOpen, setRequestPickerOpen] = useState(false)
@@ -1410,6 +1451,18 @@ function WorkFilterBar({
           >
             <GitBranch />
             Continue this work
+          </Button>
+        ) : null}
+        {selectedRequest ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={onOpenRequestFiles}
+          >
+            <Files />
+            Files ({requestFileCount})
           </Button>
         ) : null}
         <label className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground sm:w-44 xl:w-40">
@@ -2549,6 +2602,124 @@ function RunDetailHeader({
         </Button>
       </div>
     </header>
+  )
+}
+
+function RequestFilesDrawer({
+  request,
+  files,
+  onClose,
+  onSelectRun,
+  onError
+}: {
+  request: WorkboardData['requests'][number]
+  files: RequestFileProvenance[]
+  onClose: () => void
+  onSelectRun: (runId: string) => void
+  onError: (message: string) => void
+}): React.JSX.Element {
+  const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const statuses = await window.ordinus.workboard.checkPaths({ requestId: request.id })
+        if (cancelled) return
+        setMissingPaths(
+          new Set(
+            statuses
+              .filter((status) => !status.exists)
+              .map((status) => status.path.replaceAll('\\', '/'))
+          )
+        )
+      } catch (error) {
+        if (cancelled) return
+        onError(error instanceof Error ? error.message : 'File status could not be checked.')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [request.id, onError])
+
+  const inFolder = files.filter((file) => file.inWorkFolder)
+  const outsideFolder = files.filter((file) => !file.inWorkFolder)
+
+  async function revealPath(path: string): Promise<void> {
+    const runId = files.find((file) => file.path === path)?.attributions[0]?.latestRunId
+    if (!runId) return
+    try {
+      await window.ordinus.workboard.revealPath({ runId, relativePath: path })
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'File could not be shown.')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <button
+        type="button"
+        className="absolute inset-0 bg-background/60 backdrop-blur-[1px]"
+        aria-label="Close request files"
+        onClick={onClose}
+      />
+      <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-background shadow-2xl sm:w-[86vw] sm:max-w-[680px] xl:w-[72vw] xl:max-w-[760px]">
+        <header className="border-b bg-card p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Work request files
+              </p>
+              <h3 className="mt-1 min-w-0 break-words text-2xl font-semibold leading-8 [overflow-wrap:anywhere]">
+                {request.title}
+              </h3>
+            </div>
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
+              <XCircle />
+              <span className="sr-only">Close</span>
+            </Button>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-5 ordinus-scrollbar">
+          {files.length === 0 ? (
+            <EmptyDetailState>No files produced or changed yet.</EmptyDetailState>
+          ) : (
+            <div className="grid gap-6">
+              <section>
+                <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                  In the work folder
+                </p>
+                {inFolder.length > 0 ? (
+                  <RequestFileList
+                    files={inFolder}
+                    missingPaths={missingPaths}
+                    onRevealPath={(path) => void revealPath(path)}
+                    onSelectRun={onSelectRun}
+                  />
+                ) : (
+                  <EmptyDetailState>No files in this work&apos;s folder.</EmptyDetailState>
+                )}
+              </section>
+              {outsideFolder.length > 0 ? (
+                <section>
+                  <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                    Outside the work folder
+                  </p>
+                  <RequestFileList
+                    files={outsideFolder}
+                    missingPaths={missingPaths}
+                    onRevealPath={(path) => void revealPath(path)}
+                    onSelectRun={onSelectRun}
+                  />
+                </section>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
   )
 }
 

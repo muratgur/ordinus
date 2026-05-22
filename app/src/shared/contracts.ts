@@ -1033,6 +1033,17 @@ export const WorkboardRevealPathInputSchema = WorkRunActionInputSchema.extend({
   relativePath: WorkspaceRelativePathSchema
 })
 
+export const WorkboardCheckPathsInputSchema = z.object({
+  requestId: z.string().min(1)
+})
+
+export const WorkboardPathStatusSchema = z.object({
+  path: WorkspaceRelativePathSchema,
+  exists: z.boolean()
+})
+
+export const WorkboardPathStatusListSchema = z.array(WorkboardPathStatusSchema)
+
 export type WorkboardDraftDependencyItem = {
   tempId: string
   dependsOnTempIds: string[]
@@ -1242,5 +1253,7 @@ export type WorkboardAnswerInputRequestInput = z.infer<
   typeof WorkboardAnswerInputRequestInputSchema
 >
 export type WorkboardRevealPathInput = z.infer<typeof WorkboardRevealPathInputSchema>
+export type WorkboardCheckPathsInput = z.infer<typeof WorkboardCheckPathsInputSchema>
+export type WorkboardPathStatus = z.infer<typeof WorkboardPathStatusSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>
