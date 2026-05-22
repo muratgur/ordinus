@@ -67,6 +67,8 @@ import type {
   WorkboardGeneratePlanInput,
   WorkboardGenerateRequestPlanInput,
   WorkboardRevealPathInput,
+  WorkboardCheckPathsInput,
+  WorkboardPathStatus,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
@@ -149,6 +151,7 @@ export type OrdinusApi = {
     cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
     answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
     revealPath: (input: WorkboardRevealPathInput) => Promise<void>
+    checkPaths: (input: WorkboardCheckPathsInput) => Promise<WorkboardPathStatus[]>
   }
   observability: {
     listWorkboard: () => Promise<ObservedRunSnapshot[]>

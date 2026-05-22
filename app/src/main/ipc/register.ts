@@ -50,6 +50,8 @@ import {
   PendingPlanSchema,
   WorkboardGenerateRequestPlanInputSchema,
   WorkboardRevealPathInputSchema,
+  WorkboardCheckPathsInputSchema,
+  WorkboardPathStatusListSchema,
   WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestPlanInputSchema,
   WorkboardStartRequestInputSchema,
@@ -102,6 +104,7 @@ import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { connectConnector, disconnectConnector, listConnectors } from '../integrations/service'
 import {
   ensureWorkspaceRelativeDirectory,
+  filterExistingWorkspacePaths,
   resolveReportedWorkspaceFileRefs,
   resolveWorkspaceRelativePath,
   type WorkspaceWorkingFolderContext
@@ -518,6 +521,25 @@ export function registerIpcHandlers(
     }
 
     revealWorkspacePath(database, input.relativePath)
+  })
+  ipcMain.handle(ipcChannels.workboardCheckPaths, (_event, payload) => {
+    const input = WorkboardCheckPathsInputSchema.parse(payload)
+    const workspace = database.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before inspecting files.')
+    }
+
+    const runs = database
+      .getWorkboardData()
+      .runs.filter((run) => run.requestId === input.requestId)
+    const paths = Array.from(
+      new Set(runs.flatMap((run) => [...run.artifactRefs, ...run.changedFiles]))
+    )
+    const existing = new Set(filterExistingWorkspacePaths(workspace.workspaceRoot, paths))
+
+    return WorkboardPathStatusListSchema.parse(
+      paths.map((path) => ({ path, exists: existing.has(path) }))
+    )
   })
   ipcMain.handle(ipcChannels.observabilityListWorkboard, () => observability.listWorkboardRuns())
   ipcMain.handle(ipcChannels.observabilityListConversation, (_event, payload) => {

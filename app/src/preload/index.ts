@@ -69,6 +69,8 @@ import type {
   WorkboardGeneratePlanInput,
   WorkboardGenerateRequestPlanInput,
   WorkboardRevealPathInput,
+  WorkboardCheckPathsInput,
+  WorkboardPathStatus,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
@@ -216,7 +218,9 @@ const ordinus = {
     answerInputRequest: async (input: WorkboardAnswerInputRequestInput): Promise<WorkboardData> =>
       ipcRenderer.invoke(ipcChannels.workboardAnswerInputRequest, input),
     revealPath: async (input: WorkboardRevealPathInput): Promise<void> =>
-      ipcRenderer.invoke(ipcChannels.workboardRevealPath, input)
+      ipcRenderer.invoke(ipcChannels.workboardRevealPath, input),
+    checkPaths: async (input: WorkboardCheckPathsInput): Promise<WorkboardPathStatus[]> =>
+      ipcRenderer.invoke(ipcChannels.workboardCheckPaths, input)
   },
   observability: {
     listWorkboard: async (): Promise<ObservedRunSnapshot[]> =>

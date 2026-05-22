@@ -55,6 +55,7 @@ export const ipcChannels = {
   workboardCancelRun: 'workboard:cancel-run',
   workboardAnswerInputRequest: 'workboard:answer-input-request',
   workboardRevealPath: 'workboard:reveal-path',
+  workboardCheckPaths: 'workboard:check-paths',
   observabilityListWorkboard: 'observability:list-workboard',
   observabilityListConversation: 'observability:list-conversation',
   observabilityListEvents: 'observability:list-events',
