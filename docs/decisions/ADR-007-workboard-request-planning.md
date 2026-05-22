@@ -4,6 +4,10 @@
 
 Accepted
 
+The "Live Board" section is superseded by ADR-020, which replaces the seven horizontally
+scrollable status columns with three consolidated columns and a single-request observation
+model. All other decisions in this ADR stand.
+
 ## Date
 
 2026-05-10

@@ -70,6 +70,8 @@ import type {
   WorkboardGenerateRequestPlanInput,
   WorkboardRevealPathInput,
   WorkboardCheckPathsInput,
+  WorkboardArchiveRequestInput,
+  WorkboardUnarchiveRequestInput,
   WorkboardPathStatus,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
@@ -220,7 +222,11 @@ const ordinus = {
     revealPath: async (input: WorkboardRevealPathInput): Promise<void> =>
       ipcRenderer.invoke(ipcChannels.workboardRevealPath, input),
     checkPaths: async (input: WorkboardCheckPathsInput): Promise<WorkboardPathStatus[]> =>
-      ipcRenderer.invoke(ipcChannels.workboardCheckPaths, input)
+      ipcRenderer.invoke(ipcChannels.workboardCheckPaths, input),
+    archiveRequest: async (input: WorkboardArchiveRequestInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardArchiveRequest, input),
+    unarchiveRequest: async (input: WorkboardUnarchiveRequestInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardUnarchiveRequest, input)
   },
   observability: {
     listWorkboard: async (): Promise<ObservedRunSnapshot[]> =>

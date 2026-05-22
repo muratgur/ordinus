@@ -1,7 +1,6 @@
-import { Bot, CalendarClock, Columns3, House, MessageSquareText, Settings } from 'lucide-react'
+import { Bot, CalendarClock, Columns3, MessageSquareText, Settings } from 'lucide-react'
 
 export const appRoutePaths = {
-  home: '/home',
   agents: '/agents',
   workboard: '/workboard',
   conversations: '/conversations',
@@ -11,7 +10,7 @@ export const appRoutePaths = {
 
 export type AppRouteId = keyof typeof appRoutePaths
 
-export const defaultAppRoute = appRoutePaths.home
+export const defaultAppRoute = appRoutePaths.workboard
 
 export const appNavigation = [
   {
@@ -42,7 +41,7 @@ export const appNavigation = [
   id: Exclude<AppRouteId, 'settings'>
   label: string
   path: (typeof appRoutePaths)[Exclude<AppRouteId, 'settings'>]
-  icon: typeof House
+  icon: typeof Settings
 }>
 
 export const utilityNavigation = [
@@ -56,5 +55,5 @@ export const utilityNavigation = [
   id: Extract<AppRouteId, 'settings'>
   label: string
   path: (typeof appRoutePaths)[Extract<AppRouteId, 'settings'>]
-  icon: typeof House
+  icon: typeof Settings
 }>
