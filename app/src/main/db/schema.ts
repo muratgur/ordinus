@@ -174,7 +174,8 @@ export const workRequests = sqliteTable('work_requests', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
   startedAt: text('started_at'),
-  completedAt: text('completed_at')
+  completedAt: text('completed_at'),
+  archivedAt: text('archived_at')
 })
 
 export const pendingPlans = sqliteTable('pending_plans', {

@@ -1017,9 +1017,11 @@ export class OrdinusDatabase {
         tx.update(workRequests)
           .set({
             summary: plan.summary || destinationRequest.summary,
-            status: destinationRequest.status === 'completed' ? 'active' : destinationRequest.status,
+            status:
+              destinationRequest.status === 'completed' ? 'active' : destinationRequest.status,
             updatedAt: now,
-            completedAt: null
+            completedAt: null,
+            archivedAt: null
           })
           .where(eq(workRequests.id, destinationRequest.id))
           .run()
@@ -1042,7 +1044,11 @@ export class OrdinusDatabase {
         const requiredRunIds = uniqueValues([...contextDependencyRunIds, ...planDependencyRunIds])
         const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds(contextDependencyRuns)
         const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
-        const providerSessionRef = getContinuationProviderSessionRef(parentRun, agent, requiredRunIds)
+        const providerSessionRef = getContinuationProviderSessionRef(
+          parentRun,
+          agent,
+          requiredRunIds
+        )
 
         tx.insert(workRuns)
           .values({
@@ -1325,6 +1331,12 @@ export class OrdinusDatabase {
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, request.workingRoot)
 
     this.db.transaction((tx) => {
+      if (request.archivedAt) {
+        tx.update(workRequests)
+          .set({ archivedAt: null, updatedAt: now })
+          .where(eq(workRequests.id, request.id))
+          .run()
+      }
       plan.items.forEach((item) => {
         const agent = agentsById.get(item.assignedAgentId)
         const runId = runIdsByTempId.get(item.tempId)
@@ -1461,6 +1473,37 @@ export class OrdinusDatabase {
     }
 
     return WorkRequestSchema.parse(request)
+  }
+
+  archiveWorkRequest(requestId: string): WorkRequest {
+    const request = this.getWorkRequest(requestId)
+    if (!isTerminalWorkRequestStatus(request.status)) {
+      throw new Error('Only finished Work Requests can be archived.')
+    }
+    if (request.archivedAt) {
+      return request
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(workRequests)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(workRequests.id, requestId))
+      .run()
+    return this.getWorkRequest(requestId)
+  }
+
+  unarchiveWorkRequest(requestId: string): WorkRequest {
+    const request = this.getWorkRequest(requestId)
+    if (!request.archivedAt) {
+      return request
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(workRequests)
+      .set({ archivedAt: null, updatedAt: now })
+      .where(eq(workRequests.id, requestId))
+      .run()
+    return this.getWorkRequest(requestId)
   }
 
   getWorkboardData(): WorkboardData {

@@ -41,7 +41,7 @@ export function AppShell({
         <div className="mx-auto flex h-12 w-full max-w-screen-2xl items-stretch px-5">
           {/* Logo */}
           <NavLink
-            to="/home"
+            to={appRoutePaths.workboard}
             className="mr-6 flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
             aria-label="Ordinus home"
           >

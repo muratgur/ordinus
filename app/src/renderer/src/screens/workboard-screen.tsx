@@ -1,14 +1,8 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  AlertCircle,
+  Archive,
+  ArchiveRestore,
   Bot,
   CheckCircle2,
   Check,
@@ -22,6 +16,8 @@ import {
   Files,
   GitBranch,
   Loader2,
+  MoreHorizontal,
+  PanelLeft,
   PanelRight,
   Plus,
   Search,
@@ -81,20 +77,53 @@ import {
   type WorkboardDraftReviewState
 } from './workboard-draft-review'
 
+type WorkColumnId = 'waiting' | 'running' | 'done'
+
 const columns: Array<{
-  id: WorkboardRun['status']
+  id: WorkColumnId
   label: string
-  fullLabel: string
   icon: typeof Play
+  statuses: Array<WorkboardRun['status']>
 }> = [
-  { id: 'queued', label: 'Queue', fullLabel: 'Queued', icon: Clock3 },
-  { id: 'running', label: 'Run', fullLabel: 'Running', icon: Play },
-  { id: 'waiting_for_user', label: 'Wait', fullLabel: 'Waiting', icon: AlertCircle },
-  { id: 'blocked', label: 'Block', fullLabel: 'Blocked', icon: GitBranch },
-  { id: 'completed', label: 'Done', fullLabel: 'Completed', icon: CheckCircle2 },
-  { id: 'failed', label: 'Fail', fullLabel: 'Failed', icon: XCircle },
-  { id: 'cancelled', label: 'Cancel', fullLabel: 'Cancelled', icon: XCircle }
+  { id: 'waiting', label: 'Waiting', icon: Clock3, statuses: ['queued', 'blocked'] },
+  { id: 'running', label: 'Running', icon: Play, statuses: ['running', 'waiting_for_user'] },
+  {
+    id: 'done',
+    label: 'Done',
+    icon: CheckCircle2,
+    statuses: ['completed', 'failed', 'cancelled']
+  }
 ]
+
+const doneWindowSize = 5
+
+const activeRequestStorageKey = 'ordinus-workboard-active-request'
+const sidebarDockedStorageKey = 'ordinus-workboard-sidebar-docked'
+const showArchivedStorageKey = 'ordinus-workboard-show-archived'
+
+function getStoredActiveRequestId(): string {
+  try {
+    return window.localStorage.getItem(activeRequestStorageKey) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function getStoredSidebarDocked(): boolean {
+  try {
+    return window.localStorage.getItem(sidebarDockedStorageKey) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+function getStoredShowArchived(): boolean {
+  try {
+    return window.localStorage.getItem(showArchivedStorageKey) === 'true'
+  } catch {
+    return false
+  }
+}
 
 const newWorkComposerTarget: WorkComposerTarget = {
   contextReferences: [],
@@ -161,8 +190,10 @@ export function WorkboardScreen({
   const [reviewBeforeStart, setReviewBeforeStart] = useState(true)
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runDetailBackStack, setRunDetailBackStack] = useState<string[]>([])
-  const [requestFilter, setRequestFilter] = useState('all')
-  const [workSearch, setWorkSearch] = useState('')
+  const [activeRequestId, setActiveRequestId] = useState(getStoredActiveRequestId)
+  const [sidebarDocked, setSidebarDocked] = useState(getStoredSidebarDocked)
+  const [showArchived, setShowArchived] = useState(getStoredShowArchived)
+  const [railSearch, setRailSearch] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
@@ -213,34 +244,57 @@ export function WorkboardScreen({
     () => new Map(observedRuns.map((run) => [run.sourceItemId, run])),
     [observedRuns]
   )
-  const baseFilteredRuns = data.runs.filter((run) => {
-    if (requestFilter === 'all') return true
-    if (requestFilter === 'active') {
-      return !isTerminalRunStatus(run.status)
+  const railStats = useMemo(() => buildRequestRailStats(data), [data])
+  const archivedCount = useMemo(
+    () => railStats.filter((request) => request.archived).length,
+    [railStats]
+  )
+  const visibleRailStats = useMemo(
+    () => (showArchived ? railStats : railStats.filter((request) => !request.archived)),
+    [railStats, showArchived]
+  )
+  const activeRequest =
+    data.requests.find((item) => item.id === activeRequestId) ??
+    data.requests.find((item) => item.id === (visibleRailStats[0]?.id ?? '')) ??
+    null
+  const activeRequestRuns = useMemo(
+    () => (activeRequest ? data.runs.filter((run) => run.requestId === activeRequest.id) : []),
+    [data.runs, activeRequest]
+  )
+  const activeRequestFiles = useMemo(
+    () =>
+      activeRequest ? getRequestFileProvenance(activeRequestRuns, activeRequest.workingRoot) : [],
+    [activeRequest, activeRequestRuns]
+  )
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(activeRequestStorageKey, activeRequest?.id ?? '')
+    } catch {
+      /* localStorage unavailable */
     }
-    return run.requestId === requestFilter
-  })
-  const filteredRuns = baseFilteredRuns.filter((run) => matchesWorkSearch(run, workSearch))
-  const requestStats = useMemo(() => buildRequestStats(data), [data])
-  const allRunCount = data.runs.length
-  const activeRunCount = data.runs.filter((run) => !isTerminalRunStatus(run.status)).length
+  }, [activeRequest?.id])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(sidebarDockedStorageKey, String(sidebarDocked))
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [sidebarDocked])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(showArchivedStorageKey, String(showArchived))
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [showArchived])
 
   const draftPlan = draftReview.plan
   const draftContext = draftReview.context
   const selectedDraftId = draftReview.selectedItemId
   const selectedDraftItem = draftPlan?.items.find((item) => item.tempId === selectedDraftId) ?? null
-  const selectedRequest = data.requests.find((item) => item.id === requestFilter) ?? null
-  const selectedRequestRuns = useMemo(
-    () => (selectedRequest ? data.runs.filter((run) => run.requestId === selectedRequest.id) : []),
-    [data.runs, selectedRequest]
-  )
-  const selectedRequestFiles = useMemo(
-    () =>
-      selectedRequest
-        ? getRequestFileProvenance(selectedRequestRuns, selectedRequest.workingRoot)
-        : [],
-    [selectedRequest, selectedRequestRuns]
-  )
   const watchedOp = watchedOpId
     ? (planOperations.operations.find((op) => op.id === watchedOpId) ?? null)
     : null
@@ -408,7 +462,9 @@ export function WorkboardScreen({
     const startedRequest = findStartedRequest(nextData, target, originalRequest, plan)
 
     setData(nextData)
-    setRequestFilter(startedRequest?.id ?? 'all')
+    if (startedRequest?.id) {
+      setActiveRequestId(startedRequest.id)
+    }
     closeRunDetail()
     onDraftReviewChange(emptyWorkboardDraftReviewState)
     setComposer(emptyComposerState)
@@ -441,8 +497,8 @@ export function WorkboardScreen({
     closeRunDetail()
   }
 
-  function changeRequestFilter(nextFilter: string): void {
-    setRequestFilter(nextFilter)
+  function changeActiveRequest(requestId: string): void {
+    setActiveRequestId(requestId)
     setFilesDrawerOpen(false)
   }
 
@@ -471,6 +527,38 @@ export function WorkboardScreen({
     setSelectedRunId('')
   }
 
+  async function handleArchiveRequest(requestId: string): Promise<void> {
+    setBusy(`archive-${requestId}`)
+    setError('')
+    try {
+      const nextData = await window.ordinus.workboard.archiveRequest({ requestId })
+      setData(nextData)
+    } catch (archiveError) {
+      setError(
+        archiveError instanceof Error ? archiveError.message : 'Work Request could not be archived.'
+      )
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function handleUnarchiveRequest(requestId: string): Promise<void> {
+    setBusy(`unarchive-${requestId}`)
+    setError('')
+    try {
+      const nextData = await window.ordinus.workboard.unarchiveRequest({ requestId })
+      setData(nextData)
+    } catch (unarchiveError) {
+      setError(
+        unarchiveError instanceof Error
+          ? unarchiveError.message
+          : 'Work Request could not be unarchived.'
+      )
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function handleCancelRun(runId: string): Promise<void> {
     setBusy(`cancel-${runId}`)
     setError('')
@@ -488,32 +576,11 @@ export function WorkboardScreen({
 
   return (
     <div className="flex min-h-[calc(100vh-3rem)] flex-col gap-3 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:overflow-hidden">
-      <section className="flex shrink-0 flex-col gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Columns3 className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">Workboard</h2>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Create requests from New, then inspect running and completed Work Items here.
-          </p>
+      {enabledAgents.length === 0 ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          Create and enable at least one agent before creating Work Requests.
         </div>
-        <Button
-          type="button"
-          size="sm"
-          className="shrink-0"
-          onClick={handleNewRequest}
-          disabled={enabledAgents.length === 0}
-        >
-          <Plus />
-          New
-        </Button>
-        {enabledAgents.length === 0 ? (
-          <p className="text-xs text-destructive sm:ml-auto">
-            Create and enable at least one agent before creating Work Requests.
-          </p>
-        ) : null}
-      </section>
+      ) : null}
 
       {error ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -521,26 +588,47 @@ export function WorkboardScreen({
         </div>
       ) : null}
 
-      <WorkFilterBar
-        filter={requestFilter}
-        allCount={allRunCount}
-        activeCount={activeRunCount}
-        requestStats={requestStats}
-        selectedRequest={selectedRequest}
-        requestFileCount={selectedRequestFiles.length}
-        workSearch={workSearch}
-        onFilterChange={changeRequestFilter}
-        onContinueRequest={handleContinueRequest}
-        onOpenRequestFiles={() => setFilesDrawerOpen(true)}
-        onWorkSearchChange={setWorkSearch}
-      />
-
-      <WorkColumns
-        runs={filteredRuns}
-        inputRequests={data.inputRequests}
-        observedRuns={observedRunByWorkRunId}
-        onSelectRun={openRunDetail}
-      />
+      <div className="flex min-h-0 flex-1">
+        <div
+          className={cn(
+            'flex min-h-0 overflow-hidden transition-[width,margin] duration-200',
+            sidebarDocked ? 'mr-3 w-64' : 'mr-0 w-0'
+          )}
+        >
+          <RequestSidebar
+            requests={visibleRailStats}
+            activeRequestId={activeRequest?.id ?? ''}
+            search={railSearch}
+            newDisabled={enabledAgents.length === 0}
+            showArchived={showArchived}
+            archivedCount={archivedCount}
+            onSearchChange={setRailSearch}
+            onSelect={changeActiveRequest}
+            onNew={handleNewRequest}
+            onToggleArchived={() => setShowArchived((value) => !value)}
+            onArchive={handleArchiveRequest}
+          />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <RequestHeaderBar
+            request={activeRequest}
+            sidebarDocked={sidebarDocked}
+            fileCount={activeRequestFiles.length}
+            onToggleSidebar={() => setSidebarDocked((docked) => !docked)}
+            onContinue={handleContinueRequest}
+            onOpenFiles={() => setFilesDrawerOpen(true)}
+            onArchive={handleArchiveRequest}
+            onUnarchive={handleUnarchiveRequest}
+          />
+          <WorkColumns
+            request={activeRequest}
+            runs={activeRequestRuns}
+            inputRequests={data.inputRequests}
+            observedRuns={observedRunByWorkRunId}
+            onSelectRun={openRunDetail}
+          />
+        </div>
+      </div>
 
       <RequestComposerDialog
         open={composer.open}
@@ -590,9 +678,9 @@ export function WorkboardScreen({
           <DialogHeader>
             <DialogTitle>Work request changed</DialogTitle>
             <DialogDescription>
-              This plan was prepared against an earlier state of the work request, which has
-              changed since (another continuation may have been added). Applying it now could
-              conflict with that work.
+              This plan was prepared against an earlier state of the work request, which has changed
+              since (another continuation may have been added). Applying it now could conflict with
+              that work.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -624,10 +712,10 @@ export function WorkboardScreen({
         onError={setError}
       />
 
-      {filesDrawerOpen && selectedRequest ? (
+      {filesDrawerOpen && activeRequest ? (
         <RequestFilesDrawer
-          request={selectedRequest}
-          files={selectedRequestFiles}
+          request={activeRequest}
+          files={activeRequestFiles}
           onClose={() => setFilesDrawerOpen(false)}
           onSelectRun={(runId) => {
             setFilesDrawerOpen(false)
@@ -638,14 +726,6 @@ export function WorkboardScreen({
       ) : null}
     </div>
   )
-}
-
-type RequestFilterStat = {
-  id: string
-  title: string
-  totalCount: number
-  activeCount: number
-  createdAt: string
 }
 
 const targetDropdownTriggerClass =
@@ -739,7 +819,9 @@ function RequestComposerDialog({
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault()
-        setActiveMentionIndex((index) => (index - 1 + mentionOptions.length) % mentionOptions.length)
+        setActiveMentionIndex(
+          (index) => (index - 1 + mentionOptions.length) % mentionOptions.length
+        )
         return
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
@@ -847,7 +929,9 @@ function RequestComposerDialog({
             <span
               className={cn(
                 'grid size-4 place-items-center rounded border transition-colors',
-                reviewBeforeStart ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card'
+                reviewBeforeStart
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-card'
               )}
               aria-hidden="true"
             >
@@ -937,7 +1021,9 @@ function WorkRequestSelect({
               selected={!destinationRequestId}
               label="New Work Request"
               detail="Start a fresh request"
-              icon={!destinationRequestId ? <Check className="size-4" /> : <Plus className="size-4" />}
+              icon={
+                !destinationRequestId ? <Check className="size-4" /> : <Plus className="size-4" />
+              }
               onClick={() => selectRequest('')}
             />
             {filteredRequests.length === 0 ? (
@@ -1301,305 +1387,609 @@ function ReferenceViewButton({
   )
 }
 
-function WorkFilterBar({
-  filter,
-  allCount,
-  activeCount,
-  requestStats,
-  selectedRequest,
-  requestFileCount,
-  workSearch,
-  onFilterChange,
-  onContinueRequest,
-  onOpenRequestFiles,
-  onWorkSearchChange
-}: {
-  filter: string
-  allCount: number
-  activeCount: number
-  requestStats: RequestFilterStat[]
-  selectedRequest: WorkboardData['requests'][number] | null
-  requestFileCount: number
-  workSearch: string
-  onFilterChange: (filter: string) => void
-  onContinueRequest: (requestId: string) => void
-  onOpenRequestFiles: () => void
-  onWorkSearchChange: (search: string) => void
-}): React.JSX.Element {
-  const [requestPickerOpen, setRequestPickerOpen] = useState(false)
-  const [requestSearch, setRequestSearch] = useState('')
-  const visibleRequests = useMemo(
-    () => getVisibleRequestFilters(requestStats, filter),
-    [filter, requestStats]
-  )
-  const hiddenRequests = requestStats.filter(
-    (request) => !visibleRequests.some((visible) => visible.id === request.id)
-  )
-  const searchedHiddenRequests = hiddenRequests.filter((request) =>
-    request.title.toLowerCase().includes(requestSearch.trim().toLowerCase())
-  )
-
-  function selectFilter(nextFilter: string): void {
-    onFilterChange(nextFilter)
-    setRequestPickerOpen(false)
-    setRequestSearch('')
-  }
-
-  return (
-    <section className="relative flex shrink-0 flex-col gap-2 rounded-lg border bg-card px-3 py-2 xl:flex-row xl:items-center xl:justify-between">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-md border bg-background p-0.5">
-          <FilterChip
-            active={filter === 'all'}
-            label="All"
-            count={allCount}
-            onClick={() => selectFilter('all')}
-          />
-          <FilterChip
-            active={filter === 'active'}
-            label="Active"
-            count={activeCount}
-            onClick={() => selectFilter('active')}
-          />
-        </div>
-
-        {visibleRequests.length > 0 ? (
-          <span className="hidden h-5 w-px bg-border sm:block" />
-        ) : null}
-
-        {visibleRequests.map((request) => (
-          <FilterChip
-            key={request.id}
-            active={filter === request.id}
-            label={request.title}
-            count={request.totalCount}
-            onClick={() => selectFilter(request.id)}
-            className="max-w-56"
-          />
-        ))}
-
-        {hiddenRequests.length > 0 ? (
-          <div
-            className="relative"
-            onBlur={(event) => {
-              const nextTarget = event.relatedTarget
-              if (!nextTarget || !event.currentTarget.contains(nextTarget as Node)) {
-                setRequestPickerOpen(false)
-              }
-            }}
-          >
-            <button
-              type="button"
-              className={cn(
-                'inline-flex h-8 items-center gap-1 rounded-md border px-3 text-xs font-medium transition-colors',
-                requestPickerOpen
-                  ? 'border-primary/30 bg-primary-soft text-foreground'
-                  : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-              onClick={() => setRequestPickerOpen((open) => !open)}
-            >
-              +{hiddenRequests.length} more
-              <ChevronDown className="size-3.5" />
-            </button>
-
-            {requestPickerOpen ? (
-              <div className="absolute right-0 top-10 z-30 w-80 max-w-[calc(100vw-3rem)] rounded-lg border bg-card p-2 shadow-lg">
-                <label className="flex h-9 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground">
-                  <Search className="size-4" />
-                  <input
-                    className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                    placeholder="Find Work Request"
-                    value={requestSearch}
-                    onChange={(event) => setRequestSearch(event.target.value)}
-                  />
-                </label>
-                <div className="mt-2 max-h-72 overflow-y-auto ordinus-scrollbar">
-                  {searchedHiddenRequests.length === 0 ? (
-                    <p className="px-2 py-3 text-sm text-muted-foreground">
-                      No Work Requests found.
-                    </p>
-                  ) : (
-                    searchedHiddenRequests.map((request) => (
-                      <button
-                        key={request.id}
-                        type="button"
-                        className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
-                        onClick={() => selectFilter(request.id)}
-                      >
-                        <span className="min-w-0 truncate">{request.title}</span>
-                        <Badge variant="secondary" className="shrink-0">
-                          {request.totalCount}
-                        </Badge>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row xl:ml-auto">
-        {selectedRequest ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={() => onContinueRequest(selectedRequest.id)}
-          >
-            <GitBranch />
-            Continue this work
-          </Button>
-        ) : null}
-        {selectedRequest ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={onOpenRequestFiles}
-          >
-            <Files />
-            Files ({requestFileCount})
-          </Button>
-        ) : null}
-        <label className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground sm:w-44 xl:w-40">
-          <Search className="size-4 shrink-0" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-            placeholder="Search..."
-            value={workSearch}
-            onChange={(event) => onWorkSearchChange(event.target.value)}
-          />
-        </label>
-      </div>
-    </section>
-  )
-}
-
-function FilterChip({
-  active,
-  label,
-  count,
-  onClick,
-  className
-}: {
-  active: boolean
-  label: string
-  count: number
-  onClick: () => void
-  className?: string
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={cn(
-        'inline-flex h-8 min-w-0 items-center gap-2 rounded-md px-3 text-xs font-medium transition-colors',
-        active
-          ? 'bg-primary-soft text-foreground'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-        className
-      )}
-      onClick={onClick}
-    >
-      <span className="min-w-0 truncate">{label}</span>
-      <span
-        className={cn(
-          'shrink-0 tabular-nums',
-          active ? 'text-foreground' : 'text-muted-foreground'
-        )}
-      >
-        {count}
-      </span>
-    </button>
-  )
-}
-
 function WorkColumns({
+  request,
   runs,
   inputRequests,
   observedRuns,
   onSelectRun
 }: {
+  request: WorkboardData['requests'][number] | null
   runs: WorkboardRun[]
   inputRequests: WorkRunInputRequest[]
   observedRuns: Map<string, ObservedRunSnapshot>
   onSelectRun: (runId: string) => void
 }): React.JSX.Element {
-  return (
-    <div className="min-h-0 flex-1 overflow-hidden rounded-lg border bg-card">
-      <div className="h-full overflow-x-auto ordinus-scrollbar">
-        <div className="flex h-full min-h-[360px] w-max gap-3 p-3">
-          {columns.map((column) => {
-            const columnRuns = runs.filter((run) => run.status === column.id)
-            const Icon = column.icon
+  const [doneExpanded, setDoneExpanded] = useState(false)
 
-            return (
-              <section
-                key={column.id}
-                className="flex h-full min-h-0 w-64 shrink-0 flex-col rounded-md bg-accent/50"
-              >
-                <header className="flex items-center justify-between border-b px-3 py-2">
-                  <div
-                    className="flex items-center gap-2 text-sm font-semibold"
-                    title={column.fullLabel}
-                  >
-                    <Icon className="size-4" />
-                    {column.label}
-                  </div>
-                  <Badge variant="secondary">{columnRuns.length}</Badge>
-                </header>
-                <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 ordinus-scrollbar">
-                  {columnRuns.length === 0 ? (
-                    <div className="rounded-md border border-dashed bg-background/60 p-3 text-xs text-muted-foreground">
-                      No Work Items
-                    </div>
-                  ) : (
-                    columnRuns.map((run) => {
-                      const inputBadge = getWorkRunInputBadge(
-                        getVisibleWorkRunInputRequest(inputRequests, run.id)
-                      )
-                      const observedRun = observedRuns.get(run.id)
-
-                      return (
-                        <button
-                          key={run.id}
-                          type="button"
-                          className="rounded-md border bg-background p-3 text-left shadow-sm transition-colors hover:border-primary/40"
-                          onClick={() => onSelectRun(run.id)}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <h3 className="text-sm font-semibold leading-5">{run.title}</h3>
-                            {inputBadge ? (
-                              <Badge variant={inputBadge.variant} className="shrink-0">
-                                {inputBadge.label}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
-                          <RunCardActivity run={run} observedRun={observedRun} />
-                          <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                            {run.parentRunId ? (
-                              <CornerDownRight
-                                className="size-3 shrink-0 text-muted-foreground/80"
-                                aria-label="Follow-up item"
-                              />
-                            ) : null}
-                            <span className="truncate">{run.requestTitle}</span>
-                          </div>
-                        </button>
-                      )
-                    })
-                  )}
-                </div>
-              </section>
-            )
-          })}
+  if (!request) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border bg-card">
+        <div className="max-w-sm px-6 text-center">
+          <Columns3 className="mx-auto size-6 text-muted-foreground" />
+          <p className="mt-3 text-sm font-medium">No Work Request selected</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Select a Work Request from the list, or use New to start one.
+          </p>
         </div>
       </div>
+    )
+  }
+
+  const runsByColumn = new Map<WorkColumnId, WorkboardRun[]>()
+  columns.forEach((column) => {
+    runsByColumn.set(
+      column.id,
+      sortColumnRuns(
+        column.id,
+        runs.filter((run) => column.statuses.includes(run.status)),
+        observedRuns
+      )
+    )
+  })
+
+  return (
+    <div className="flex min-h-0 flex-1 gap-3">
+      {columns.map((column) => {
+        const columnRuns = runsByColumn.get(column.id) ?? []
+        const Icon = column.icon
+        const isDone = column.id === 'done'
+        const visibleRuns =
+          isDone && !doneExpanded ? columnRuns.slice(0, doneWindowSize) : columnRuns
+        const hiddenCount = columnRuns.length - visibleRuns.length
+
+        return (
+          <section
+            key={column.id}
+            className="flex min-h-0 flex-1 flex-col rounded-lg border bg-card"
+          >
+            <header className="flex items-center justify-between border-b px-3 py-2">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Icon className="size-4" />
+                {column.label}
+              </div>
+              <Badge variant="secondary">{columnRuns.length}</Badge>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2 ordinus-scrollbar">
+              {columnRuns.length === 0 ? (
+                <ColumnEmptyState columnId={column.id} runsByColumn={runsByColumn} />
+              ) : (
+                <>
+                  {visibleRuns.map((run) => (
+                    <RunCard
+                      key={run.id}
+                      run={run}
+                      columnId={column.id}
+                      inputRequest={getVisibleWorkRunInputRequest(inputRequests, run.id)}
+                      observedRun={observedRuns.get(run.id)}
+                      onSelect={onSelectRun}
+                    />
+                  ))}
+                  {isDone && hiddenCount > 0 ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-dashed py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={() => setDoneExpanded(true)}
+                    >
+                      Show {hiddenCount} older
+                    </button>
+                  ) : null}
+                  {isDone && doneExpanded && columnRuns.length > doneWindowSize ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-dashed py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={() => setDoneExpanded(false)}
+                    >
+                      Show less
+                    </button>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </section>
+        )
+      })}
     </div>
+  )
+}
+
+function RunCard({
+  run,
+  columnId,
+  inputRequest,
+  observedRun,
+  onSelect
+}: {
+  run: WorkboardRun
+  columnId: WorkColumnId
+  inputRequest: WorkRunInputRequest | undefined
+  observedRun?: ObservedRunSnapshot
+  onSelect: (runId: string) => void
+}): React.JSX.Element {
+  const inputBadge = getWorkRunInputBadge(inputRequest)
+  const timestamp = getCardTimestampLabel(run, columnId)
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        'rounded-md border bg-background p-3 text-left shadow-sm transition-colors animate-in fade-in-0 duration-150 hover:border-primary/40',
+        columnId === 'done' ? doneAccentClassName(run.status) : ''
+      )}
+      onClick={() => onSelect(run.id)}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="line-clamp-2 text-sm font-semibold leading-5">{run.title}</h3>
+        {inputBadge ? (
+          <Badge variant={inputBadge.variant} className="shrink-0">
+            {inputBadge.label}
+          </Badge>
+        ) : null}
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
+      <RunCardActivity run={run} observedRun={observedRun} />
+      {timestamp ? (
+        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          {run.parentRunId ? (
+            <CornerDownRight
+              className="size-3 shrink-0 text-muted-foreground/80"
+              aria-label="Follow-up item"
+            />
+          ) : null}
+          <span className="truncate">{timestamp}</span>
+        </div>
+      ) : null}
+    </button>
+  )
+}
+
+function ColumnEmptyState({
+  columnId,
+  runsByColumn
+}: {
+  columnId: WorkColumnId
+  runsByColumn: Map<WorkColumnId, WorkboardRun[]>
+}): React.JSX.Element {
+  return (
+    <div className="rounded-md border border-dashed bg-background/60 p-3 text-xs text-muted-foreground">
+      {getColumnEmptyMessage(columnId, runsByColumn)}
+    </div>
+  )
+}
+
+function getColumnEmptyMessage(
+  columnId: WorkColumnId,
+  runsByColumn: Map<WorkColumnId, WorkboardRun[]>
+): string {
+  if (columnId === 'waiting') {
+    return 'Queue is clear — nothing waiting to start.'
+  }
+  if (columnId === 'done') {
+    return 'Nothing completed yet.'
+  }
+
+  const waiting = runsByColumn.get('waiting')?.length ?? 0
+  const done = runsByColumn.get('done')?.length ?? 0
+  if (waiting + done === 0) {
+    return 'No work items yet. Use New to add work to this request.'
+  }
+  if (waiting > 0) {
+    return 'Nothing running yet — work is waiting in the queue.'
+  }
+  return 'All work in this request is complete.'
+}
+
+function sortColumnRuns(
+  columnId: WorkColumnId,
+  runs: WorkboardRun[],
+  observedRuns: Map<string, ObservedRunSnapshot>
+): WorkboardRun[] {
+  const sorted = [...runs]
+
+  if (columnId === 'waiting') {
+    sorted.sort((first, second) => Date.parse(first.createdAt) - Date.parse(second.createdAt))
+    return sorted
+  }
+
+  if (columnId === 'done') {
+    sorted.sort(
+      (first, second) =>
+        Date.parse(second.completedAt ?? second.updatedAt) -
+        Date.parse(first.completedAt ?? first.updatedAt)
+    )
+    return sorted
+  }
+
+  sorted.sort(
+    (first, second) => runningRank(first, observedRuns) - runningRank(second, observedRuns)
+  )
+  return sorted
+}
+
+function runningRank(run: WorkboardRun, observedRuns: Map<string, ObservedRunSnapshot>): number {
+  if (run.status === 'waiting_for_user') return 0
+  if (observedRuns.get(run.id)?.livenessHealth === 'stalled') return 1
+  return 2
+}
+
+function getCardTimestampLabel(run: WorkboardRun, columnId: WorkColumnId): string {
+  if (columnId === 'running') {
+    const started = formatRelativeTime(run.startedAt)
+    return started ? `Started ${started}` : 'Starting'
+  }
+
+  if (columnId === 'done') {
+    const finished = formatRelativeTime(run.completedAt ?? run.updatedAt)
+    return finished ? `Finished ${finished}` : ''
+  }
+
+  if (run.status === 'blocked') {
+    const since = formatRelativeTime(run.updatedAt)
+    return since ? `Blocked ${since}` : 'Blocked'
+  }
+
+  const created = formatRelativeTime(run.createdAt)
+  return created ? `Created ${created}` : ''
+}
+
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return ''
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return ''
+
+  const diff = Date.now() - ms
+  if (diff < 60_000) return 'just now'
+
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 60) return `${minutes}m ago`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+function doneAccentClassName(status: WorkboardRun['status']): string {
+  if (status === 'failed') return 'border-l-2 border-l-status-attention'
+  if (status === 'cancelled') return 'border-l-2 border-l-muted-foreground/40'
+  return 'border-l-2 border-l-status-completed'
+}
+
+type RequestRailStat = {
+  id: string
+  title: string
+  status: WorkboardData['requests'][number]['status']
+  archived: boolean
+  totalCount: number
+  completedCount: number
+  attention: 'input' | 'running' | 'none'
+  updatedAt: string
+}
+
+function isTerminalRequestStatus(status: WorkboardData['requests'][number]['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function buildRequestRailStats(data: WorkboardData): RequestRailStat[] {
+  return data.requests
+    .map((request) => {
+      const requestRuns = data.runs.filter((run) => run.requestId === request.id)
+      const hasInput = requestRuns.some((run) => run.status === 'waiting_for_user')
+      const hasRunning = requestRuns.some((run) => run.status === 'running')
+
+      return {
+        id: request.id,
+        title: request.title,
+        status: request.status,
+        archived: Boolean(request.archivedAt),
+        totalCount: requestRuns.length,
+        completedCount: requestRuns.filter((run) => run.status === 'completed').length,
+        attention: hasInput ? 'input' : hasRunning ? 'running' : 'none',
+        updatedAt: request.updatedAt
+      } satisfies RequestRailStat
+    })
+    .sort((first, second) => Date.parse(second.updatedAt) - Date.parse(first.updatedAt))
+}
+
+function useExitAnimation(open: boolean): {
+  mounted: boolean
+  handleAnimationEnd: () => void
+} {
+  const [mounted, setMounted] = useState(open)
+  if (open && !mounted) {
+    setMounted(true)
+  }
+  return {
+    mounted,
+    handleAnimationEnd: () => {
+      if (!open) {
+        setMounted(false)
+      }
+    }
+  }
+}
+
+function RequestSidebar({
+  requests,
+  activeRequestId,
+  search,
+  newDisabled,
+  showArchived,
+  archivedCount,
+  onSearchChange,
+  onSelect,
+  onNew,
+  onToggleArchived,
+  onArchive
+}: {
+  requests: RequestRailStat[]
+  activeRequestId: string
+  search: string
+  newDisabled: boolean
+  showArchived: boolean
+  archivedCount: number
+  onSearchChange: (value: string) => void
+  onSelect: (requestId: string) => void
+  onNew: () => void
+  onToggleArchived: () => void
+  onArchive: (requestId: string) => void
+}): React.JSX.Element {
+  const normalized = search.trim().toLowerCase()
+  const filtered = normalized
+    ? requests.filter((request) => request.title.toLowerCase().includes(normalized))
+    : requests
+
+  return (
+    <aside className="flex min-h-0 w-64 shrink-0 flex-col gap-2 border-r border-border pr-3">
+      <Button type="button" size="sm" className="w-full" onClick={onNew} disabled={newDisabled}>
+        <Plus />
+        New Work Request
+      </Button>
+      <label className="flex h-9 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground">
+        <Search className="size-4 shrink-0" />
+        <input
+          className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          placeholder="Find Work Request"
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+        />
+      </label>
+      <RequestList
+        requests={filtered}
+        activeRequestId={activeRequestId}
+        onSelect={onSelect}
+        onArchive={onArchive}
+      />
+      {archivedCount > 0 ? (
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={onToggleArchived}
+        >
+          <Archive className="size-3.5 shrink-0" />
+          {showArchived ? 'Hide archived' : 'Show archived'} ({archivedCount})
+        </button>
+      ) : null}
+    </aside>
+  )
+}
+
+function RequestList({
+  requests,
+  activeRequestId,
+  onSelect,
+  onArchive
+}: {
+  requests: RequestRailStat[]
+  activeRequestId: string
+  onSelect: (requestId: string) => void
+  onArchive?: (requestId: string) => void
+}): React.JSX.Element {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto ordinus-scrollbar">
+      {requests.length === 0 ? (
+        <p className="px-2 py-3 text-xs text-muted-foreground">No Work Requests found.</p>
+      ) : (
+        requests.map((request) => (
+          <RequestListRow
+            key={request.id}
+            request={request}
+            active={request.id === activeRequestId}
+            onSelect={onSelect}
+            onArchive={onArchive}
+          />
+        ))
+      )}
+    </div>
+  )
+}
+
+function RequestListRow({
+  request,
+  active,
+  onSelect,
+  onArchive
+}: {
+  request: RequestRailStat
+  active: boolean
+  onSelect: (requestId: string) => void
+  onArchive?: (requestId: string) => void
+}): React.JSX.Element {
+  const [exiting, setExiting] = useState(false)
+  const canArchive =
+    Boolean(onArchive) && !request.archived && isTerminalRequestStatus(request.status)
+
+  return (
+    <div
+      className={cn(
+        'group relative flex flex-col gap-0.5 rounded-md transition-colors',
+        active ? 'bg-primary-soft' : 'hover:bg-accent',
+        exiting && 'animate-out fade-out-0 slide-out-to-right-2 duration-150'
+      )}
+      onAnimationEnd={() => {
+        if (exiting) onArchive?.(request.id)
+      }}
+    >
+      {active ? (
+        <span className="absolute bottom-1 left-0 top-1 w-0.5 rounded-full bg-primary" />
+      ) : null}
+      <button
+        type="button"
+        className="flex flex-col gap-0.5 px-2 py-1.5 text-left"
+        onClick={() => onSelect(request.id)}
+      >
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              'size-1.5 shrink-0 rounded-full',
+              request.attention === 'input'
+                ? 'bg-status-attention'
+                : request.attention === 'running'
+                  ? 'bg-status-running'
+                  : 'bg-transparent'
+            )}
+          />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{request.title}</span>
+        </div>
+        <span className="pl-3 text-[11px] tabular-nums text-muted-foreground">
+          {request.archived ? 'Archived - ' : ''}
+          {request.completedCount}/{request.totalCount} done
+        </span>
+      </button>
+      {canArchive ? (
+        <div
+          className={cn(
+            'absolute bottom-0 right-0 top-0 hidden w-16 items-center justify-end rounded-r-md bg-gradient-to-l to-transparent pr-1 group-hover:flex',
+            active ? 'from-primary-soft via-primary-soft' : 'from-accent via-accent'
+          )}
+        >
+          <button
+            type="button"
+            aria-label="Archive Work Request"
+            title="Archive Work Request"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+            onClick={() => setExiting(true)}
+          >
+            <Archive className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function RequestHeaderBar({
+  request,
+  sidebarDocked,
+  fileCount,
+  onToggleSidebar,
+  onContinue,
+  onOpenFiles,
+  onArchive,
+  onUnarchive
+}: {
+  request: WorkboardData['requests'][number] | null
+  sidebarDocked: boolean
+  fileCount: number
+  onToggleSidebar: () => void
+  onContinue: (requestId: string) => void
+  onOpenFiles: () => void
+  onArchive: (requestId: string) => void
+  onUnarchive: (requestId: string) => void
+}): React.JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menu = useExitAnimation(menuOpen)
+  const isArchived = Boolean(request?.archivedAt)
+  const canArchive = request ? !isArchived && isTerminalRequestStatus(request.status) : false
+
+  return (
+    <section className="flex shrink-0 items-center gap-2 px-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="shrink-0 px-2"
+        onClick={onToggleSidebar}
+        aria-label={sidebarDocked ? 'Collapse request list' : 'Dock request list'}
+      >
+        <PanelLeft />
+      </Button>
+      <h2 className="min-w-0 truncate text-sm font-semibold">
+        {request ? request.title : 'Workboard'}
+      </h2>
+      {request ? (
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => onContinue(request.id)}>
+            <GitBranch />
+            Continue this work
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onOpenFiles}>
+            <Files />
+            Files ({fileCount})
+          </Button>
+          {canArchive || isArchived ? (
+            <div className="relative">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="px-2"
+                aria-label="Work Request actions"
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <MoreHorizontal />
+              </Button>
+              {menu.mounted ? (
+                <>
+                  <button
+                    type="button"
+                    aria-hidden
+                    tabIndex={-1}
+                    className="fixed inset-0 z-30 cursor-default"
+                    onClick={() => setMenuOpen(false)}
+                  />
+                  <div
+                    className={cn(
+                      'absolute right-0 top-full z-40 mt-1 w-44 rounded-lg border bg-card p-1 shadow-lg',
+                      menuOpen
+                        ? 'animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150'
+                        : 'animate-out fade-out-0 zoom-out-95 duration-100'
+                    )}
+                    onAnimationEnd={menu.handleAnimationEnd}
+                  >
+                    {isArchived ? (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                        onClick={() => {
+                          setMenuOpen(false)
+                          onUnarchive(request.id)
+                        }}
+                      >
+                        <ArchiveRestore className="size-4" />
+                        Unarchive
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                        onClick={() => {
+                          setMenuOpen(false)
+                          onArchive(request.id)
+                        }}
+                      >
+                        <Archive className="size-4" />
+                        Archive
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -2042,8 +2432,8 @@ function PlanReviewDialog({
           <DialogHeader>
             <DialogTitle>Discard this plan?</DialogTitle>
             <DialogDescription>
-              The draft plan will be removed. This cannot be undone — you would need to generate
-              it again.
+              The draft plan will be removed. This cannot be undone — you would need to generate it
+              again.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -2206,10 +2596,7 @@ function DraftItemEditor({
           onChange={(event) => onChange({ expectedOutput: event.target.value })}
         />
       </label>
-      <DraftPriorityControl
-        value={item.priority}
-        onChange={(priority) => onChange({ priority })}
-      />
+      <DraftPriorityControl value={item.priority} onChange={(priority) => onChange({ priority })} />
       <DraftDependencyChecklist
         item={item}
         items={items}
@@ -2756,21 +3143,14 @@ function RunDetailReport({
         linkedItems={waitsFor}
         onSelectRun={onSelectRun}
       />
-      <RunContextSection
-        key={`context-${run.id}`}
-        run={run}
-      />
+      <RunContextSection key={`context-${run.id}`} run={run} />
       <RunActivitySection key={`activity-${run.id}`} run={run} observedRun={observedRun} />
       <TechnicalDetailsSection key={`technical-${run.id}`} run={run} observedRun={observedRun} />
     </div>
   )
 }
 
-function RunContextSection({
-  run
-}: {
-  run: WorkboardRun
-}): React.JSX.Element {
+function RunContextSection({ run }: { run: WorkboardRun }): React.JSX.Element {
   return (
     <CollapsibleReportSection title="Context" defaultOpen={run.status === 'blocked'}>
       <div className="grid gap-3">
@@ -3153,7 +3533,10 @@ function DetailGrid({
   return (
     <div className="grid min-w-0 gap-2 sm:grid-cols-3">
       {items.map((item) => (
-        <div key={item.label} className="min-w-0 overflow-hidden rounded-lg border bg-background p-3">
+        <div
+          key={item.label}
+          className="min-w-0 overflow-hidden rounded-lg border bg-background p-3"
+        >
           <p className="text-xs font-medium uppercase text-muted-foreground">{item.label}</p>
           <p className="mt-1 break-words text-sm [overflow-wrap:anywhere]">{item.value}</p>
         </div>
@@ -3738,71 +4121,6 @@ function formatElapsedMs(value: number): string {
     return `${seconds}s`
   }
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
-}
-
-function matchesWorkSearch(run: WorkboardRun, search: string): boolean {
-  const normalizedSearch = search.trim().toLowerCase()
-
-  if (!normalizedSearch) {
-    return true
-  }
-
-  return [
-    run.title,
-    run.agentName,
-    run.agentRole,
-    run.instruction,
-    run.expectedOutput,
-    run.resultSummary,
-    run.error,
-    run.requestTitle,
-    ...run.artifactRefs,
-    ...run.changedFiles
-  ]
-    .filter(Boolean)
-    .some((value) => value.toLowerCase().includes(normalizedSearch))
-}
-
-function buildRequestStats(data: WorkboardData): RequestFilterStat[] {
-  return data.requests.map((request) => {
-    const requestRuns = data.runs.filter((run) => run.requestId === request.id)
-    return {
-      id: request.id,
-      title: request.title,
-      totalCount: requestRuns.length,
-      activeCount: requestRuns.filter((run) => !isTerminalRunStatus(run.status)).length,
-      createdAt: request.createdAt
-    }
-  })
-}
-
-function getVisibleRequestFilters(
-  requestStats: RequestFilterStat[],
-  activeFilter: string
-): RequestFilterStat[] {
-  const visible: RequestFilterStat[] = []
-  const selectedRequest = requestStats.find((request) => request.id === activeFilter)
-
-  if (selectedRequest) {
-    visible.push(selectedRequest)
-  }
-
-  const sortedRequests = [...requestStats].sort((first, second) => {
-    if (second.activeCount !== first.activeCount) {
-      return second.activeCount - first.activeCount
-    }
-
-    return Date.parse(second.createdAt) - Date.parse(first.createdAt)
-  })
-
-  for (const request of sortedRequests) {
-    if (visible.length >= 2) break
-    if (!visible.some((visibleRequest) => visibleRequest.id === request.id)) {
-      visible.push(request)
-    }
-  }
-
-  return visible
 }
 
 function EmptyDetailState({ children }: { children: React.ReactNode }): React.JSX.Element {

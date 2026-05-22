@@ -4,6 +4,10 @@
 
 Accepted
 
+The placement decision is superseded by ADR-020: the "Files (N)" affordance moves from
+`WorkFilterBar` into the request rail's active-request header. The data model, panel layout,
+missing-file handling, and the `workboard.checkPaths` IPC are unchanged.
+
 ## Date
 
 2026-05-22

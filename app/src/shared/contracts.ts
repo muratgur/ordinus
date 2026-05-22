@@ -647,7 +647,8 @@ export const WorkRequestSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   startedAt: z.string().nullable(),
-  completedAt: z.string().nullable()
+  completedAt: z.string().nullable(),
+  archivedAt: z.string().nullable()
 })
 
 export const WorkRunSchema = z.object({
@@ -1037,6 +1038,14 @@ export const WorkboardCheckPathsInputSchema = z.object({
   requestId: z.string().min(1)
 })
 
+export const WorkboardArchiveRequestInputSchema = z.object({
+  requestId: z.string().min(1)
+})
+
+export const WorkboardUnarchiveRequestInputSchema = z.object({
+  requestId: z.string().min(1)
+})
+
 export const WorkboardPathStatusSchema = z.object({
   path: WorkspaceRelativePathSchema,
   exists: z.boolean()
@@ -1254,6 +1263,8 @@ export type WorkboardAnswerInputRequestInput = z.infer<
 >
 export type WorkboardRevealPathInput = z.infer<typeof WorkboardRevealPathInputSchema>
 export type WorkboardCheckPathsInput = z.infer<typeof WorkboardCheckPathsInputSchema>
+export type WorkboardArchiveRequestInput = z.infer<typeof WorkboardArchiveRequestInputSchema>
+export type WorkboardUnarchiveRequestInput = z.infer<typeof WorkboardUnarchiveRequestInputSchema>
 export type WorkboardPathStatus = z.infer<typeof WorkboardPathStatusSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

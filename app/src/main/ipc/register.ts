@@ -51,6 +51,8 @@ import {
   WorkboardGenerateRequestPlanInputSchema,
   WorkboardRevealPathInputSchema,
   WorkboardCheckPathsInputSchema,
+  WorkboardArchiveRequestInputSchema,
+  WorkboardUnarchiveRequestInputSchema,
   WorkboardPathStatusListSchema,
   WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestPlanInputSchema,
@@ -529,9 +531,7 @@ export function registerIpcHandlers(
       throw new Error('Choose a workspace before inspecting files.')
     }
 
-    const runs = database
-      .getWorkboardData()
-      .runs.filter((run) => run.requestId === input.requestId)
+    const runs = database.getWorkboardData().runs.filter((run) => run.requestId === input.requestId)
     const paths = Array.from(
       new Set(runs.flatMap((run) => [...run.artifactRefs, ...run.changedFiles]))
     )
@@ -540,6 +540,16 @@ export function registerIpcHandlers(
     return WorkboardPathStatusListSchema.parse(
       paths.map((path) => ({ path, exists: existing.has(path) }))
     )
+  })
+  ipcMain.handle(ipcChannels.workboardArchiveRequest, (_event, payload) => {
+    const input = WorkboardArchiveRequestInputSchema.parse(payload)
+    database.archiveWorkRequest(input.requestId)
+    return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardUnarchiveRequest, (_event, payload) => {
+    const input = WorkboardUnarchiveRequestInputSchema.parse(payload)
+    database.unarchiveWorkRequest(input.requestId)
+    return database.getWorkboardData()
   })
   ipcMain.handle(ipcChannels.observabilityListWorkboard, () => observability.listWorkboardRuns())
   ipcMain.handle(ipcChannels.observabilityListConversation, (_event, payload) => {

@@ -17,7 +17,6 @@ import { PlanQueue } from './app/plan-queue'
 import { defaultAppRoute, appRoutePaths } from './app/routes'
 import { AgentsScreen } from './screens/agents-screen'
 import { ConversationsScreen } from './screens/conversations-screen'
-import { HomeScreen } from './screens/home-screen'
 import { WorkboardScreen } from './screens/workboard-screen'
 import {
   emptyWorkboardDraftReviewState,
@@ -218,7 +217,6 @@ function App(): React.JSX.Element {
           }
         >
           <Route index element={<Navigate to={defaultAppRoute} replace />} />
-          <Route path={appRoutePaths.home} element={<HomeScreen />} />
           <Route path={appRoutePaths.agents} element={<AgentsScreen />} />
           <Route
             path={appRoutePaths.workboard}
