@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Sparkles } from 'lucide-react'
 import type { AgentMemoryRule } from '@shared/contracts'
 import { Button } from './ui/button'
 import { Switch } from './ui/switch'
@@ -95,8 +96,9 @@ export function AgentFeedbackPanel({
 
   return (
     <div className="mt-5 border-t pt-4">
-      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-        Feedback for this agent
+      <p className="text-sm font-semibold text-foreground">Leave a note for {agentName}</p>
+      <p className="mb-2 mt-0.5 text-xs text-muted-foreground">
+        What should they do differently next time?
       </p>
       <textarea
         className="ordinus-scrollbar min-h-20 w-full resize-y rounded-lg border bg-card p-3 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -126,19 +128,22 @@ export function AgentFeedbackPanel({
 
       {rulesLoaded && rules.length > 0 ? (
         <div className="mt-4">
-          <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+          <p className="mb-1.5 text-xs font-medium text-muted-foreground">
             What {agentName} learned from you
           </p>
-          <ul className="grid gap-1.5">
+          <ul className="grid gap-0.5">
             {rules.map((rule) => (
               <li
                 key={rule.id}
-                className="flex items-start justify-between gap-3 rounded-md border bg-card px-3 py-2 text-sm"
+                className="group flex items-start gap-2 rounded-md px-1.5 py-1 text-sm transition-colors hover:bg-accent/50"
               >
-                <span className="min-w-0 break-words [overflow-wrap:anywhere]">{rule.rule}</span>
+                <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                  {rule.rule}
+                </span>
                 <button
                   type="button"
-                  className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-destructive"
+                  className="shrink-0 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                   onClick={() => void handleDeactivate(rule.id)}
                   aria-label="Remove rule"
                 >

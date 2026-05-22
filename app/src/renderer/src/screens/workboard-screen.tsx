@@ -14,6 +14,7 @@ import {
   Copy,
   FileText,
   Files,
+  FolderOpen,
   GitBranch,
   Loader2,
   MoreHorizontal,
@@ -53,13 +54,16 @@ import {
 } from '@renderer/components/observability-details'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
-import { FileReferenceList, RequestFileList } from '@renderer/components/file-reference-list'
+import { RequestFileList } from '@renderer/components/file-reference-list'
 import { MarkdownDocumentViewer } from '@renderer/components/markdown-document-viewer'
 import {
   getFileReferences,
   getRequestFileProvenance
 } from '@renderer/components/file-reference-utils'
-import type { RequestFileProvenance } from '@renderer/components/file-reference-utils'
+import type {
+  FileReference,
+  RequestFileProvenance
+} from '@renderer/components/file-reference-utils'
 import { MarkdownContent } from '@renderer/components/markdown-content'
 import {
   Dialog,
@@ -720,6 +724,7 @@ export function WorkboardScreen({
         <RequestFilesDrawer
           request={activeRequest}
           files={activeRequestFiles}
+          runs={data.runs}
           onClose={() => setFilesDrawerOpen(false)}
           onSelectRun={(runId) => {
             setFilesDrawerOpen(false)
@@ -2923,6 +2928,8 @@ function RunDetailDrawer({
   const answerKey = `${run?.id ?? ''}:${inputRequest?.id ?? ''}`
   const answers = answerState.key === answerKey ? answerState.answers : {}
 
+  const [inspectOpen, setInspectOpen] = useState(false)
+
   if (!run) return null
   const activeRun = run
 
@@ -2970,38 +2977,40 @@ function RunDetailDrawer({
     <div className="fixed inset-0 z-40">
       <button
         type="button"
-        className="absolute inset-0 bg-background/60 backdrop-blur-[1px]"
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-[2px]"
         aria-label="Close Work Item details"
         onClick={onClose}
       />
-      <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-background shadow-2xl sm:w-[86vw] sm:max-w-[680px] xl:w-[72vw] xl:max-w-[760px]">
+      <aside className="absolute inset-x-4 top-[4vh] bottom-[4vh] z-10 mx-auto flex w-auto max-w-[860px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
         <RunDetailHeader
           run={run}
+          runs={runs}
           observedRun={observedRun}
           canGoBack={canGoBack}
           onBack={onBack}
           onClose={onClose}
+          onSelectRun={onSelectRun}
+          onRevealPath={(path) => void revealPath(path)}
+          onOpenFile={onOpenFile}
         />
 
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-5 ordinus-scrollbar">
-          <RunDetailReport
-            run={run}
-            waitsFor={waitsFor}
-            observedRun={observedRun}
-            inputRequest={inputRequest}
-            answers={answers}
-            onAnswerChange={updateAnswer}
-            onSubmitAnswers={() => void submitAnswers()}
-            onRevealPath={(path) => void revealPath(path)}
-            onSelectRun={onSelectRun}
-            onOpenFile={onOpenFile}
-          />
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-6 ordinus-scrollbar sm:px-10">
+          <div className="mx-auto w-full max-w-[640px]">
+            <RunDetailReport
+              run={run}
+              inputRequest={inputRequest}
+              answers={answers}
+              onAnswerChange={updateAnswer}
+              onSubmitAnswers={() => void submitAnswers()}
+              onOpenInspect={() => setInspectOpen(true)}
+            />
+          </div>
         </div>
 
         <footer className="flex flex-col gap-2 border-t p-4 sm:flex-row">
           <Button variant="outline" className="w-full" onClick={() => onContinue(run)}>
             <GitBranch />
-            Continue from this item
+            Continue from here
           </Button>
           {!isTerminalRunStatus(run.status) ? (
             <Button
@@ -3015,77 +3024,218 @@ function RunDetailDrawer({
           ) : null}
         </footer>
       </aside>
+
+      {inspectOpen ? (
+        <RunInspectOverlay
+          run={run}
+          observedRun={observedRun}
+          waitsFor={waitsFor}
+          onSelectRun={onSelectRun}
+          onClose={() => setInspectOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }
 
 function RunDetailHeader({
   run,
+  runs,
   observedRun,
   canGoBack,
   onBack,
-  onClose
+  onClose,
+  onSelectRun,
+  onRevealPath,
+  onOpenFile
 }: {
   run: WorkboardRun
+  runs: WorkboardRun[]
   observedRun: ObservedRunSnapshot | null
   canGoBack: boolean
   onBack: () => void
   onClose: () => void
+  onSelectRun: (runId: string) => void
+  onRevealPath: (path: string) => void
+  onOpenFile: (path: string) => void
 }): React.JSX.Element {
-  const durationLabel = getHeaderDurationLabel(run, observedRun)
+  const parentRun = run.parentRunId
+    ? runs.find((candidate) => candidate.id === run.parentRunId)
+    : undefined
+  const deliveryLabel = getDeliveryLabel(run, observedRun)
+  const files = getFileReferences(run.artifactRefs, run.changedFiles)
 
   return (
-    <header className="border-b bg-card p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={statusBadgeVariant(run.status)}>{formatRunStatus(run.status)}</Badge>
-            {run.parentRunId ? <Badge variant="outline">Follow-up</Badge> : null}
-            {durationLabel ? (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                <Clock3 className="size-3.5" />
-                {durationLabel}
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-3 flex min-w-0 items-start gap-2">
-            {canGoBack ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="mt-0.5 size-7 shrink-0 text-muted-foreground hover:text-foreground"
-                onClick={onBack}
+    <header className="border-b bg-card px-6 py-5 sm:px-10">
+      <div className="mx-auto w-full max-w-[640px]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
+              {run.status !== 'completed' ? (
+                <Badge variant={statusBadgeVariant(run.status)}>
+                  {formatRunStatus(run.status)}
+                </Badge>
+              ) : null}
+              {deliveryLabel ? <span>{deliveryLabel}</span> : null}
+            </div>
+            <div className="mt-2.5 flex min-w-0 items-start gap-2">
+              {canGoBack ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="mt-0.5 size-7 shrink-0 text-muted-foreground hover:text-foreground"
+                  onClick={onBack}
+                >
+                  <ChevronLeft />
+                  <span className="sr-only">Back to previous Work Item</span>
+                </Button>
+              ) : null}
+              <h3 className="min-w-0 break-words text-2xl font-semibold leading-8 tracking-normal [overflow-wrap:anywhere]">
+                {run.title}
+              </h3>
+            </div>
+            <div className="mt-2.5 flex min-w-0 text-sm">
+              <Link
+                to={appRoutePaths.agents}
+                className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
               >
-                <ChevronLeft />
-                <span className="sr-only">Back to previous Work Item</span>
-              </Button>
+                <Bot className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">{run.agentName}</span>
+              </Link>
+            </div>
+            {parentRun ? (
+              <button
+                type="button"
+                className="mt-1.5 inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                onClick={() => onSelectRun(parentRun.id)}
+              >
+                <CornerDownRight className="size-3.5 shrink-0" />
+                <span className="truncate">Continues “{parentRun.title}”</span>
+              </button>
             ) : null}
-            <h3 className="min-w-0 break-words text-2xl font-semibold leading-8 tracking-normal [overflow-wrap:anywhere]">
-              {run.title}
-            </h3>
           </div>
-          <div className="mt-3 flex min-w-0 text-sm">
-            <Link
-              to={appRoutePaths.agents}
-              className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
-            >
-              <Bot className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{run.agentName}</span>
-            </Link>
-          </div>
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
+            <XCircle />
+            <span className="sr-only">Close</span>
+          </Button>
         </div>
-        <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
-          <XCircle />
-          <span className="sr-only">Close</span>
-        </Button>
+        {files.length > 0 ? (
+          <div className="mt-2 grid gap-1">
+            {files.map((file) => (
+              <AttachmentChip
+                key={file.path}
+                file={file}
+                onRevealPath={onRevealPath}
+                onOpenFile={onOpenFile}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
     </header>
   )
 }
 
+function AttachmentChip({
+  file,
+  onRevealPath,
+  onOpenFile
+}: {
+  file: FileReference
+  onRevealPath: (path: string) => void
+  onOpenFile: (path: string) => void
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const name = getFileBasename(file.path)
+  const isMarkdown = file.path.toLowerCase().endsWith('.md')
+
+  async function copyPath(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(file.path)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="group flex min-w-0 items-center gap-1.5 text-sm">
+      <FileText className="size-4 shrink-0 text-muted-foreground" />
+      <button
+        type="button"
+        className="min-w-0 truncate font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
+        title={file.path}
+        onClick={() => (isMarkdown ? onOpenFile(file.path) : onRevealPath(file.path))}
+      >
+        {name}
+      </button>
+      <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+        {isMarkdown ? (
+          <button
+            type="button"
+            className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+            onClick={() => onOpenFile(file.path)}
+            aria-label="Open document"
+          >
+            <FileText className="size-3.5" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+          onClick={() => void copyPath()}
+          aria-label="Copy file path"
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+        <button
+          type="button"
+          className="rounded-full p-1 text-muted-foreground hover:text-foreground"
+          onClick={() => onRevealPath(file.path)}
+          aria-label="Show in file manager"
+        >
+          <FolderOpen className="size-3.5" />
+        </button>
+      </span>
+    </div>
+  )
+}
+
+function getFileBasename(path: string): string {
+  const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '')
+  const segment = normalized.slice(normalized.lastIndexOf('/') + 1)
+  return segment || normalized
+}
+
+function getDeliveryLabel(run: WorkboardRun, observedRun: ObservedRunSnapshot | null): string {
+  if (run.status === 'completed' && run.completedAt) {
+    return `Delivered ${formatDeliveryMoment(run.completedAt)}`
+  }
+  return getHeaderDurationLabel(run, observedRun)
+}
+
+function formatDeliveryMoment(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const now = new Date()
+  const startOfDay = (input: Date): number =>
+    new Date(input.getFullYear(), input.getMonth(), input.getDate()).getTime()
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000)
+
+  if (dayDiff === 0) return `today at ${time}`
+  if (dayDiff === 1) return `yesterday at ${time}`
+  if (dayDiff > 1 && dayDiff < 7)
+    return `${date.toLocaleDateString([], { weekday: 'long' })} at ${time}`
+  return `on ${date.toLocaleDateString()}`
+}
+
 function RequestFilesDrawer({
   request,
   files,
+  runs,
   onClose,
   onSelectRun,
   onOpenFile,
@@ -3093,6 +3243,7 @@ function RequestFilesDrawer({
 }: {
   request: WorkboardData['requests'][number]
   files: RequestFileProvenance[]
+  runs: WorkboardRun[]
   onClose: () => void
   onSelectRun: (runId: string) => void
   onOpenFile: (path: string) => void
@@ -3140,20 +3291,22 @@ function RequestFilesDrawer({
     <div className="fixed inset-0 z-40">
       <button
         type="button"
-        className="absolute inset-0 bg-background/60 backdrop-blur-[1px]"
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-[2px]"
         aria-label="Close request files"
         onClick={onClose}
       />
-      <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-background shadow-2xl sm:w-[86vw] sm:max-w-[680px] xl:w-[72vw] xl:max-w-[760px]">
-        <header className="border-b bg-card p-5">
-          <div className="flex items-start justify-between gap-4">
+      <aside className="absolute inset-x-4 top-[4vh] bottom-[4vh] z-10 mx-auto flex w-auto max-w-[620px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
+        <header className="border-b bg-card px-6 py-5 sm:px-8">
+          <div className="mx-auto flex w-full max-w-[480px] items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium uppercase text-muted-foreground">
-                Work request files
-              </p>
-              <h3 className="mt-1 min-w-0 break-words text-2xl font-semibold leading-8 [overflow-wrap:anywhere]">
+              <h3 className="min-w-0 break-words text-xl font-semibold leading-7 [overflow-wrap:anywhere]">
                 {request.title}
               </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {files.length === 0
+                  ? 'No files yet'
+                  : `${files.length} ${files.length === 1 ? 'file' : 'files'} from this work request`}
+              </p>
             </div>
             <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
               <XCircle />
@@ -3162,43 +3315,42 @@ function RequestFilesDrawer({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-5 ordinus-scrollbar">
-          {files.length === 0 ? (
-            <EmptyDetailState>No files produced or changed yet.</EmptyDetailState>
-          ) : (
-            <div className="grid gap-6">
-              <section>
-                <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-                  In the work folder
-                </p>
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-6 ordinus-scrollbar sm:px-8">
+          <div className="mx-auto w-full max-w-[480px]">
+            {files.length === 0 ? (
+              <EmptyDetailState>
+                Nothing in this cabinet yet — files show up here as the work gets done.
+              </EmptyDetailState>
+            ) : (
+              <div className="grid gap-6">
                 {inFolder.length > 0 ? (
                   <RequestFileList
                     files={inFolder}
                     missingPaths={missingPaths}
+                    runs={runs}
                     onRevealPath={(path) => void revealPath(path)}
                     onSelectRun={onSelectRun}
                     onOpenFile={onOpenFile}
                   />
-                ) : (
-                  <EmptyDetailState>No files in this work&apos;s folder.</EmptyDetailState>
-                )}
-              </section>
-              {outsideFolder.length > 0 ? (
-                <section>
-                  <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-                    Outside the work folder
-                  </p>
-                  <RequestFileList
-                    files={outsideFolder}
-                    missingPaths={missingPaths}
-                    onRevealPath={(path) => void revealPath(path)}
-                    onSelectRun={onSelectRun}
-                    onOpenFile={onOpenFile}
-                  />
-                </section>
-              ) : null}
-            </div>
-          )}
+                ) : null}
+                {outsideFolder.length > 0 ? (
+                  <section>
+                    <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                      Outside the work folder
+                    </p>
+                    <RequestFileList
+                      files={outsideFolder}
+                      missingPaths={missingPaths}
+                      runs={runs}
+                      onRevealPath={(path) => void revealPath(path)}
+                      onSelectRun={onSelectRun}
+                      onOpenFile={onOpenFile}
+                    />
+                  </section>
+                ) : null}
+              </div>
+            )}
+          </div>
         </div>
       </aside>
     </div>
@@ -3207,26 +3359,18 @@ function RequestFilesDrawer({
 
 function RunDetailReport({
   run,
-  waitsFor,
-  observedRun,
   inputRequest,
   answers,
   onAnswerChange,
   onSubmitAnswers,
-  onRevealPath,
-  onSelectRun,
-  onOpenFile
+  onOpenInspect
 }: {
   run: WorkboardRun
-  waitsFor: WorkboardRun[]
-  observedRun: ObservedRunSnapshot | null
   inputRequest?: WorkRunInputRequest
   answers: Record<string, InteractionAnswer>
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
-  onRevealPath: (path: string) => void
-  onSelectRun: (runId: string) => void
-  onOpenFile: (path: string) => void
+  onOpenInspect: () => void
 }): React.JSX.Element {
   return (
     <div className="grid min-w-0 gap-4">
@@ -3236,21 +3380,33 @@ function RunDetailReport({
         answers={answers}
         onAnswerChange={onAnswerChange}
         onSubmitAnswers={onSubmitAnswers}
-        onRevealPath={onRevealPath}
-        linkedItems={waitsFor}
-        onSelectRun={onSelectRun}
-        onOpenFile={onOpenFile}
       />
-      <RunContextSection key={`context-${run.id}`} run={run} />
-      <RunActivitySection key={`activity-${run.id}`} run={run} observedRun={observedRun} />
-      <TechnicalDetailsSection key={`technical-${run.id}`} run={run} observedRun={observedRun} />
+      <div className="border-t pt-3">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          onClick={onOpenInspect}
+        >
+          <TerminalSquare className="size-3.5" />
+          Inspect how this work happened
+        </button>
+      </div>
     </div>
   )
 }
 
-function RunContextSection({ run }: { run: WorkboardRun }): React.JSX.Element {
+function RunContextSection({
+  run,
+  defaultOpen = false
+}: {
+  run: WorkboardRun
+  defaultOpen?: boolean
+}): React.JSX.Element {
   return (
-    <CollapsibleReportSection title="Context" defaultOpen={run.status === 'blocked'}>
+    <CollapsibleReportSection
+      title="What you asked for"
+      defaultOpen={defaultOpen || run.status === 'blocked'}
+    >
       <div className="grid gap-3">
         <CopyableTextBlock label="Asked to" value={run.instruction} />
         <CopyableTextBlock label="Expected" value={run.expectedOutput || 'Not specified'} />
@@ -3259,35 +3415,70 @@ function RunContextSection({ run }: { run: WorkboardRun }): React.JSX.Element {
   )
 }
 
+function RunInspectOverlay({
+  run,
+  observedRun,
+  waitsFor,
+  onSelectRun,
+  onClose
+}: {
+  run: WorkboardRun
+  observedRun: ObservedRunSnapshot | null
+  waitsFor: WorkboardRun[]
+  onSelectRun: (runId: string) => void
+  onClose: () => void
+}): React.JSX.Element {
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        className="absolute inset-0 bg-foreground/20"
+        aria-label="Close inspector"
+        onClick={onClose}
+      />
+      <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-card shadow-2xl sm:w-[440px]">
+        <header className="flex items-center justify-between gap-3 border-b px-5 py-4">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">Behind the scenes</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              How {run.agentName} approached this work.
+            </p>
+          </div>
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
+            <XCircle />
+            <span className="sr-only">Close inspector</span>
+          </Button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2 ordinus-scrollbar">
+          <RunContextSection run={run} defaultOpen />
+          <RunActivitySection run={run} observedRun={observedRun} defaultOpen />
+          {waitsFor.length > 0 ? (
+            <CollapsibleReportSection title="Depends on" defaultOpen>
+              <DependencyWorkItemList items={waitsFor} onSelectRun={onSelectRun} />
+            </CollapsibleReportSection>
+          ) : null}
+          <TechnicalDetailsSection run={run} observedRun={observedRun} />
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function RunOutputSection({
   run,
   inputRequest,
   answers,
   onAnswerChange,
-  onSubmitAnswers,
-  onRevealPath,
-  linkedItems,
-  onSelectRun,
-  onOpenFile
+  onSubmitAnswers
 }: {
   run: WorkboardRun
   inputRequest?: WorkRunInputRequest
   answers: Record<string, InteractionAnswer>
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
-  onRevealPath: (path: string) => void
-  linkedItems: WorkboardRun[]
-  onSelectRun: (runId: string) => void
-  onOpenFile: (path: string) => void
 }): React.JSX.Element {
-  const files = getFileReferences(run.artifactRefs, run.changedFiles)
-
   return (
     <section className="min-w-0 overflow-hidden pb-1">
-      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold">Output</h4>
-        {run.resultSummary ? <CopyButton value={run.resultSummary} label="Copy output" /> : null}
-      </div>
       {inputRequest?.status === 'queued_for_resume' ? <QueuedResumePanel /> : null}
       {inputRequest?.status === 'pending' ? (
         <div className="mb-3">
@@ -3300,25 +3491,23 @@ function RunOutputSection({
         </div>
       ) : null}
       {run.resultSummary ? (
-        <MarkdownContent content={run.resultSummary} />
+        <div className="group relative">
+          <div className="absolute -right-1 top-0 z-10 opacity-0 transition-opacity group-hover:opacity-100">
+            <CopyButton value={run.resultSummary} label="Copy output" />
+          </div>
+          <MarkdownContent content={run.resultSummary} />
+        </div>
+      ) : run.status === 'failed' ? (
+        <EmptyDetailState>This agent stopped before it could finish the work.</EmptyDetailState>
       ) : (
         <EmptyDetailState>No output yet.</EmptyDetailState>
       )}
       {run.error ? (
-        <div className="mt-3">
-          <CopyableTextBlock label="Error" value={run.error} tone="error" />
-        </div>
-      ) : null}
-      {files.length > 0 ? (
-        <div className="mt-5 border-t pt-4">
-          <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Produced files</p>
-          <FileReferenceList files={files} onRevealPath={onRevealPath} onOpenFile={onOpenFile} />
-        </div>
-      ) : null}
-      {linkedItems.length > 0 ? (
-        <div className="mt-5 border-t pt-4">
-          <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Depends on</p>
-          <DependencyWorkItemList items={linkedItems} onSelectRun={onSelectRun} />
+        <div className="mt-3 rounded-lg border border-status-failed/30 bg-status-failed/5 p-3">
+          <p className="text-xs font-medium text-muted-foreground">What went wrong</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">
+            {run.error}
+          </p>
         </div>
       ) : null}
       {isTerminalRunStatus(run.status) && run.assignedAgentId ? (
@@ -3408,10 +3597,12 @@ function WorkInputRequestPanel({
 
 function RunActivitySection({
   run,
-  observedRun
+  observedRun,
+  defaultOpen = false
 }: {
   run: WorkboardRun
   observedRun: ObservedRunSnapshot | null
+  defaultOpen?: boolean
 }): React.JSX.Element | null {
   const [events, setEvents] = useState<ObservedRunEvent[]>([])
   const [error, setError] = useState('')
@@ -3449,7 +3640,10 @@ function RunActivitySection({
   if (!observedRun) return null
 
   return (
-    <CollapsibleReportSection title="Activity" defaultOpen={run.status === 'running'}>
+    <CollapsibleReportSection
+      title="How it went"
+      defaultOpen={defaultOpen || run.status === 'running'}
+    >
       <div className="rounded-lg border bg-card p-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -3502,7 +3696,7 @@ function TechnicalDetailsSection({
   observedRun: ObservedRunSnapshot | null
 }): React.JSX.Element {
   return (
-    <CollapsibleReportSection title="Technical details">
+    <CollapsibleReportSection title="Technical record">
       <CopyableTextBlock
         label="Agent"
         value={`${run.agentName}${run.agentRole ? ` - ${run.agentRole}` : ''}`}
