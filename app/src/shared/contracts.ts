@@ -685,6 +685,7 @@ export const WorkRunSchema = z.object({
 export const WorkboardRunSchema = WorkRunSchema.extend({
   agentName: z.string().min(1),
   agentRole: z.string().min(1),
+  agentAvatar: z.string().default(''),
   requestId: z.string().min(1),
   requestTitle: z.string().min(1)
 })

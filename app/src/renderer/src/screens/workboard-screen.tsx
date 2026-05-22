@@ -51,6 +51,7 @@ import {
   formatObservedPhase,
   mergeDiagnostics
 } from '@renderer/components/observability-details'
+import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { FileReferenceList, RequestFileList } from '@renderer/components/file-reference-list'
 import { MarkdownDocumentViewer } from '@renderer/components/markdown-document-viewer'
@@ -1519,7 +1520,9 @@ function RunCard({
   onSelect: (runId: string) => void
 }): React.JSX.Element {
   const inputBadge = getWorkRunInputBadge(inputRequest)
+  const outcomeBadge = columnId === 'done' ? getDoneOutcomeBadge(run.status) : null
   const timestamp = getCardTimestampLabel(run, columnId)
+  const timestampTitle = getCardTimestampTitle(run, columnId)
 
   return (
     <button
@@ -1536,12 +1539,22 @@ function RunCard({
           <Badge variant={inputBadge.variant} className="shrink-0">
             {inputBadge.label}
           </Badge>
+        ) : outcomeBadge ? (
+          <Badge variant={outcomeBadge.variant} className="shrink-0">
+            {outcomeBadge.label}
+          </Badge>
         ) : null}
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">{run.agentName}</p>
-      <RunCardActivity run={run} observedRun={observedRun} />
+      <div className="mt-2 flex min-w-0 items-center gap-1.5">
+        <AgentAvatar avatar={run.agentAvatar} size={16} className="shrink-0" />
+        <p className="min-w-0 truncate text-xs text-muted-foreground">{run.agentName}</p>
+      </div>
+      <RunCardActivity run={run} columnId={columnId} observedRun={observedRun} />
       {timestamp ? (
-        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div
+          className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+          title={timestampTitle || undefined}
+        >
           {run.parentRunId ? (
             <CornerDownRight
               className="size-3 shrink-0 text-muted-foreground/80"
@@ -1631,7 +1644,7 @@ function getCardTimestampLabel(run: WorkboardRun, columnId: WorkColumnId): strin
   }
 
   if (columnId === 'done') {
-    const finished = formatRelativeTime(run.completedAt ?? run.updatedAt)
+    const finished = formatTimelineTime(run.completedAt ?? run.updatedAt)
     return finished ? `Finished ${finished}` : ''
   }
 
@@ -1642,6 +1655,58 @@ function getCardTimestampLabel(run: WorkboardRun, columnId: WorkColumnId): strin
 
   const created = formatRelativeTime(run.createdAt)
   return created ? `Created ${created}` : ''
+}
+
+function getCardTimestampTitle(run: WorkboardRun, columnId: WorkColumnId): string {
+  if (columnId === 'running') return formatFullTimestamp(run.startedAt)
+  if (columnId === 'done') return formatFullTimestamp(run.completedAt ?? run.updatedAt)
+  if (run.status === 'blocked') return formatFullTimestamp(run.updatedAt)
+  return formatFullTimestamp(run.createdAt)
+}
+
+function getDoneOutcomeBadge(
+  status: WorkboardRun['status']
+): { label: string; variant: 'failed' | 'outline' } | null {
+  if (status === 'failed') return { label: 'Failed', variant: 'failed' }
+  if (status === 'cancelled') return { label: 'Cancelled', variant: 'outline' }
+  return null
+}
+
+function formatTimelineTime(iso: string | null): string {
+  if (!iso) return ''
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return ''
+
+  const now = new Date()
+  const then = new Date(ms)
+  const diff = now.getTime() - ms
+  if (diff < 60_000) return 'just now'
+
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 60) return `${minutes}m ago`
+
+  const time = then.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  if (now.toDateString() === then.toDateString()) return time
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (yesterday.toDateString() === then.toDateString()) return `Yesterday ${time}`
+
+  const date = then.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return `${date} ${time}`
+}
+
+function formatFullTimestamp(iso: string | null): string {
+  if (!iso) return ''
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return ''
+  return new Date(ms).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
 }
 
 function formatRelativeTime(iso: string | null): string {
@@ -1664,7 +1729,7 @@ function formatRelativeTime(iso: string | null): string {
 function doneAccentClassName(status: WorkboardRun['status']): string {
   if (status === 'failed') return 'border-l-2 border-l-status-attention'
   if (status === 'cancelled') return 'border-l-2 border-l-muted-foreground/40'
-  return 'border-l-2 border-l-status-completed'
+  return ''
 }
 
 type RequestRailStat = {
@@ -2007,11 +2072,13 @@ function RequestHeaderBar({
 
 function RunCardActivity({
   run,
+  columnId,
   observedRun
 }: {
   run: WorkboardRun
+  columnId: WorkColumnId
   observedRun?: ObservedRunSnapshot
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   if (observedRun && run.status === 'running') {
     const activity = getRunCardActivitySignal(observedRun)
 
@@ -2042,6 +2109,15 @@ function RunCardActivity({
         </div>
       </div>
     )
+  }
+
+  if (columnId === 'done') {
+    if (run.status === 'failed' && run.error) {
+      return (
+        <p className="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">{run.error}</p>
+      )
+    }
+    return null
   }
 
   return (

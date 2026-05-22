@@ -1509,6 +1509,13 @@ export class OrdinusDatabase {
   getWorkboardData(): WorkboardData {
     const requests = this.listWorkRequests()
     const requestById = new Map(requests.map((request) => [request.id, request]))
+    const avatarByAgentId = new Map(
+      this.db
+        .select({ id: agents.id, avatar: agents.avatar })
+        .from(agents)
+        .all()
+        .map((agent) => [agent.id, agent.avatar ?? ''])
+    )
     const workspace = this.getWorkspaceConfig()
     const runs = this.db
       .select()
@@ -1528,6 +1535,7 @@ export class OrdinusDatabase {
           ...displayRun,
           agentName: parsedRun.assignedAgentName.trim() || 'Former agent',
           agentRole: parsedRun.assignedAgentRole.trim() || 'Agent',
+          agentAvatar: avatarByAgentId.get(parsedRun.assignedAgentId) ?? '',
           requestId,
           requestTitle: request?.title ?? 'Work Request'
         }
