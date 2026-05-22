@@ -69,5 +69,7 @@ export const ipcChannels = {
   runtimeRefreshProvider: 'runtime:refresh-provider',
   connectorsList: 'connectors:list',
   connectorsConnect: 'connectors:connect',
-  connectorsDisconnect: 'connectors:disconnect'
+  connectorsDisconnect: 'connectors:disconnect',
+  filesRead: 'files:read',
+  filesWrite: 'files:write'
 } as const

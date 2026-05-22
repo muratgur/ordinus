@@ -47,6 +47,10 @@ import type {
   ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
+  FileContent,
+  FileReadInput,
+  FileWriteInput,
+  FileWriteResult,
   ObservedConversationRunsInput,
   ObservedRunDiagnostics,
   ObservedRunDiagnosticsInput,
@@ -263,6 +267,12 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.connectorsConnect, input),
     disconnect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
       ipcRenderer.invoke(ipcChannels.connectorsDisconnect, input)
+  },
+  files: {
+    read: async (input: FileReadInput): Promise<FileContent> =>
+      ipcRenderer.invoke(ipcChannels.filesRead, input),
+    write: async (input: FileWriteInput): Promise<FileWriteResult> =>
+      ipcRenderer.invoke(ipcChannels.filesWrite, input)
   }
 }
 

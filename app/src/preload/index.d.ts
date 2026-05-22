@@ -45,6 +45,10 @@ import type {
   ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
+  FileContent,
+  FileReadInput,
+  FileWriteInput,
+  FileWriteResult,
   ObservedConversationRunsInput,
   ObservedRunDiagnostics,
   ObservedRunDiagnosticsInput,
@@ -174,6 +178,10 @@ export type OrdinusApi = {
     list: () => Promise<ConnectorSummary[]>
     connect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
     disconnect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
+  }
+  files: {
+    read: (input: FileReadInput) => Promise<FileContent>
+    write: (input: FileWriteInput) => Promise<FileWriteResult>
   }
 }
 
