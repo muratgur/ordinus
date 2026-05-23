@@ -3500,7 +3500,7 @@ function RunOutputSection({
       ) : run.status === 'failed' ? (
         <EmptyDetailState>This agent stopped before it could finish the work.</EmptyDetailState>
       ) : (
-        <EmptyDetailState>No output yet.</EmptyDetailState>
+        <RunOutputPending run={run} />
       )}
       {run.error ? (
         <div className="mt-3 rounded-lg border border-status-failed/30 bg-status-failed/5 p-3">
@@ -4415,6 +4415,103 @@ function formatElapsedMs(value: number): string {
     return `${seconds}s`
   }
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
+}
+
+const runningOutputMessages = [
+  'The agent is working on this…',
+  'Thinking it through…',
+  'Drafting and refining the output…',
+  'Pulling the details together…',
+  'Still going — good work takes a moment…',
+  'Making steady progress…'
+]
+
+function RunOutputPending({ run }: { run: WorkboardRun }): React.JSX.Element {
+  if (run.status === 'blocked') {
+    return (
+      <PendingOutputCard
+        title="Waiting on earlier work"
+        detail="This agent starts as soon as the work it depends on wraps up."
+      />
+    )
+  }
+  if (run.status === 'queued') {
+    return (
+      <PendingOutputCard
+        title="Queued and ready to go"
+        detail="This work item is in line and will start as soon as an agent is free."
+      />
+    )
+  }
+  if (run.status === 'waiting_for_user') {
+    return (
+      <PendingOutputCard
+        title="Waiting for your input"
+        detail="The agent paused to hear from you before it carries on."
+      />
+    )
+  }
+  if (!isTerminalRunStatus(run.status)) {
+    return <RunningOutputState />
+  }
+  return <EmptyDetailState>No output yet.</EmptyDetailState>
+}
+
+function RunningOutputState(): React.JSX.Element {
+  const [index, setIndex] = useState(0)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setIndex((current) => (current + 1) % runningOutputMessages.length)
+    }, 4200)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div className="flex items-center gap-3 px-4 py-4">
+        <WorkingDots />
+        <p
+          key={index}
+          className="text-sm text-foreground duration-700 animate-in fade-in-0 slide-in-from-bottom-1"
+        >
+          {runningOutputMessages[index]}
+        </p>
+      </div>
+      <div className="h-1 w-full bg-border/60">
+        <div className="h-full w-2/5 animate-pulse rounded-full bg-primary/50" />
+      </div>
+    </div>
+  )
+}
+
+function WorkingDots(): React.JSX.Element {
+  return (
+    <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
+      {[0, 1, 2].map((dot) => (
+        <span
+          key={dot}
+          className="size-1.5 animate-bounce rounded-full bg-primary/70"
+          style={{ animationDelay: `${dot * 160}ms` }}
+        />
+      ))}
+    </span>
+  )
+}
+
+function PendingOutputCard({
+  title,
+  detail
+}: {
+  title: string
+  detail: string
+}): React.JSX.Element {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
+    </div>
+  )
 }
 
 function EmptyDetailState({ children }: { children: React.ReactNode }): React.JSX.Element {
