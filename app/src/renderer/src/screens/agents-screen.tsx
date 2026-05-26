@@ -1333,21 +1333,24 @@ function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Elem
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError('')
-    window.ordinus.agents
-      .listExtraDirectories({ agentId })
-      .then((list) => {
-        if (!cancelled) setEntries(list.entries)
-      })
-      .catch((loadError) => {
-        if (!cancelled) {
-          setError(getErrorMessage(loadError, 'Could not load extra directories.'))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    queueMicrotask(() => {
+      if (cancelled) return
+      setLoading(true)
+      setError('')
+      window.ordinus.agents
+        .listExtraDirectories({ agentId })
+        .then((list) => {
+          if (!cancelled) setEntries(list.entries)
+        })
+        .catch((loadError) => {
+          if (!cancelled) {
+            setError(getErrorMessage(loadError, 'Could not load extra directories.'))
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    })
     return () => {
       cancelled = true
     }
@@ -1404,7 +1407,7 @@ function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Elem
       </div>
       <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>
-          <span className="font-medium text-foreground">Agent-specific.</span> Other agents don't
+          <span className="font-medium text-foreground">Agent-specific.</span> Other agents do not
           inherit these. If a follow-up agent needs the same folder, add it to that agent too.
         </li>
         <li>
@@ -1413,7 +1416,7 @@ function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Elem
         </li>
         <li>
           <span className="font-medium text-foreground">Not workspace artifacts.</span> Files the
-          agent creates here won't appear in the Files panel or auto-flow into follow-up plans —
+          agent creates here will not appear in the Files panel or auto-flow into follow-up plans —
           only the workspace does that. The agent mentions external changes in its response text.
         </li>
       </ul>
