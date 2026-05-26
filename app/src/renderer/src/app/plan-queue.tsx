@@ -38,9 +38,7 @@ function GeneratingStatus({ createdAt }: { createdAt: number }): React.JSX.Eleme
     <div className="min-w-0 flex-1">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted-foreground">{phase}</p>
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {elapsedLabel}
-        </span>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{elapsedLabel}</span>
       </div>
       {reassurance ? <p className="mt-0.5 text-xs text-muted-foreground">{reassurance}</p> : null}
     </div>

@@ -41,12 +41,12 @@ import {
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import { DiagnosticBlock } from '@renderer/components/observability-details'
 import {
-  DiagnosticBlock,
   formatLivenessHealth,
   formatObservedPhase,
   mergeDiagnostics
-} from '@renderer/components/observability-details'
+} from '@renderer/components/observability-diagnostics'
 import { FileReferenceList } from '@renderer/components/file-reference-list'
 import { getFileReferences, type FileReference } from '@renderer/components/file-reference-utils'
 import { MarkdownContent } from '@renderer/components/markdown-content'
@@ -934,8 +934,14 @@ function RenameConversationDialog({
   const canSave = Boolean(trimmedTitle) && trimmedTitle !== currentTitle && !saving
 
   useEffect(() => {
-    if (open) {
-      setTitle(currentTitle)
+    let cancelled = false
+    queueMicrotask(() => {
+      if (open && !cancelled) {
+        setTitle(currentTitle)
+      }
+    })
+    return () => {
+      cancelled = true
     }
   }, [currentTitle, open])
 
@@ -1575,22 +1581,21 @@ function InputRequestDialog({
 }): React.JSX.Element {
   const progress = getInputRequestProgress(request, drafts)
   const formDisabled = disabled || request.status !== 'pending' || answering || cancelling
-  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0)
+  const [activeQuestionCursor, setActiveQuestionCursor] = useState({
+    requestId: request.id,
+    index: 0
+  })
+  const storedQuestionIndex =
+    activeQuestionCursor.requestId === request.id ? activeQuestionCursor.index : 0
+  const activeQuestionIndex = Math.min(
+    storedQuestionIndex,
+    Math.max(0, request.questions.length - 1)
+  )
   const activeQuestion = request.questions[activeQuestionIndex] ?? null
   const currentQuestionAnswered = activeQuestion ? hasAnswer(activeQuestion, drafts) : true
   const canMoveBack = activeQuestionIndex > 0
   const isLastQuestion = activeQuestionIndex >= request.questions.length - 1
   const canMoveForward = Boolean(activeQuestion) && !formDisabled && currentQuestionAnswered
-
-  useEffect(() => {
-    setActiveQuestionIndex(0)
-  }, [request.id])
-
-  useEffect(() => {
-    if (activeQuestionIndex >= request.questions.length) {
-      setActiveQuestionIndex(Math.max(0, request.questions.length - 1))
-    }
-  }, [activeQuestionIndex, request.questions.length])
 
   function moveForward(): void {
     if (!activeQuestion || !canMoveForward) return
@@ -1627,7 +1632,13 @@ function InputRequestDialog({
       return
     }
 
-    setActiveQuestionIndex((current) => Math.min(current + 1, request.questions.length - 1))
+    setActiveQuestionCursor((current) => ({
+      requestId: request.id,
+      index: Math.min(
+        current.requestId === request.id ? current.index + 1 : 1,
+        request.questions.length - 1
+      )
+    }))
   }
 
   function getDraftsWithQuestionDraft(
@@ -1683,7 +1694,12 @@ function InputRequestDialog({
             className="size-8"
             disabled={formDisabled || !canMoveBack}
             aria-label="Previous question"
-            onClick={() => setActiveQuestionIndex((current) => Math.max(0, current - 1))}
+            onClick={() =>
+              setActiveQuestionCursor((current) => ({
+                requestId: request.id,
+                index: Math.max(0, current.requestId === request.id ? current.index - 1 : 0)
+              }))
+            }
           >
             <ChevronLeft />
           </Button>

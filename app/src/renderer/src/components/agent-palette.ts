@@ -15,8 +15,10 @@ import {
   Sun,
   Target,
   Waves,
-  type LucideIcon
+  type LucideIcon,
+  type LucideProps
 } from 'lucide-react'
+import { createElement, type ReactElement } from 'react'
 
 /**
  * Single source of truth for the agent avatar palette. Both the creation
@@ -65,4 +67,9 @@ export function getColorClassName(colorId: string): string | undefined {
 
 export function getSymbolIcon(symbolId: string): LucideIcon | undefined {
   return AGENT_SYMBOLS.find((entry) => entry.id === symbolId)?.Icon
+}
+
+export function renderSymbolIcon(symbolId: string, props: LucideProps): ReactElement | null {
+  const Icon = getSymbolIcon(symbolId)
+  return Icon ? createElement(Icon, props) : null
 }

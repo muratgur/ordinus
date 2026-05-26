@@ -99,13 +99,9 @@ export class SchedulerService {
 
     let cron: Cron
     try {
-      cron = new Cron(
-        schedule.cron,
-        { timezone: schedule.timezone, protect: true },
-        () => {
-          this.fireSchedule(schedule.id, { manual: false })
-        }
-      )
+      cron = new Cron(schedule.cron, { timezone: schedule.timezone, protect: true }, () => {
+        this.fireSchedule(schedule.id, { manual: false })
+      })
     } catch (error) {
       this.notify({
         kind: 'fire_failed',
@@ -203,7 +199,6 @@ export class SchedulerService {
       }
     }
   }
-
 }
 
 export function computeNextRunAt(input: {

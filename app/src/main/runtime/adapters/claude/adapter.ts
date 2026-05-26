@@ -512,10 +512,24 @@ function getClaudeEnvironment(): NodeJS.ProcessEnv {
   mkdirSync(appDataDir, { recursive: true })
   mkdirSync(localAppDataDir, { recursive: true })
 
+  // HOME and USERPROFILE are inherited from the parent so the spawned CLI can
+  // reach the OS credential store: macOS Keychain via $HOME/Library, Windows
+  // DPAPI via %USERPROFILE%. On Linux, libsecret/gnome-keyring is keyed by
+  // the DBus session bus rather than $HOME, and the runtime env allowlist
+  // (cli/environment.ts) does not currently propagate DBus/XDG variables, so
+  // the Claude CLI would still fall back to its non-keyring auth path on
+  // Linux — macOS and Windows are fully covered, Linux is not.
+  //
+  // CLAUDE_CONFIG_DIR namespaces Claude's own keychain entry (the CLI hashes
+  // the config dir path into the entry name), so Ordinus's session stays
+  // isolated from a globally installed claude CLI without redirecting HOME.
+  //
+  // APPDATA / LOCALAPPDATA stay pointed inside the runtime sandbox as a
+  // defensive measure on Windows: we do not enumerate which cache files the
+  // CLI writes there, but if it follows Windows conventions for any of them,
+  // sandboxing keeps them out of the user's normal profile.
   return buildRuntimeEnvironment({
     CLAUDE_CONFIG_DIR: configDir,
-    HOME: configDir,
-    USERPROFILE: configDir,
     APPDATA: appDataDir,
     LOCALAPPDATA: localAppDataDir
   })
@@ -683,6 +697,8 @@ function extractClaudeAuthUrl(value: string): string {
     return (
       host === 'claude.ai' ||
       host.endsWith('.claude.ai') ||
+      host === 'claude.com' ||
+      host.endsWith('.claude.com') ||
       host === 'anthropic.com' ||
       host.endsWith('.anthropic.com')
     )
