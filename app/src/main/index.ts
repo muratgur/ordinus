@@ -13,6 +13,7 @@ app.setName('Ordinus')
 const database = new OrdinusDatabase()
 const runtime = createRuntimeService()
 const observability = createObservabilityService(database)
+let scheduler: SchedulerService | null = null
 
 const preferredWindowSize = {
   width: 1360,
@@ -126,9 +127,8 @@ app.whenReady().then(() => {
   })
 
   database.initialize()
-  const scheduler = registerIpcHandlers(database, runtime, observability)
+  scheduler = registerIpcHandlers(database, runtime, observability)
   scheduler.start()
-  ;(globalThis as { ordinusScheduler?: SchedulerService }).ordinusScheduler = scheduler
 
   createWindow()
 
@@ -144,6 +144,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  ;(globalThis as { ordinusScheduler?: SchedulerService }).ordinusScheduler?.stop()
+  scheduler?.stop()
   database.close()
 })

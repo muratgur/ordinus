@@ -80,6 +80,10 @@ function buildExpression(form: ScheduleFormState): { cron: string | null; runAt:
     }
     case 'advanced':
       return { cron: form.advancedCron.trim() || null, runAt: null }
+    default: {
+      const _exhaustive: never = form.preset
+      throw new Error(`Unhandled preset: ${String(_exhaustive)}`)
+    }
   }
 }
 
@@ -98,13 +102,15 @@ function formatDateTime(value: string | null): string {
   return d.toLocaleString()
 }
 
-function disableReasonLabel(schedule: AgentSchedule): string | null {
+export function disableReasonLabel(schedule: AgentSchedule): string | null {
   if (schedule.enabled) return null
   switch (schedule.disableReason) {
     case 'failures':
       return `Auto-disabled after ${schedule.consecutiveFailures} failed fires`
     case 'wr_archived':
       return 'Linked Work Request was archived'
+    case 'completed':
+      return 'Completed'
     case 'manual':
     case null:
     default:

@@ -1149,7 +1149,12 @@ export const OrchestrationPlanSchema = z.object({
   assignments: z.array(OrchestrationAssignmentSchema).min(1).max(8)
 })
 
-export const AgentScheduleDisableReasonSchema = z.enum(['failures', 'wr_archived', 'manual'])
+export const AgentScheduleDisableReasonSchema = z.enum([
+  'failures',
+  'wr_archived',
+  'manual',
+  'completed'
+])
 
 export const AgentScheduleLastRunStatusSchema = z.enum(['succeeded', 'failed'])
 

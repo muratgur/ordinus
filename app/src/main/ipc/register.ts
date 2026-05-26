@@ -681,7 +681,6 @@ export function registerIpcHandlers(
   })
   ipcMain.handle(ipcChannels.schedulesDelete, (_event, payload) => {
     const input = AgentScheduleDeleteInputSchema.parse(payload)
-    scheduler.refresh(input.id)
     const result = database.deleteAgentSchedule(input)
     scheduler.refresh(input.id)
     return result

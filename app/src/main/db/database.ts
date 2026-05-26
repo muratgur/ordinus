@@ -1658,6 +1658,15 @@ export class OrdinusDatabase {
     this.db.update(agentSchedules).set(patch).where(eq(agentSchedules.id, input.id)).run()
   }
 
+  markAgentScheduleCompleted(scheduleId: string): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(agentSchedules)
+      .set({ enabled: false, disableReason: 'completed', nextRunAt: null, updatedAt: now })
+      .where(eq(agentSchedules.id, scheduleId))
+      .run()
+  }
+
   recordAgentScheduleOutcome(input: {
     id: string
     runId: string
