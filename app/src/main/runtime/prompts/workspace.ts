@@ -41,3 +41,17 @@ export function buildAgentPrivateFolderInstructions(agentHomePath: string): stri
     '- Files in the agent private folder are not workspace artifacts. Do not report them as created or modified workspace files.'
   ].join('\n')
 }
+
+export function buildExtraDirectoriesInstructions(extraDirectories: string[]): string {
+  if (extraDirectories.length === 0) {
+    return ''
+  }
+  return [
+    'External directories policy:',
+    '- The following directories are outside the workspace but you have read and write access to them:',
+    ...extraDirectories.map((dir) => `  - ${dir}`),
+    '- Use these directories only when the user references them or when the task requires the files there.',
+    '- Files in these directories are not workspace artifacts. Do not report them as created or modified workspace files, and do not include them in artifact references.',
+    '- Do not assume these paths are part of the workspace. Always refer to them by their absolute paths.'
+  ].join('\n')
+}

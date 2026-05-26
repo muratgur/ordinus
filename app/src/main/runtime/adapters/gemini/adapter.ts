@@ -37,6 +37,7 @@ import {
 } from '../../prompts/conversation-outcome'
 import {
   buildAgentPrivateFolderInstructions,
+  buildExtraDirectoriesInstructions,
   buildWorkspaceWorkingFolderInstructions
 } from '../../prompts/workspace'
 import {
@@ -209,7 +210,7 @@ function buildGeminiConversationArgs(input: RuntimeConversationTurnInput): strin
     '--output-format',
     'json',
     '--include-directories',
-    input.agentHomePath
+    [input.agentHomePath, ...input.extraDirectories].join(',')
   ]
 
   if (input.providerSessionRef) {
@@ -247,6 +248,8 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
+    buildExtraDirectoriesInstructions(input.extraDirectories),
+    '',
     buildConversationOutcomeInstructions(),
     '',
     'User message:',
@@ -259,6 +262,8 @@ function buildGeminiResumePrompt(input: RuntimeConversationTurnInput): string {
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
+    '',
+    buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
     buildConversationOutcomeInstructions(),
     '',

@@ -66,6 +66,7 @@ export function buildAgentDraftFromProfile(
     model: defaults.model,
     sandbox: 'workspace-write',
     connectors: profile.suggestedConnectors,
+    extraDirectories: [],
     avatar: '',
     enabled: true
   }
@@ -108,6 +109,7 @@ export function buildBlankAgentDraft(defaults: ProfileDraftDefaults): AgentDraft
     model: defaults.model,
     sandbox: 'workspace-write',
     connectors: [],
+    extraDirectories: [],
     avatar: '',
     enabled: true
   }

@@ -183,6 +183,13 @@
       "when": 1779893100000,
       "tag": "0025_agent_schedules",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1779816314467,
+      "tag": "0026_charming_inhumans",
+      "breakpoints": true
     }
   ]
 }

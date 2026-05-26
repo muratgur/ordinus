@@ -40,6 +40,7 @@ import { AgentCreationFlow } from '@renderer/components/agent-creation-flow'
 import { AgentReflectionDialog } from '@renderer/components/agent-reflection-dialog'
 import type {
   Agent,
+  AgentExtraDirectoryEntry,
   AgentSandbox,
   AgentSchedule,
   AgentSkill,
@@ -1276,6 +1277,8 @@ function SettingsPanel({
               </ul>
             )}
           </div>
+
+          <ExtraDirectoriesPanel agentId={agent.id} />
         </div>
       </ScrollArea>
 
@@ -1311,6 +1314,129 @@ function SettingsPanel({
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Element {
+  const [entries, setEntries] = useState<AgentExtraDirectoryEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    window.ordinus.agents
+      .listExtraDirectories({ agentId })
+      .then((list) => {
+        if (!cancelled) setEntries(list.entries)
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(getErrorMessage(loadError, 'Could not load extra directories.'))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [agentId])
+
+  async function handleAdd(): Promise<void> {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await window.ordinus.agents.addExtraDirectory({ agentId })
+      if (result.ok) {
+        setEntries(result.list.entries)
+      } else if (result.code !== 'cancelled') {
+        setError(result.message)
+      }
+    } catch (addError) {
+      setError(getErrorMessage(addError, 'Could not add directory.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRemove(path: string): Promise<void> {
+    setBusy(true)
+    setError('')
+    try {
+      const list = await window.ordinus.agents.removeExtraDirectory({ agentId, path })
+      setEntries(list.entries)
+    } catch (removeError) {
+      setError(getErrorMessage(removeError, 'Could not remove directory.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold leading-tight">Extra directories</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Folders outside the workspace this agent can read and write. Best for occasional use —
+            the workspace stays the primary place for work.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-md border px-3 py-1 text-xs hover:bg-accent disabled:opacity-50"
+          disabled={busy}
+          onClick={handleAdd}
+        >
+          Add folder…
+        </button>
+      </div>
+      <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+        <li>
+          <span className="font-medium text-foreground">Agent-specific.</span> Other agents don't
+          inherit these. If a follow-up agent needs the same folder, add it to that agent too.
+        </li>
+        <li>
+          <span className="font-medium text-foreground">Read + write.</span> The agent has full
+          access to everything you add here. Use sparingly.
+        </li>
+        <li>
+          <span className="font-medium text-foreground">Not workspace artifacts.</span> Files the
+          agent creates here won't appear in the Files panel or auto-flow into follow-up plans —
+          only the workspace does that. The agent mentions external changes in its response text.
+        </li>
+      </ul>
+      {error ? <p className="text-xs text-status-attention">{error}</p> : null}
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : entries.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No extra directories.</p>
+      ) : (
+        <ul className="divide-y rounded-md border">
+          {entries.map((entry) => (
+            <li key={entry.path} className="flex items-center justify-between gap-3 px-3 py-2">
+              <div className="min-w-0">
+                <span className="block truncate text-sm">{entry.path}</span>
+                {!entry.exists ? (
+                  <span className="text-xs text-status-attention">missing</span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                disabled={busy}
+                onClick={() => handleRemove(entry.path)}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -1400,10 +1526,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
       ) : (
         <div className="divide-y rounded-md border">
           {schedules.map((s) => (
-            <div
-              key={s.id}
-              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
-            >
+            <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
               <div className="min-w-0 space-y-0.5">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium">{s.name}</span>
@@ -1411,9 +1534,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
                     <span className="text-xs text-amber-600">Last failed</span>
                   ) : null}
                   {!s.enabled ? (
-                    <span className="text-xs text-muted-foreground">
-                      {disableReasonLabel(s)}
-                    </span>
+                    <span className="text-xs text-muted-foreground">{disableReasonLabel(s)}</span>
                   ) : null}
                 </div>
                 <div className="text-xs text-muted-foreground">

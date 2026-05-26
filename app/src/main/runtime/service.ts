@@ -18,6 +18,7 @@ import {
 } from '@shared/contracts'
 import { providerIds, type RuntimeEventListener, type RuntimeProviderCapabilities } from './types'
 import { getProviderAdapter, listProviderAdapters } from './adapters/registry'
+import { partitionExtraDirectoriesByExistence } from '../workspace/extra-directory-policy'
 import { isProviderSessionInvalidError } from './adapters/shared'
 import { buildWorkspaceWorkingFolderInstructions } from './prompts/workspace'
 import type {
@@ -180,6 +181,7 @@ export function createRuntimeService(): RuntimeService {
           workspaceRoot: input.workspaceRoot,
           workingRoot: input.workingRoot,
           agentHomePath: input.agentHomePath,
+          extraDirectories: input.extraDirectories,
           agentName: input.agentName,
           agentRole: input.agentRole,
           instructions: input.instructions,
@@ -221,6 +223,26 @@ export function createRuntimeService(): RuntimeService {
   }
 }
 
+function applyExtraDirectoriesPolicy(
+  input: RuntimeConversationTurnInput
+): RuntimeConversationTurnInput {
+  if (input.extraDirectories.length === 0) {
+    return input
+  }
+  const { available, missing } = partitionExtraDirectoriesByExistence(input.extraDirectories)
+  if (missing.length > 0) {
+    input.observability?.record({
+      kind: 'status',
+      source: 'runtime',
+      confidence: 'reported',
+      phase: 'starting',
+      summary: `Skipped missing extra directories: ${missing.join(', ')}`,
+      payload: { missing }
+    })
+  }
+  return { ...input, extraDirectories: available }
+}
+
 async function sendConversationTurnWithFreshSessionFallback(
   adapter: ReturnType<typeof getProviderAdapter>,
   input: RuntimeConversationTurnInput,
@@ -230,14 +252,15 @@ async function sendConversationTurnWithFreshSessionFallback(
     throw new Error(`Direct conversations are not available for ${adapter.label} yet.`)
   }
 
+  const filtered = applyExtraDirectoriesPolicy(input)
   try {
-    return await adapter.sendConversationTurn(input, context)
+    return await adapter.sendConversationTurn(filtered, context)
   } catch (error) {
-    if (!input.providerSessionRef || !isProviderSessionInvalidError(error)) {
+    if (!filtered.providerSessionRef || !isProviderSessionInvalidError(error)) {
       throw error
     }
 
-    input.observability?.record({
+    filtered.observability?.record({
       kind: 'status',
       source: 'runtime',
       confidence: 'reported',
@@ -250,7 +273,7 @@ async function sendConversationTurnWithFreshSessionFallback(
 
     return adapter.sendConversationTurn(
       {
-        ...input,
+        ...filtered,
         providerSessionRef: null
       },
       context
