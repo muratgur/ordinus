@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `extra_directories` text DEFAULT '[]' NOT NULL;

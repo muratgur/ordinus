@@ -161,6 +161,7 @@ INSTRUCTION QUALITY
 Each instruction must be:
 - Self-contained: the assigned agent must be able to act on it without seeing the original user request or other items.
 - Concrete on inputs: include the file paths, excerpts, parameters, or constraints the agent needs.
+- Honour each agent's "extraDirectories": these are absolute paths outside the workspace that the assigned agent can read and write. When the user references a file that lives under one of those directories, use the exact absolute path as it appears (do not invent a workspace-relative path for it, and do not move the file into the workspace). If a file the user names cannot be found under the workspace or any of the assigned agent's extraDirectories, say so in the instruction instead of guessing a path.
 - Goal-oriented: state what to achieve, not just what to look at ("analyze X to determine Y" beats "look at X").
 - Free of planning meta-talk: do not write things like "this is part of a larger task" or "after item-2 finishes".
 
@@ -247,6 +248,7 @@ ${JSON.stringify(
       role: agent.role,
       capabilities: agent.capabilities,
       connectors: agent.connectors,
+      extraDirectories: agent.extraDirectories,
       requestedWork: agent.requestedWork,
       providerId: agent.providerId,
       model: agent.model

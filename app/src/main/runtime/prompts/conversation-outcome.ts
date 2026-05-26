@@ -83,11 +83,15 @@ function normalizeAgentTurnOutcome(value: unknown): unknown {
   }
 
   if (value.outcome === 'final_response') {
+    const rawContent = typeof value.content === 'string' ? value.content : ''
+    const artifacts = splitWorkspaceAndExternalPaths(normalizeStringArray(value.artifactRefs))
+    const changes = splitWorkspaceAndExternalPaths(normalizeStringArray(value.changedFiles))
+    const externalPaths = Array.from(new Set([...artifacts.external, ...changes.external]))
     return {
       outcome: 'final_response',
-      content: typeof value.content === 'string' ? value.content : '',
-      artifactRefs: normalizeStringArray(value.artifactRefs),
-      changedFiles: normalizeStringArray(value.changedFiles)
+      content: appendExternalWritesNotice(rawContent, externalPaths),
+      artifactRefs: artifacts.workspaceRelative,
+      changedFiles: changes.workspaceRelative
     }
   }
 
@@ -159,6 +163,41 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : []
+}
+
+const absolutePathPattern = /^(?:[a-zA-Z]:|[\\/])/
+
+function isWorkspaceRelativePath(path: string): boolean {
+  if (absolutePathPattern.test(path)) return false
+  return !path.split(/[\\/]+/).some((segment) => segment === '..')
+}
+
+function splitWorkspaceAndExternalPaths(paths: string[]): {
+  workspaceRelative: string[]
+  external: string[]
+} {
+  const workspaceRelative: string[] = []
+  const external: string[] = []
+  for (const path of paths) {
+    const trimmed = path.trim()
+    if (!trimmed) continue
+    if (isWorkspaceRelativePath(trimmed)) {
+      workspaceRelative.push(trimmed)
+    } else {
+      external.push(trimmed)
+    }
+  }
+  return { workspaceRelative, external }
+}
+
+function appendExternalWritesNotice(content: string, externalPaths: string[]): string {
+  if (externalPaths.length === 0) {
+    return content
+  }
+  const trimmed = content.trimEnd()
+  const lines = externalPaths.map((path) => `- \`${path}\``).join('\n')
+  const notice = `**External writes (outside the workspace):**\n${lines}`
+  return trimmed ? `${trimmed}\n\n${notice}` : notice
 }
 
 function optionalStringProperty(key: string, value: unknown): Record<string, string> {

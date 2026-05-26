@@ -9,6 +9,11 @@ import type {
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentArchiveInput,
+  AgentExtraDirectoryAddInput,
+  AgentExtraDirectoryAddResult,
+  AgentExtraDirectoryRemoveInput,
+  AgentExtraDirectoryListInput,
+  AgentExtraDirectoryList,
   AgentSchedule,
   AgentScheduleCreateInput,
   AgentScheduleDeleteInput,
@@ -134,6 +139,11 @@ export type OrdinusApi = {
     archive: (input: AgentArchiveInput) => Promise<Agent>
     unarchive: (input: AgentArchiveInput) => Promise<Agent>
     listReflection: () => Promise<AgentReflectionSummary>
+    addExtraDirectory: (input: AgentExtraDirectoryAddInput) => Promise<AgentExtraDirectoryAddResult>
+    removeExtraDirectory: (
+      input: AgentExtraDirectoryRemoveInput
+    ) => Promise<AgentExtraDirectoryList>
+    listExtraDirectories: (input: AgentExtraDirectoryListInput) => Promise<AgentExtraDirectoryList>
   }
   conversations: {
     list: () => Promise<ConversationListItem[]>

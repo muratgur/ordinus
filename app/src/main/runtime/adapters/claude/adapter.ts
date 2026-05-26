@@ -42,6 +42,7 @@ import {
 } from '../../prompts/conversation-outcome'
 import {
   buildAgentPrivateFolderInstructions,
+  buildExtraDirectoriesInstructions,
   buildWorkspaceWorkingFolderInstructions
 } from '../../prompts/workspace'
 import {
@@ -238,6 +239,10 @@ function buildClaudeConversationArgs(
     input.agentHomePath
   ]
 
+  for (const dir of input.extraDirectories) {
+    args.push('--add-dir', dir)
+  }
+
   if (mcpConfigPath) {
     args.push('--mcp-config', mcpConfigPath)
   }
@@ -283,6 +288,8 @@ function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
+    buildExtraDirectoriesInstructions(input.extraDirectories),
+    '',
     buildConversationOutcomeInstructions()
   ].join('\n')
 }
@@ -303,6 +310,8 @@ function buildClaudeResumePrompt(input: RuntimeConversationTurnInput): string {
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
+    '',
+    buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
     buildConversationOutcomeInstructions(),
     '',

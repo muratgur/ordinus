@@ -40,6 +40,7 @@ import {
 } from '../../prompts/conversation-outcome'
 import {
   buildAgentPrivateFolderInstructions,
+  buildExtraDirectoriesInstructions,
   buildWorkspaceWorkingFolderInstructions
 } from '../../prompts/workspace'
 import {
@@ -175,6 +176,13 @@ async function sendCodexConversationTurn(
   }
 }
 
+function buildCodexExtraWritableRootsArgs(extraDirectories: string[]): string[] {
+  if (extraDirectories.length === 0) {
+    return []
+  }
+  return ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(extraDirectories)}`]
+}
+
 function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string[] {
   if (input.providerSessionRef) {
     const args = [
@@ -185,6 +193,8 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
       input.workspaceRoot,
       '--add-dir',
       input.agentHomePath,
+      ...input.extraDirectories.flatMap((dir) => ['--add-dir', dir]),
+      ...buildCodexExtraWritableRootsArgs(input.extraDirectories),
       'resume',
       input.providerSessionRef,
       '-',
@@ -211,6 +221,8 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     input.workspaceRoot,
     '--add-dir',
     input.agentHomePath,
+    ...input.extraDirectories.flatMap((dir) => ['--add-dir', dir]),
+    ...buildCodexExtraWritableRootsArgs(input.extraDirectories),
     '--output-schema',
     schemaPath,
     '--output-last-message',
@@ -234,6 +246,8 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
+    buildExtraDirectoriesInstructions(input.extraDirectories),
+    '',
     buildConversationOutcomeInstructions(),
     '',
     'User message:',
@@ -246,6 +260,8 @@ function buildCodexResumePrompt(input: RuntimeConversationTurnInput): string {
     buildWorkspaceWorkingFolderInstructions(input.workingRoot),
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
+    '',
+    buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
     buildConversationOutcomeInstructions(),
     '',

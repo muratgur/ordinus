@@ -52,6 +52,7 @@ export type RuntimeConversationTurnInput = {
   workspaceRoot: string
   workingRoot: string
   agentHomePath: string
+  extraDirectories: string[]
   agentName: string
   agentRole: string
   instructions: string
@@ -79,6 +80,7 @@ export type RuntimeWorkRunInput = {
   workspaceRoot: string
   workingRoot: string
   agentHomePath: string
+  extraDirectories: string[]
   agentName: string
   agentRole: string
   instructions: string
