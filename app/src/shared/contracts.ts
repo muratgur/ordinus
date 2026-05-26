@@ -1149,6 +1149,87 @@ export const OrchestrationPlanSchema = z.object({
   assignments: z.array(OrchestrationAssignmentSchema).min(1).max(8)
 })
 
+export const AgentScheduleDisableReasonSchema = z.enum(['failures', 'wr_archived', 'manual'])
+
+export const AgentScheduleLastRunStatusSchema = z.enum(['succeeded', 'failed'])
+
+export const AgentScheduleSchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  prompt: z.string().min(1),
+  cron: z.string().nullable(),
+  runAt: z.string().nullable(),
+  timezone: z.string().min(1),
+  linkedWorkRequestId: z.string().min(1).nullable(),
+  enabled: z.boolean(),
+  lastRunAt: z.string().nullable(),
+  nextRunAt: z.string().nullable(),
+  lastRunId: z.string().min(1).nullable(),
+  lastRunStatus: AgentScheduleLastRunStatusSchema.nullable(),
+  consecutiveFailures: z.number().int().nonnegative(),
+  disableReason: AgentScheduleDisableReasonSchema.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const AgentScheduleCreateInputSchema = z
+  .object({
+    agentId: z.string().min(1),
+    name: z.string().trim().min(1).max(120),
+    prompt: z.string().trim().min(1).max(16_000),
+    cron: z.string().trim().min(1).max(200).nullable().optional(),
+    runAt: z.string().trim().min(1).max(40).nullable().optional(),
+    timezone: z.string().trim().min(1).max(80),
+    linkedWorkRequestId: z.string().min(1).nullable().optional(),
+    enabled: z.boolean().optional()
+  })
+  .refine((value) => Boolean(value.cron || value.runAt), {
+    message: 'Schedule must provide a cron expression or a runAt timestamp.'
+  })
+
+export const AgentScheduleUpdateInputSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().trim().min(1).max(120).optional(),
+    prompt: z.string().trim().min(1).max(16_000).optional(),
+    cron: z.string().trim().min(1).max(200).nullable().optional(),
+    runAt: z.string().trim().min(1).max(40).nullable().optional(),
+    timezone: z.string().trim().min(1).max(80).optional(),
+    linkedWorkRequestId: z.string().min(1).nullable().optional(),
+    enabled: z.boolean().optional()
+  })
+
+export const AgentScheduleListInputSchema = z.object({
+  agentId: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  linkedWorkRequestId: z.string().min(1).optional()
+})
+
+export const AgentScheduleGetInputSchema = z.object({ id: z.string().min(1) })
+export const AgentScheduleDeleteInputSchema = z.object({ id: z.string().min(1) })
+export const AgentScheduleSetEnabledInputSchema = z.object({
+  id: z.string().min(1),
+  enabled: z.boolean()
+})
+export const AgentScheduleFireNowInputSchema = z.object({ id: z.string().min(1) })
+
+export type SchedulerEvent =
+  | { kind: 'fired'; scheduleId: string; runId: string; requestId: string }
+  | { kind: 'fire_failed'; scheduleId: string; error: string }
+  | { kind: 'auto_disabled'; scheduleId: string; reason: 'failures' | 'wr_archived' }
+
+export type AgentSchedule = z.infer<typeof AgentScheduleSchema>
+export type AgentScheduleDisableReason = z.infer<typeof AgentScheduleDisableReasonSchema>
+export type AgentScheduleLastRunStatus = z.infer<typeof AgentScheduleLastRunStatusSchema>
+export type AgentScheduleCreateInput = z.infer<typeof AgentScheduleCreateInputSchema>
+export type AgentScheduleUpdateInput = z.infer<typeof AgentScheduleUpdateInputSchema>
+export type AgentScheduleListInput = z.infer<typeof AgentScheduleListInputSchema>
+export type AgentScheduleGetInput = z.infer<typeof AgentScheduleGetInputSchema>
+export type AgentScheduleDeleteInput = z.infer<typeof AgentScheduleDeleteInputSchema>
+export type AgentScheduleSetEnabledInput = z.infer<typeof AgentScheduleSetEnabledInputSchema>
+export type AgentScheduleFireNowInput = z.infer<typeof AgentScheduleFireNowInputSchema>
+
 export type AppInfo = z.infer<typeof AppInfoSchema>
 export type SystemPaths = z.infer<typeof SystemPathsSchema>
 export type DbStatus = z.infer<typeof DbStatusSchema>

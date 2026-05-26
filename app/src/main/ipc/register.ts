@@ -12,6 +12,13 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
   AgentArchiveInputSchema,
   AgentDeleteInputSchema,
+  AgentScheduleCreateInputSchema,
+  AgentScheduleDeleteInputSchema,
+  AgentScheduleGetInputSchema,
+  AgentScheduleListInputSchema,
+  AgentScheduleSetEnabledInputSchema,
+  AgentScheduleUpdateInputSchema,
+  AgentScheduleFireNowInputSchema,
   AgentDraftFromProfileInputSchema,
   AgentDraftFromIntentInputSchema,
   AgentMemoryAddInputSchema,
@@ -98,6 +105,8 @@ import { getSystemPaths } from '../paths'
 import type { RuntimeService } from '../runtime'
 import type { ObservabilityService } from '../observability/service'
 import type { SanitizedInvocationSummary } from '../observability/types'
+import { SchedulerService, computeNextRunAt } from '../scheduler/service'
+import type { SchedulerEvent } from '@shared/contracts'
 import {
   createAgentSkill,
   deleteAgentHome,
@@ -126,6 +135,8 @@ import {
 
 const workRequestConcurrencyLimit = 3
 
+let activeScheduler: SchedulerService | null = null
+
 type ReportedWorkspaceFileRefs = WorkspaceWorkingFolderContext & {
   artifactRefs: string[]
   changedFiles: string[]
@@ -135,7 +146,18 @@ export function registerIpcHandlers(
   database: OrdinusDatabase,
   runtime: RuntimeService,
   observability: ObservabilityService
-): void {
+): SchedulerService {
+  const broadcastSchedulerEvent = (event: SchedulerEvent): void => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(ipcChannels.schedulesChanged, event)
+    }
+  }
+  const scheduler = new SchedulerService(
+    database,
+    (requestId) => startWorkRequestRuns(database, runtime, observability, requestId),
+    broadcastSchedulerEvent
+  )
+  activeScheduler = scheduler
   ipcMain.handle(ipcChannels.appGetInfo, () =>
     AppInfoSchema.parse({
       name: 'Ordinus',
@@ -626,6 +648,64 @@ export function registerIpcHandlers(
       revision: String(statSync(absolutePath).mtimeMs)
     })
   })
+
+  ipcMain.handle(ipcChannels.schedulesList, (_event, payload) => {
+    const input = AgentScheduleListInputSchema.parse(payload ?? {})
+    return database.listAgentSchedules(input)
+  })
+  ipcMain.handle(ipcChannels.schedulesGet, (_event, payload) => {
+    const input = AgentScheduleGetInputSchema.parse(payload)
+    return database.getAgentSchedule(input)
+  })
+  ipcMain.handle(ipcChannels.schedulesCreate, (_event, payload) => {
+    const input = AgentScheduleCreateInputSchema.parse(payload)
+    const nextRunAt = computeNextRunAt({
+      cron: input.cron,
+      runAt: input.runAt,
+      timezone: input.timezone
+    })
+    const schedule = database.createAgentSchedule({ ...input, nextRunAt })
+    scheduler.refresh(schedule.id)
+    return schedule
+  })
+  ipcMain.handle(ipcChannels.schedulesUpdate, (_event, payload) => {
+    const input = AgentScheduleUpdateInputSchema.parse(payload)
+    const current = database.getAgentSchedule({ id: input.id })
+    const cron = input.cron !== undefined ? input.cron : current.cron
+    const runAt = input.runAt !== undefined ? input.runAt : current.runAt
+    const timezone = input.timezone ?? current.timezone
+    const nextRunAt = computeNextRunAt({ cron, runAt, timezone })
+    const schedule = database.updateAgentSchedule({ ...input, nextRunAt })
+    scheduler.refresh(schedule.id)
+    return schedule
+  })
+  ipcMain.handle(ipcChannels.schedulesDelete, (_event, payload) => {
+    const input = AgentScheduleDeleteInputSchema.parse(payload)
+    scheduler.refresh(input.id)
+    const result = database.deleteAgentSchedule(input)
+    scheduler.refresh(input.id)
+    return result
+  })
+  ipcMain.handle(ipcChannels.schedulesSetEnabled, (_event, payload) => {
+    const input = AgentScheduleSetEnabledInputSchema.parse(payload)
+    const schedule = database.setAgentScheduleEnabled(input)
+    if (schedule.enabled) {
+      const nextRunAt = computeNextRunAt({
+        cron: schedule.cron,
+        runAt: schedule.runAt,
+        timezone: schedule.timezone
+      })
+      database.updateAgentSchedule({ id: schedule.id, nextRunAt })
+    }
+    scheduler.refresh(schedule.id)
+    return database.getAgentSchedule({ id: schedule.id })
+  })
+  ipcMain.handle(ipcChannels.schedulesFireNow, (_event, payload) => {
+    const input = AgentScheduleFireNowInputSchema.parse(payload)
+    return scheduler.fireNow(input.id)
+  })
+
+  return scheduler
 }
 
 function requireAgent(database: OrdinusDatabase, agentId: string): void {
@@ -1188,9 +1268,11 @@ function startPreparedWorkRun(
           changedFiles: fileRefs.changedFiles
         })
         observability.markWorkboardCompleted(prepared.run.id, result.outcome.content)
+        activeScheduler?.notifyRunTerminal(prepared.run.id, true)
       } catch (error) {
         saveWorkRunFailure(database, prepared.run.id, error)
         observability.markWorkboardFailed(prepared.run.id, getWorkRunErrorMessage(error))
+        activeScheduler?.notifyRunTerminal(prepared.run.id, false)
       } finally {
         startWorkRequestRuns(database, runtime, observability, requestId)
       }
@@ -1198,6 +1280,7 @@ function startPreparedWorkRun(
     .catch((error) => {
       saveWorkRunFailure(database, prepared.run.id, error)
       observability.markWorkboardFailed(prepared.run.id, getWorkRunErrorMessage(error))
+      activeScheduler?.notifyRunTerminal(prepared.run.id, false)
       startWorkRequestRuns(database, runtime, observability, requestId)
     })
 }

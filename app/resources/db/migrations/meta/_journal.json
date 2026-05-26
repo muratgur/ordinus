@@ -176,6 +176,13 @@
       "when": 1779893000000,
       "tag": "0024_work_request_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1779893100000,
+      "tag": "0025_agent_schedules",
+      "breakpoints": true
     }
   ]
 }
