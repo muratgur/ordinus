@@ -90,7 +90,17 @@ outside our control, and per-agent scoping is not guaranteed. We use the CLI's
 
 - Connector access is an explicit per-agent authorization decision with a safe
   empty default.
-- Credentials are centralized and encrypted at rest; data is not.
+- Credentials are centralized and encrypted at rest; data is not. The
+  "encrypted at rest" guarantee holds for packaged builds. Dev builds
+  transparently fall back to a plain-text vault entry (marked with a `plain:`
+  prefix) when `safeStorage.isEncryptionAvailable()` reports unavailable —
+  most commonly on Linux machines without a libsecret-compatible keyring
+  agent (or where DBus is stripped from the spawned process environment).
+  macOS and Windows dev builds typically pass the availability check and stay
+  on the encrypted path. The packaged read path refuses `plain:` entries so
+  the production guarantee remains intact. Developers should avoid connecting
+  production accounts when this fallback is in effect; the main process logs
+  a one-shot warning when it triggers.
 - The transport-agnostic registry lets new connectors (api-key, mcp-stdio) reuse
   the same vault and materialization skeleton.
 - Adapters need a provider-specific per-invocation MCP mechanism or an

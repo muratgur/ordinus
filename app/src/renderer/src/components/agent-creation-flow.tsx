@@ -540,21 +540,24 @@ function LibraryDrawer({
   useEffect(() => {
     if (!open) return
     let mounted = true
-    setLoading(true)
-    window.ordinus.agents
-      .listProfiles()
-      .then((next) => {
-        if (mounted) setCatalog(next)
-      })
-      .catch((error) => {
-        notify.attention({
-          title: 'Could not load library',
-          description: error instanceof Error ? error.message : 'Unknown error.'
+    queueMicrotask(() => {
+      if (!mounted) return
+      setLoading(true)
+      window.ordinus.agents
+        .listProfiles()
+        .then((next) => {
+          if (mounted) setCatalog(next)
         })
-      })
-      .finally(() => {
-        if (mounted) setLoading(false)
-      })
+        .catch((error) => {
+          notify.attention({
+            title: 'Could not load library',
+            description: error instanceof Error ? error.message : 'Unknown error.'
+          })
+        })
+        .finally(() => {
+          if (mounted) setLoading(false)
+        })
+    })
     return () => {
       mounted = false
     }
@@ -685,18 +688,23 @@ function useTypewriter(text: string, msPerChar: number): string {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    setOutput('')
-    if (!text) return
-    let index = 0
-    timerRef.current = setInterval(() => {
-      index += 1
-      setOutput(text.slice(0, index))
-      if (index >= text.length && timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-      }
-    }, msPerChar)
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setOutput('')
+      if (!text) return
+      let index = 0
+      timerRef.current = setInterval(() => {
+        index += 1
+        setOutput(text.slice(0, index))
+        if (index >= text.length && timerRef.current) {
+          clearInterval(timerRef.current)
+          timerRef.current = null
+        }
+      }, msPerChar)
+    })
     return () => {
+      cancelled = true
       if (timerRef.current) {
         clearInterval(timerRef.current)
         timerRef.current = null

@@ -314,10 +314,8 @@ export function registerIpcHandlers(
       entries: paths.map((path) => ({ path, exists: pathExistsAsDirectory(path) }))
     })
 
-  const extraDirectoryFailure = (
-    code: AgentExtraDirectoryErrorCode,
-    message: string
-  ): unknown => AgentExtraDirectoryAddResultSchema.parse({ ok: false, code, message })
+  const extraDirectoryFailure = (code: AgentExtraDirectoryErrorCode, message: string): unknown =>
+    AgentExtraDirectoryAddResultSchema.parse({ ok: false, code, message })
 
   ipcMain.handle(ipcChannels.agentsAddExtraDirectory, async (event, payload) => {
     const input = AgentExtraDirectoryAddInputSchema.parse(payload)
@@ -325,10 +323,7 @@ export function registerIpcHandlers(
 
     const workspace = database.getWorkspaceConfig()
     if (!workspace) {
-      return extraDirectoryFailure(
-        'workspace_not_configured',
-        'Workspace is not configured.'
-      )
+      return extraDirectoryFailure('workspace_not_configured', 'Workspace is not configured.')
     }
 
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined

@@ -48,7 +48,8 @@ import type {
   ProviderId,
   WorkRequest
 } from '@shared/contracts'
-import { CreateScheduleDialog, disableReasonLabel } from './schedules-screen'
+import { CreateScheduleDialog } from './schedules-screen'
+import { disableReasonLabel } from './schedule-labels'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
@@ -130,7 +131,13 @@ export function AgentsScreen(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    void reloadAgents()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void reloadAgents()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [reloadAgents])
 
   function handleAgentSaved(nextAgent: Agent): void {
@@ -1326,21 +1333,24 @@ function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Elem
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError('')
-    window.ordinus.agents
-      .listExtraDirectories({ agentId })
-      .then((list) => {
-        if (!cancelled) setEntries(list.entries)
-      })
-      .catch((loadError) => {
-        if (!cancelled) {
-          setError(getErrorMessage(loadError, 'Could not load extra directories.'))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    queueMicrotask(() => {
+      if (cancelled) return
+      setLoading(true)
+      setError('')
+      window.ordinus.agents
+        .listExtraDirectories({ agentId })
+        .then((list) => {
+          if (!cancelled) setEntries(list.entries)
+        })
+        .catch((loadError) => {
+          if (!cancelled) {
+            setError(getErrorMessage(loadError, 'Could not load extra directories.'))
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    })
     return () => {
       cancelled = true
     }
@@ -1397,7 +1407,7 @@ function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Elem
       </div>
       <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>
-          <span className="font-medium text-foreground">Agent-specific.</span> Other agents don't
+          <span className="font-medium text-foreground">Agent-specific.</span> Other agents do not
           inherit these. If a follow-up agent needs the same folder, add it to that agent too.
         </li>
         <li>
@@ -1406,7 +1416,7 @@ function ExtraDirectoriesPanel({ agentId }: { agentId: string }): React.JSX.Elem
         </li>
         <li>
           <span className="font-medium text-foreground">Not workspace artifacts.</span> Files the
-          agent creates here won't appear in the Files panel or auto-flow into follow-up plans —
+          agent creates here will not appear in the Files panel or auto-flow into follow-up plans —
           only the workspace does that. The agent mentions external changes in its response text.
         </li>
       </ul>
@@ -1469,9 +1479,15 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
   )
 
   useEffect(() => {
-    void load()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void load()
+    })
     const off = window.ordinus.schedules.onChanged(() => void load(true))
-    return off
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [load])
 
   async function toggle(s: AgentSchedule): Promise<void> {

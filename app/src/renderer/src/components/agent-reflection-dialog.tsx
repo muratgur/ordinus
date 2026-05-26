@@ -49,11 +49,18 @@ export function AgentReflectionDialog({
   }, [])
 
   useEffect(() => {
-    if (open) {
-      void refresh()
-    } else {
-      setSummary(null)
-      setSelectedToArchive(new Set())
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      if (open) {
+        void refresh()
+      } else {
+        setSummary(null)
+        setSelectedToArchive(new Set())
+      }
+    })
+    return () => {
+      cancelled = true
     }
   }, [open, refresh])
 

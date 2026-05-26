@@ -1,4 +1,4 @@
-import { AVATAR_DELIMITER, getColorClassName, getSymbolIcon } from './agent-palette'
+import { AVATAR_DELIMITER, getColorClassName, renderSymbolIcon } from './agent-palette'
 import { cn } from '../lib/utils'
 
 type AgentAvatarProps = {
@@ -20,7 +20,6 @@ export function AgentAvatar({ avatar, size = 40, className }: AgentAvatarProps):
   const iconSize = Math.round(size * 0.45)
 
   if (parsed.kind === 'composed') {
-    const Icon = getSymbolIcon(parsed.symbol)
     return (
       <span
         className={cn(
@@ -30,7 +29,10 @@ export function AgentAvatar({ avatar, size = 40, className }: AgentAvatarProps):
         )}
         style={{ width: dimension, height: dimension }}
       >
-        {Icon ? <Icon style={{ width: iconSize, height: iconSize }} strokeWidth={1.75} /> : null}
+        {renderSymbolIcon(parsed.symbol, {
+          style: { width: iconSize, height: iconSize },
+          strokeWidth: 1.75
+        })}
       </span>
     )
   }
