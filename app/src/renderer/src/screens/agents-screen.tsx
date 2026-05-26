@@ -47,7 +47,7 @@ import type {
   ProviderId,
   WorkRequest
 } from '@shared/contracts'
-import { CreateScheduleDialog } from './schedules-screen'
+import { CreateScheduleDialog, disableReasonLabel } from './schedules-screen'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
@@ -1412,7 +1412,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
                   ) : null}
                   {!s.enabled ? (
                     <span className="text-xs text-muted-foreground">
-                      Disabled{s.disableReason ? ` (${s.disableReason})` : ''}
+                      {disableReasonLabel(s)}
                     </span>
                   ) : null}
                 </div>

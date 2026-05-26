@@ -171,6 +171,13 @@ export class SchedulerService {
         linkedWorkRequestId: requestId,
         nextRunAt
       })
+      // One-shot schedules (no cron) have no future fire after this one. Close
+      // the lifecycle so they leave the active list instead of sitting forever
+      // with nextRunAt=null.
+      if (!schedule.cron && !nextRunAt) {
+        this.database.markAgentScheduleCompleted(schedule.id)
+        this.disposeJob(schedule.id)
+      }
       this.startRequestRuns(requestId)
       this.notify({ kind: 'fired', scheduleId: schedule.id, runId, requestId })
       return { runId, requestId }
