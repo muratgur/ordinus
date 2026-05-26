@@ -62,6 +62,8 @@ export const ConnectorAuthMethodSchema = z.enum(['oauth', 'api-key', 'none'])
 
 export const AgentConnectorsSchema = z.array(ConnectorIdSchema).default([])
 
+export const AgentExtraDirectoriesSchema = z.array(z.string().min(1)).default([])
+
 export const ConnectorSummarySchema = z.object({
   id: ConnectorIdSchema,
   label: z.string().min(1),
@@ -134,6 +136,7 @@ export const AgentSchema = z.object({
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
   connectors: AgentConnectorsSchema,
+  extraDirectories: AgentExtraDirectoriesSchema,
   enabled: z.boolean(),
   avatar: z.string().default(''),
   lastUsedAt: z.string().nullable().default(null),
@@ -191,11 +194,60 @@ export const AgentDraftSchema = z.object({
   model: z.string().min(1),
   sandbox: AgentSandboxSchema,
   connectors: AgentConnectorsSchema,
+  extraDirectories: AgentExtraDirectoriesSchema,
   avatar: z.string().default(''),
   enabled: z.boolean().default(true)
 })
 
 export const AgentCreateInputSchema = AgentDraftSchema
+
+export const AgentExtraDirectoryAddInputSchema = z.object({
+  agentId: z.string().min(1)
+})
+
+export const AgentExtraDirectoryRemoveInputSchema = z.object({
+  agentId: z.string().min(1),
+  path: z.string().min(1)
+})
+
+export const AgentExtraDirectoryListInputSchema = z.object({
+  agentId: z.string().min(1)
+})
+
+export const AgentExtraDirectoryErrorCodeSchema = z.enum([
+  'empty',
+  'not_absolute',
+  'null_bytes',
+  'path_contains_comma',
+  'not_found',
+  'not_directory',
+  'broken_symlink',
+  'workspace_descendant',
+  'workspace_ancestor',
+  'workspace_not_configured',
+  'denylisted',
+  'duplicate',
+  'cancelled'
+])
+
+export const AgentExtraDirectoryEntrySchema = z.object({
+  path: z.string().min(1),
+  exists: z.boolean()
+})
+
+export const AgentExtraDirectoryListSchema = z.object({
+  agentId: z.string().min(1),
+  entries: z.array(AgentExtraDirectoryEntrySchema)
+})
+
+export const AgentExtraDirectoryAddResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), list: AgentExtraDirectoryListSchema }),
+  z.object({
+    ok: z.literal(false),
+    code: AgentExtraDirectoryErrorCodeSchema,
+    message: z.string()
+  })
+])
 
 export const AgentUpdateInstructionsInputSchema = z.object({
   id: z.string().min(1),
@@ -1193,17 +1245,16 @@ export const AgentScheduleCreateInputSchema = z
     message: 'Schedule must provide a cron expression or a runAt timestamp.'
   })
 
-export const AgentScheduleUpdateInputSchema = z
-  .object({
-    id: z.string().min(1),
-    name: z.string().trim().min(1).max(120).optional(),
-    prompt: z.string().trim().min(1).max(16_000).optional(),
-    cron: z.string().trim().min(1).max(200).nullable().optional(),
-    runAt: z.string().trim().min(1).max(40).nullable().optional(),
-    timezone: z.string().trim().min(1).max(80).optional(),
-    linkedWorkRequestId: z.string().min(1).nullable().optional(),
-    enabled: z.boolean().optional()
-  })
+export const AgentScheduleUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(120).optional(),
+  prompt: z.string().trim().min(1).max(16_000).optional(),
+  cron: z.string().trim().min(1).max(200).nullable().optional(),
+  runAt: z.string().trim().min(1).max(40).nullable().optional(),
+  timezone: z.string().trim().min(1).max(80).optional(),
+  linkedWorkRequestId: z.string().min(1).nullable().optional(),
+  enabled: z.boolean().optional()
+})
 
 export const AgentScheduleListInputSchema = z.object({
   agentId: z.string().min(1).optional(),
@@ -1264,6 +1315,13 @@ export type AgentUpdateInstructionsInput = z.infer<typeof AgentUpdateInstruction
 export type AgentUpdateSettingsInput = z.infer<typeof AgentUpdateSettingsInputSchema>
 export type AgentDeleteInput = z.infer<typeof AgentDeleteInputSchema>
 export type AgentDeleteResult = z.infer<typeof AgentDeleteResultSchema>
+export type AgentExtraDirectoryAddInput = z.infer<typeof AgentExtraDirectoryAddInputSchema>
+export type AgentExtraDirectoryRemoveInput = z.infer<typeof AgentExtraDirectoryRemoveInputSchema>
+export type AgentExtraDirectoryListInput = z.infer<typeof AgentExtraDirectoryListInputSchema>
+export type AgentExtraDirectoryEntry = z.infer<typeof AgentExtraDirectoryEntrySchema>
+export type AgentExtraDirectoryList = z.infer<typeof AgentExtraDirectoryListSchema>
+export type AgentExtraDirectoryAddResult = z.infer<typeof AgentExtraDirectoryAddResultSchema>
+export type AgentExtraDirectoryErrorCode = z.infer<typeof AgentExtraDirectoryErrorCodeSchema>
 export type AgentSkill = z.infer<typeof AgentSkillSchema>
 export type AgentSkillDetail = z.infer<typeof AgentSkillDetailSchema>
 export type AgentSkillsListInput = z.infer<typeof AgentSkillsListInputSchema>

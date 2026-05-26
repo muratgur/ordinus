@@ -32,6 +32,12 @@ import {
   AgentSkillsListInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
+  AgentExtraDirectoryAddInputSchema,
+  AgentExtraDirectoryRemoveInputSchema,
+  AgentExtraDirectoryListInputSchema,
+  AgentExtraDirectoryListSchema,
+  AgentExtraDirectoryAddResultSchema,
+  type AgentExtraDirectoryErrorCode,
   AgentCreateInputSchema,
   AppInfoSchema,
   ConnectorActionInputSchema,
@@ -132,6 +138,10 @@ import {
   resolveWorkspaceRelativePath,
   type WorkspaceWorkingFolderContext
 } from '../workspace/path-policy'
+import {
+  validateExtraDirectoryPath,
+  pathExistsAsDirectory
+} from '../workspace/extra-directory-policy'
 
 const workRequestConcurrencyLimit = 3
 
@@ -297,6 +307,70 @@ export function registerIpcHandlers(
     deleteAgentHome(result.deletedAgentId)
     deleteLogRefs(result.deletedLogRefs)
     return result
+  })
+  const buildExtraDirectoryList = (agentId: string, paths: string[]): unknown =>
+    AgentExtraDirectoryListSchema.parse({
+      agentId,
+      entries: paths.map((path) => ({ path, exists: pathExistsAsDirectory(path) }))
+    })
+
+  const extraDirectoryFailure = (
+    code: AgentExtraDirectoryErrorCode,
+    message: string
+  ): unknown => AgentExtraDirectoryAddResultSchema.parse({ ok: false, code, message })
+
+  ipcMain.handle(ipcChannels.agentsAddExtraDirectory, async (event, payload) => {
+    const input = AgentExtraDirectoryAddInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+
+    const workspace = database.getWorkspaceConfig()
+    if (!workspace) {
+      return extraDirectoryFailure(
+        'workspace_not_configured',
+        'Workspace is not configured.'
+      )
+    }
+
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const options: OpenDialogOptions = {
+      title: 'Choose an extra directory for this agent',
+      properties: ['openDirectory']
+    }
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options)
+
+    if (result.canceled || !result.filePaths[0]) {
+      return extraDirectoryFailure('cancelled', 'Selection was cancelled.')
+    }
+
+    const validation = validateExtraDirectoryPath(result.filePaths[0], workspace.workspaceRoot)
+    if (!validation.ok) {
+      return extraDirectoryFailure(validation.code, validation.message)
+    }
+
+    const agent = database.getAgent(input.agentId)
+    if (agent.extraDirectories.includes(validation.resolvedPath)) {
+      return extraDirectoryFailure('duplicate', 'This directory is already in the list.')
+    }
+
+    const updated = database.addAgentExtraDirectory(input.agentId, validation.resolvedPath)
+    return AgentExtraDirectoryAddResultSchema.parse({
+      ok: true,
+      list: buildExtraDirectoryList(input.agentId, updated.extraDirectories)
+    })
+  })
+  ipcMain.handle(ipcChannels.agentsRemoveExtraDirectory, (_event, payload) => {
+    const input = AgentExtraDirectoryRemoveInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    const updated = database.removeAgentExtraDirectory(input.agentId, input.path)
+    return buildExtraDirectoryList(input.agentId, updated.extraDirectories)
+  })
+  ipcMain.handle(ipcChannels.agentsListExtraDirectories, (_event, payload) => {
+    const input = AgentExtraDirectoryListInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    const agent = database.getAgent(input.agentId)
+    return buildExtraDirectoryList(input.agentId, agent.extraDirectories)
   })
   ipcMain.handle(ipcChannels.agentsListSkills, (_event, payload) => {
     const input = AgentSkillsListInputSchema.parse(payload)
@@ -1217,6 +1291,7 @@ function startPreparedWorkRun(
       workspaceRoot: workspaceContext.workspaceRoot,
       workingRoot: workspaceContext.workingRoot,
       agentHomePath: getAgentHome(prepared.agent.id),
+      extraDirectories: prepared.agent.extraDirectories,
       agentName: prepared.agent.name,
       agentRole: prepared.agent.role,
       instructions: composeInstructionsWithMemory(
@@ -1517,6 +1592,7 @@ function startPreparedConversationTurns(
         workspaceRoot: workspace.workspaceRoot,
         workingRoot: conversation.workingRoot,
         agentHomePath: getAgentHome(agentTurn.agent.id),
+        extraDirectories: agentTurn.agent.extraDirectories,
         agentName: agentTurn.agent.name,
         agentRole: agentTurn.agent.role,
         instructions: composeInstructionsWithMemory(

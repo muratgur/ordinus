@@ -9,6 +9,11 @@ import type {
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentArchiveInput,
+  AgentExtraDirectoryAddInput,
+  AgentExtraDirectoryAddResult,
+  AgentExtraDirectoryRemoveInput,
+  AgentExtraDirectoryListInput,
+  AgentExtraDirectoryList,
   AgentSchedule,
   AgentScheduleCreateInput,
   AgentScheduleDeleteInput,
@@ -162,7 +167,19 @@ const ordinus = {
     unarchive: async (input: AgentArchiveInput): Promise<Agent> =>
       ipcRenderer.invoke(ipcChannels.agentsUnarchive, input),
     listReflection: async (): Promise<AgentReflectionSummary> =>
-      ipcRenderer.invoke(ipcChannels.agentsListReflection)
+      ipcRenderer.invoke(ipcChannels.agentsListReflection),
+    addExtraDirectory: async (
+      input: AgentExtraDirectoryAddInput
+    ): Promise<AgentExtraDirectoryAddResult> =>
+      ipcRenderer.invoke(ipcChannels.agentsAddExtraDirectory, input),
+    removeExtraDirectory: async (
+      input: AgentExtraDirectoryRemoveInput
+    ): Promise<AgentExtraDirectoryList> =>
+      ipcRenderer.invoke(ipcChannels.agentsRemoveExtraDirectory, input),
+    listExtraDirectories: async (
+      input: AgentExtraDirectoryListInput
+    ): Promise<AgentExtraDirectoryList> =>
+      ipcRenderer.invoke(ipcChannels.agentsListExtraDirectories, input)
   },
   conversations: {
     list: async (): Promise<ConversationListItem[]> =>

@@ -772,6 +772,41 @@ export class OrdinusDatabase {
     return this.getAgent(parsed.id)
   }
 
+  addAgentExtraDirectory(agentId: string, resolvedPath: string): Agent {
+    const agent = this.getAgent(agentId)
+    if (agent.extraDirectories.includes(resolvedPath)) {
+      return agent
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(agents)
+      .set({
+        extraDirectories: [...agent.extraDirectories, resolvedPath],
+        updatedAt: now
+      })
+      .where(eq(agents.id, agentId))
+      .run()
+    return this.getAgent(agentId)
+  }
+
+  removeAgentExtraDirectory(agentId: string, path: string): Agent {
+    const agent = this.getAgent(agentId)
+    const next = agent.extraDirectories.filter((entry) => entry !== path)
+    if (next.length === agent.extraDirectories.length) {
+      return agent
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(agents)
+      .set({
+        extraDirectories: next,
+        updatedAt: now
+      })
+      .where(eq(agents.id, agentId))
+      .run()
+    return this.getAgent(agentId)
+  }
+
   listPendingPlans(): PendingPlan[] {
     return this.db
       .select()
@@ -1543,11 +1578,7 @@ export class OrdinusDatabase {
 
   getAgentSchedule(input: AgentScheduleGetInput): AgentSchedule {
     const parsed = AgentScheduleGetInputSchema.parse(input)
-    const row = this.db
-      .select()
-      .from(agentSchedules)
-      .where(eq(agentSchedules.id, parsed.id))
-      .get()
+    const row = this.db.select().from(agentSchedules).where(eq(agentSchedules.id, parsed.id)).get()
     if (!row) throw new Error('Schedule was not found.')
     return AgentScheduleSchema.parse(row)
   }

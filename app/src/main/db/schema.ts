@@ -28,6 +28,10 @@ export const agents = sqliteTable('agents', {
   model: text('model').notNull(),
   sandbox: text('sandbox').notNull(),
   connectors: text('connectors', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  extraDirectories: text('extra_directories', { mode: 'json' })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
   avatar: text('avatar').notNull().default(''),
   lastUsedAt: text('last_used_at'),
