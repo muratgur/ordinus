@@ -16,6 +16,13 @@ import {
   AgentMemoryRuleSchema,
   AgentMemoryUpdateInputSchema,
   AgentReflectionSummarySchema,
+  AgentScheduleCreateInputSchema,
+  AgentScheduleDeleteInputSchema,
+  AgentScheduleGetInputSchema,
+  AgentScheduleListInputSchema,
+  AgentScheduleSchema,
+  AgentScheduleSetEnabledInputSchema,
+  AgentScheduleUpdateInputSchema,
   AgentSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
@@ -73,6 +80,13 @@ import {
   type AgentMemoryRule,
   type AgentMemoryUpdateInput,
   type AgentReflectionSummary,
+  type AgentSchedule,
+  type AgentScheduleCreateInput,
+  type AgentScheduleDeleteInput,
+  type AgentScheduleGetInput,
+  type AgentScheduleListInput,
+  type AgentScheduleSetEnabledInput,
+  type AgentScheduleUpdateInput,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
   type AgentTurnOutcome,
@@ -126,6 +140,7 @@ import { getSystemPaths } from '../paths'
 import { databaseSchemaVersion, getMigrationsFolder } from './migrations'
 import {
   agentMemory,
+  agentSchedules,
   agents,
   appMeta,
   conversationInputRequests,
@@ -712,6 +727,7 @@ export class OrdinusDatabase {
         tx.delete(conversations).where(inArray(conversations.id, emptyConversationIds)).run()
       }
 
+      tx.delete(agentSchedules).where(eq(agentSchedules.agentId, agent.id)).run()
       tx.delete(agentMemory).where(eq(agentMemory.agentId, agent.id)).run()
       tx.delete(agents).where(eq(agents.id, agent.id)).run()
 
@@ -1489,6 +1505,7 @@ export class OrdinusDatabase {
       .set({ archivedAt: now, updatedAt: now })
       .where(eq(workRequests.id, requestId))
       .run()
+    this.disableAgentSchedulesForArchivedRequest(requestId)
     return this.getWorkRequest(requestId)
   }
 
@@ -1504,6 +1521,308 @@ export class OrdinusDatabase {
       .where(eq(workRequests.id, requestId))
       .run()
     return this.getWorkRequest(requestId)
+  }
+
+  listAgentSchedules(input: AgentScheduleListInput = {}): AgentSchedule[] {
+    const parsed = AgentScheduleListInputSchema.parse(input)
+    const conditions = [] as Parameters<typeof and>[number][]
+    if (parsed.agentId) conditions.push(eq(agentSchedules.agentId, parsed.agentId))
+    if (typeof parsed.enabled === 'boolean')
+      conditions.push(eq(agentSchedules.enabled, parsed.enabled))
+    if (parsed.linkedWorkRequestId)
+      conditions.push(eq(agentSchedules.linkedWorkRequestId, parsed.linkedWorkRequestId))
+
+    const rows = this.db
+      .select()
+      .from(agentSchedules)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(asc(agentSchedules.nextRunAt), desc(agentSchedules.createdAt))
+      .all()
+    return rows.map((row) => AgentScheduleSchema.parse(row))
+  }
+
+  getAgentSchedule(input: AgentScheduleGetInput): AgentSchedule {
+    const parsed = AgentScheduleGetInputSchema.parse(input)
+    const row = this.db
+      .select()
+      .from(agentSchedules)
+      .where(eq(agentSchedules.id, parsed.id))
+      .get()
+    if (!row) throw new Error('Schedule was not found.')
+    return AgentScheduleSchema.parse(row)
+  }
+
+  createAgentSchedule(
+    input: AgentScheduleCreateInput & { nextRunAt: string | null }
+  ): AgentSchedule {
+    const parsed = AgentScheduleCreateInputSchema.parse(input)
+    const agent = this.getAgent(parsed.agentId)
+    if (agent.archivedAt) throw new Error('Cannot schedule work for an archived agent.')
+
+    if (parsed.linkedWorkRequestId) {
+      const request = this.getWorkRequest(parsed.linkedWorkRequestId)
+      if (request.archivedAt) {
+        throw new Error('Cannot link a schedule to an archived Work Request.')
+      }
+    }
+
+    const id = `sch_${randomUUID()}`
+    const now = new Date().toISOString()
+    this.db
+      .insert(agentSchedules)
+      .values({
+        id,
+        agentId: parsed.agentId,
+        name: parsed.name,
+        prompt: parsed.prompt,
+        cron: parsed.cron ?? null,
+        runAt: parsed.runAt ?? null,
+        timezone: parsed.timezone,
+        linkedWorkRequestId: parsed.linkedWorkRequestId ?? null,
+        enabled: parsed.enabled ?? true,
+        lastRunAt: null,
+        nextRunAt: input.nextRunAt,
+        lastRunId: null,
+        lastRunStatus: null,
+        consecutiveFailures: 0,
+        disableReason: null,
+        createdAt: now,
+        updatedAt: now
+      })
+      .run()
+    return this.getAgentSchedule({ id })
+  }
+
+  updateAgentSchedule(
+    input: AgentScheduleUpdateInput & { nextRunAt?: string | null }
+  ): AgentSchedule {
+    const parsed = AgentScheduleUpdateInputSchema.parse(input)
+    const current = this.getAgentSchedule({ id: parsed.id })
+    const now = new Date().toISOString()
+
+    if (parsed.linkedWorkRequestId) {
+      const request = this.getWorkRequest(parsed.linkedWorkRequestId)
+      if (request.archivedAt) {
+        throw new Error('Cannot link a schedule to an archived Work Request.')
+      }
+    }
+
+    const patch: Partial<typeof agentSchedules.$inferInsert> = { updatedAt: now }
+    if (parsed.name !== undefined) patch.name = parsed.name
+    if (parsed.prompt !== undefined) patch.prompt = parsed.prompt
+    if (parsed.cron !== undefined) patch.cron = parsed.cron
+    if (parsed.runAt !== undefined) patch.runAt = parsed.runAt
+    if (parsed.timezone !== undefined) patch.timezone = parsed.timezone
+    if (parsed.linkedWorkRequestId !== undefined)
+      patch.linkedWorkRequestId = parsed.linkedWorkRequestId
+    if (parsed.enabled !== undefined) {
+      patch.enabled = parsed.enabled
+      if (parsed.enabled) {
+        patch.disableReason = null
+        patch.consecutiveFailures = 0
+      }
+    }
+    if (input.nextRunAt !== undefined) patch.nextRunAt = input.nextRunAt
+
+    this.db.update(agentSchedules).set(patch).where(eq(agentSchedules.id, current.id)).run()
+    return this.getAgentSchedule({ id: current.id })
+  }
+
+  setAgentScheduleEnabled(input: AgentScheduleSetEnabledInput): AgentSchedule {
+    const parsed = AgentScheduleSetEnabledInputSchema.parse(input)
+    return this.updateAgentSchedule({ id: parsed.id, enabled: parsed.enabled })
+  }
+
+  deleteAgentSchedule(input: AgentScheduleDeleteInput): { deletedScheduleId: string } {
+    const parsed = AgentScheduleDeleteInputSchema.parse(input)
+    const schedule = this.getAgentSchedule({ id: parsed.id })
+    this.db.delete(agentSchedules).where(eq(agentSchedules.id, schedule.id)).run()
+    return { deletedScheduleId: schedule.id }
+  }
+
+  recordAgentScheduleFire(input: {
+    id: string
+    firedAt: string
+    runId: string | null
+    linkedWorkRequestId: string | null
+    nextRunAt: string | null
+  }): void {
+    const now = new Date().toISOString()
+    const patch: Partial<typeof agentSchedules.$inferInsert> = {
+      lastRunAt: input.firedAt,
+      lastRunId: input.runId,
+      nextRunAt: input.nextRunAt,
+      updatedAt: now
+    }
+    if (input.linkedWorkRequestId) patch.linkedWorkRequestId = input.linkedWorkRequestId
+    this.db.update(agentSchedules).set(patch).where(eq(agentSchedules.id, input.id)).run()
+  }
+
+  recordAgentScheduleOutcome(input: {
+    id: string
+    runId: string
+    success: boolean
+  }): AgentSchedule {
+    const schedule = this.getAgentSchedule({ id: input.id })
+    if (schedule.lastRunId !== input.runId) {
+      return schedule
+    }
+    const now = new Date().toISOString()
+    const patch: Partial<typeof agentSchedules.$inferInsert> = { updatedAt: now }
+    if (input.success) {
+      patch.consecutiveFailures = 0
+      patch.lastRunStatus = 'succeeded'
+    } else {
+      const failures = schedule.consecutiveFailures + 1
+      patch.consecutiveFailures = failures
+      patch.lastRunStatus = 'failed'
+      if (failures >= 5) {
+        patch.enabled = false
+        patch.disableReason = 'failures'
+        patch.nextRunAt = null
+      }
+    }
+    this.db.update(agentSchedules).set(patch).where(eq(agentSchedules.id, schedule.id)).run()
+    return this.getAgentSchedule({ id: schedule.id })
+  }
+
+  createScheduleFireRun(scheduleId: string): { runId: string; requestId: string } {
+    const schedule = this.getAgentSchedule({ id: scheduleId })
+    const agent = this.requireActiveAgent(schedule.agentId)
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before firing a schedule.')
+    }
+
+    let request: WorkRequest | null = null
+    if (schedule.linkedWorkRequestId) {
+      request = this.getWorkRequest(schedule.linkedWorkRequestId)
+      if (request.archivedAt) {
+        throw new Error('Linked Work Request is archived.')
+      }
+    }
+
+    const now = new Date().toISOString()
+    const runId = createWorkRunId()
+    const requestId = request?.id ?? createWorkRequestId()
+    const workingRoot = request?.workingRoot ?? createWorkboardWorkingRoot(schedule.name, requestId)
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
+
+    this.db.transaction((tx) => {
+      if (!request) {
+        tx.insert(workRequests)
+          .values({
+            id: requestId,
+            title: schedule.name,
+            originalRequest: schedule.prompt,
+            summary: '',
+            workingRoot,
+            status: 'active',
+            createdAt: now,
+            updatedAt: now,
+            startedAt: null,
+            completedAt: null
+          })
+          .run()
+      }
+
+      tx.insert(workRuns)
+        .values({
+          id: runId,
+          rootRunId: runId,
+          parentRunId: null,
+          assignedAgentId: agent.id,
+          assignedAgentName: agent.name,
+          assignedAgentRole: agent.role,
+          createdByType: 'system',
+          createdByAgentId: null,
+          sourceType: workRequestSourceType,
+          sourceId: requestId,
+          sourceItemId: null,
+          title: schedule.name,
+          instruction: schedule.prompt,
+          status: 'queued',
+          priority: 0,
+          providerId: agent.providerId,
+          model: agent.model,
+          providerSessionRef: null,
+          workingRoot,
+          sandbox: agent.sandbox,
+          expectedOutput: '',
+          resultSummary: '',
+          resultArtifactRef: '',
+          artifactRefs: JSON.stringify([]),
+          changedFiles: JSON.stringify([]),
+          error: '',
+          createdAt: now,
+          updatedAt: now,
+          startedAt: null,
+          completedAt: null
+        })
+        .run()
+
+      tx.insert(workRunEvents)
+        .values({
+          id: createWorkRunEventId(),
+          runId,
+          sequence: 1,
+          kind: 'created',
+          payload: JSON.stringify({
+            workRequestId: requestId,
+            assignedAgentId: agent.id,
+            scheduleId: schedule.id
+          }),
+          createdAt: now
+        })
+        .run()
+      tx.insert(workRunEvents)
+        .values({
+          id: createWorkRunEventId(),
+          runId,
+          sequence: 2,
+          kind: 'queued',
+          payload: JSON.stringify({}),
+          createdAt: now
+        })
+        .run()
+    })
+
+    this.ensureWorkRequestAgentSessionsForRuns([runId])
+    return { runId, requestId }
+  }
+
+  findScheduleByRunId(runId: string): AgentSchedule | null {
+    const row = this.db
+      .select()
+      .from(agentSchedules)
+      .where(eq(agentSchedules.lastRunId, runId))
+      .get()
+    return row ? AgentScheduleSchema.parse(row) : null
+  }
+
+  disableAgentSchedulesForArchivedRequest(requestId: string): string[] {
+    const rows = this.db
+      .select({ id: agentSchedules.id })
+      .from(agentSchedules)
+      .where(
+        and(eq(agentSchedules.linkedWorkRequestId, requestId), eq(agentSchedules.enabled, true))
+      )
+      .all()
+    if (rows.length === 0) return []
+    const now = new Date().toISOString()
+    this.db
+      .update(agentSchedules)
+      .set({
+        enabled: false,
+        disableReason: 'wr_archived',
+        nextRunAt: null,
+        updatedAt: now
+      })
+      .where(
+        and(eq(agentSchedules.linkedWorkRequestId, requestId), eq(agentSchedules.enabled, true))
+      )
+      .run()
+    return rows.map((row) => row.id)
   }
 
   getWorkboardData(): WorkboardData {

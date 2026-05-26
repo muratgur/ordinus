@@ -9,6 +9,15 @@ import type {
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentArchiveInput,
+  AgentSchedule,
+  AgentScheduleCreateInput,
+  AgentScheduleDeleteInput,
+  AgentScheduleFireNowInput,
+  AgentScheduleGetInput,
+  AgentScheduleListInput,
+  AgentScheduleSetEnabledInput,
+  AgentScheduleUpdateInput,
+  SchedulerEvent,
   AgentMemoryAddInput,
   AgentMemoryDeactivateInput,
   AgentMemoryDeactivateResult,
@@ -273,6 +282,30 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.filesRead, input),
     write: async (input: FileWriteInput): Promise<FileWriteResult> =>
       ipcRenderer.invoke(ipcChannels.filesWrite, input)
+  },
+  schedules: {
+    list: async (input?: AgentScheduleListInput): Promise<AgentSchedule[]> =>
+      ipcRenderer.invoke(ipcChannels.schedulesList, input ?? {}),
+    get: async (input: AgentScheduleGetInput): Promise<AgentSchedule> =>
+      ipcRenderer.invoke(ipcChannels.schedulesGet, input),
+    create: async (input: AgentScheduleCreateInput): Promise<AgentSchedule> =>
+      ipcRenderer.invoke(ipcChannels.schedulesCreate, input),
+    update: async (input: AgentScheduleUpdateInput): Promise<AgentSchedule> =>
+      ipcRenderer.invoke(ipcChannels.schedulesUpdate, input),
+    delete: async (input: AgentScheduleDeleteInput): Promise<{ deletedScheduleId: string }> =>
+      ipcRenderer.invoke(ipcChannels.schedulesDelete, input),
+    setEnabled: async (input: AgentScheduleSetEnabledInput): Promise<AgentSchedule> =>
+      ipcRenderer.invoke(ipcChannels.schedulesSetEnabled, input),
+    fireNow: async (
+      input: AgentScheduleFireNowInput
+    ): Promise<{ runId: string; requestId: string }> =>
+      ipcRenderer.invoke(ipcChannels.schedulesFireNow, input),
+    onChanged: (callback: (event?: SchedulerEvent) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload?: SchedulerEvent): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.schedulesChanged, listener)
+      return () => ipcRenderer.removeListener(ipcChannels.schedulesChanged, listener)
+    }
   }
 }
 

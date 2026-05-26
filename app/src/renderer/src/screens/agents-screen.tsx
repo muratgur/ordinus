@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useId } from 'react'
 import {
   AlertTriangle,
   Bot,
+  CalendarClock,
   FileText,
   Info,
   Loader2,
@@ -40,14 +41,17 @@ import { AgentReflectionDialog } from '@renderer/components/agent-reflection-dia
 import type {
   Agent,
   AgentSandbox,
+  AgentSchedule,
   AgentSkill,
   ConnectorSummary,
-  ProviderId
+  ProviderId,
+  WorkRequest
 } from '@shared/contracts'
+import { CreateScheduleDialog } from './schedules-screen'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
-type AgentSection = 'instructions' | 'skills' | 'settings'
+type AgentSection = 'instructions' | 'skills' | 'schedules' | 'settings'
 type SettingsDraft = {
   name: string
   role: string
@@ -86,6 +90,7 @@ const sandboxOptions: Array<{
 const sections: Array<{ id: AgentSection; label: string; icon: typeof Bot }> = [
   { id: 'instructions', label: 'Instructions', icon: FileText },
   { id: 'skills', label: 'Skills', icon: Sparkles },
+  { id: 'schedules', label: 'Schedules', icon: CalendarClock },
   { id: 'settings', label: 'Settings', icon: Settings2 }
 ]
 
@@ -256,6 +261,7 @@ export function AgentsScreen(): React.JSX.Element {
 
       {selectedAgent ? (
         <DeleteAgentDialog
+          agentId={selectedAgent.id}
           agentName={selectedAgent.name}
           deleting={deleting}
           open={deleteOpen}
@@ -440,6 +446,10 @@ function AgentDetail({
 
   if (activeSection === 'skills') {
     return <SkillsPanel key={agent.id} agent={agent} />
+  }
+
+  if (activeSection === 'schedules') {
+    return <AgentSchedulesPanel key={agent.id} agent={agent} />
   }
 
   if (activeSection === 'settings') {
@@ -1305,19 +1315,182 @@ function SettingsPanel({
   )
 }
 
+function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
+  const [schedules, setSchedules] = useState<AgentSchedule[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [requests, setRequests] = useState<WorkRequest[]>([])
+  const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [busyId, setBusyId] = useState('')
+
+  const load = useCallback(
+    async (quiet = false): Promise<void> => {
+      if (!quiet) setLoading(true)
+      try {
+        const [s, a, w] = await Promise.all([
+          window.ordinus.schedules.list({ agentId: agent.id }),
+          window.ordinus.agents.list(),
+          window.ordinus.workboard.list()
+        ])
+        setSchedules(s)
+        setAgents(a)
+        setRequests(w.requests)
+      } finally {
+        if (!quiet) setLoading(false)
+      }
+    },
+    [agent.id]
+  )
+
+  useEffect(() => {
+    void load()
+    const off = window.ordinus.schedules.onChanged(() => void load(true))
+    return off
+  }, [load])
+
+  async function toggle(s: AgentSchedule): Promise<void> {
+    setBusyId(s.id)
+    try {
+      await window.ordinus.schedules.setEnabled({ id: s.id, enabled: !s.enabled })
+      await load(true)
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function fire(s: AgentSchedule): Promise<void> {
+    setBusyId(s.id)
+    try {
+      await window.ordinus.schedules.fireNow({ id: s.id })
+      await load(true)
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function remove(s: AgentSchedule): Promise<void> {
+    if (!window.confirm(`Delete schedule "${s.name}"?`)) return
+    setBusyId(s.id)
+    try {
+      await window.ordinus.schedules.delete({ id: s.id })
+      await load(true)
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  return (
+    <div className="space-y-3 p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold leading-tight">Schedules</h2>
+          <p className="text-sm text-muted-foreground">Run this agent on a recurring schedule.</p>
+        </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!agent.enabled}>
+          <Plus className="size-4" /> New schedule
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-muted-foreground">Loading…</div>
+      ) : schedules.length === 0 ? (
+        <div className="rounded-md border bg-accent/50 p-4 text-sm text-muted-foreground">
+          No schedules for {agent.name} yet.
+        </div>
+      ) : (
+        <div className="divide-y rounded-md border">
+          {schedules.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+            >
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-medium">{s.name}</span>
+                  {s.lastRunStatus === 'failed' ? (
+                    <span className="text-xs text-amber-600">Last failed</span>
+                  ) : null}
+                  {!s.enabled ? (
+                    <span className="text-xs text-muted-foreground">
+                      Disabled{s.disableReason ? ` (${s.disableReason})` : ''}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {s.cron ? `Cron: ${s.cron}` : s.runAt ? `Once: ${s.runAt}` : ''} · Next:{' '}
+                  {s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : '—'}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busyId === s.id}
+                  onClick={() => void toggle(s)}
+                >
+                  {s.enabled ? 'Disable' : 'Enable'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busyId === s.id}
+                  onClick={() => void fire(s)}
+                >
+                  Run now
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={busyId === s.id}
+                  onClick={() => void remove(s)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <CreateScheduleDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        agents={agents}
+        requests={requests}
+        defaultAgentId={agent.id}
+        onCreated={() => {
+          setCreateOpen(false)
+          void load(true)
+        }}
+      />
+    </div>
+  )
+}
+
 function DeleteAgentDialog({
+  agentId,
   agentName,
   deleting,
   open,
   onDelete,
   onOpenChange
 }: {
+  agentId: string
   agentName: string
   deleting: boolean
   open: boolean
   onDelete: () => void
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
+  const [scheduleCount, setScheduleCount] = useState(0)
+  useEffect(() => {
+    if (!open) return
+    void window.ordinus.schedules
+      .list({ agentId })
+      .then((list) => setScheduleCount(list.length))
+      .catch(() => setScheduleCount(0))
+  }, [open, agentId])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -1327,8 +1500,11 @@ function DeleteAgentDialog({
             Delete agent
           </DialogTitle>
           <DialogDescription>
-            This removes {agentName}, related conversations, local files, and app logs. This cannot
-            be undone.
+            This removes {agentName}, related conversations, local files, and app logs.
+            {scheduleCount > 0
+              ? ` ${scheduleCount} schedule${scheduleCount === 1 ? '' : 's'} attached to this agent will also be deleted.`
+              : ''}{' '}
+            This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

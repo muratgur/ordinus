@@ -276,6 +276,37 @@ export const observedRuns = sqliteTable(
   })
 )
 
+export const agentSchedules = sqliteTable(
+  'agent_schedules',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    name: text('name').notNull(),
+    prompt: text('prompt').notNull(),
+    cron: text('cron'),
+    runAt: text('run_at'),
+    timezone: text('timezone').notNull(),
+    linkedWorkRequestId: text('linked_work_request_id'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    lastRunAt: text('last_run_at'),
+    nextRunAt: text('next_run_at'),
+    lastRunId: text('last_run_id'),
+    lastRunStatus: text('last_run_status'),
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    disableReason: text('disable_reason'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    agentIdx: index('agent_schedules_agent_idx').on(table.agentId),
+    linkedRequestIdx: index('agent_schedules_linked_request_idx').on(table.linkedWorkRequestId),
+    enabledNextRunIdx: index('agent_schedules_enabled_next_run_idx').on(
+      table.enabled,
+      table.nextRunAt
+    )
+  })
+)
+
 export const observedRunEvents = sqliteTable(
   'observed_run_events',
   {

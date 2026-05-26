@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Moon, RefreshCcw, Settings, Sun } from 'lucide-react'
 import type { DbStatus, SetupStatus } from '@shared/contracts'
 import { appNavigation } from './routes'
 import { appRoutePaths } from './routes'
 import { Toaster } from '@renderer/components/ui/sonner'
 import { cn } from '@renderer/lib/utils'
+import { notify } from '@renderer/lib/notifications'
 
 type AppShellProps = {
   dbStatus: DbStatus | null
@@ -25,11 +26,54 @@ export function AppShell({
   onRefreshStatus
 }: AppShellProps): React.JSX.Element {
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme())
+  const navigate = useNavigate()
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
     window.localStorage.setItem('ordinus-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    const off = window.ordinus.schedules.onChanged((event) => {
+      if (!event) return
+      if (event.kind === 'auto_disabled') {
+        void window.ordinus.schedules
+          .get({ id: event.scheduleId })
+          .then((schedule) => {
+            const reason =
+              event.reason === 'failures'
+                ? `failed ${schedule.consecutiveFailures} times in a row`
+                : 'its linked Work Request was archived'
+            notify.attention({
+              id: `schedule-disabled-${schedule.id}`,
+              title: `Schedule disabled: ${schedule.name}`,
+              description: `Auto-disabled because ${reason}.`,
+              action: {
+                label: 'View',
+                onClick: () => navigate(appRoutePaths.schedules)
+              }
+            })
+          })
+          .catch(() => {
+            notify.attention({
+              id: `schedule-disabled-${event.scheduleId}`,
+              title: 'A schedule was auto-disabled',
+              action: {
+                label: 'View',
+                onClick: () => navigate(appRoutePaths.schedules)
+              }
+            })
+          })
+      } else if (event.kind === 'fire_failed') {
+        notify.error({
+          id: `schedule-fire-failed-${event.scheduleId}`,
+          title: 'Schedule failed to fire',
+          description: event.error
+        })
+      }
+    })
+    return off
+  }, [navigate])
 
   function toggleTheme(): void {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'))

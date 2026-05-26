@@ -9,6 +9,15 @@ import type {
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentArchiveInput,
+  AgentSchedule,
+  AgentScheduleCreateInput,
+  AgentScheduleDeleteInput,
+  AgentScheduleFireNowInput,
+  AgentScheduleGetInput,
+  AgentScheduleListInput,
+  AgentScheduleSetEnabledInput,
+  AgentScheduleUpdateInput,
+  SchedulerEvent,
   AgentMemoryAddInput,
   AgentMemoryDeactivateInput,
   AgentMemoryDeactivateResult,
@@ -182,6 +191,16 @@ export type OrdinusApi = {
   files: {
     read: (input: FileReadInput) => Promise<FileContent>
     write: (input: FileWriteInput) => Promise<FileWriteResult>
+  }
+  schedules: {
+    list: (input?: AgentScheduleListInput) => Promise<AgentSchedule[]>
+    get: (input: AgentScheduleGetInput) => Promise<AgentSchedule>
+    create: (input: AgentScheduleCreateInput) => Promise<AgentSchedule>
+    update: (input: AgentScheduleUpdateInput) => Promise<AgentSchedule>
+    delete: (input: AgentScheduleDeleteInput) => Promise<{ deletedScheduleId: string }>
+    setEnabled: (input: AgentScheduleSetEnabledInput) => Promise<AgentSchedule>
+    fireNow: (input: AgentScheduleFireNowInput) => Promise<{ runId: string; requestId: string }>
+    onChanged: (callback: (event?: SchedulerEvent) => void) => () => void
   }
 }
 

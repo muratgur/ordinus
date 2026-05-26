@@ -6,6 +6,7 @@ import { OrdinusDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc/register'
 import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
+import { SchedulerService } from './scheduler/service'
 
 app.setName('Ordinus')
 
@@ -125,7 +126,9 @@ app.whenReady().then(() => {
   })
 
   database.initialize()
-  registerIpcHandlers(database, runtime, observability)
+  const scheduler = registerIpcHandlers(database, runtime, observability)
+  scheduler.start()
+  ;(globalThis as { ordinusScheduler?: SchedulerService }).ordinusScheduler = scheduler
 
   createWindow()
 
@@ -141,5 +144,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  ;(globalThis as { ordinusScheduler?: SchedulerService }).ordinusScheduler?.stop()
   database.close()
 })

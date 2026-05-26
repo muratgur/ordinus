@@ -71,5 +71,13 @@ export const ipcChannels = {
   connectorsConnect: 'connectors:connect',
   connectorsDisconnect: 'connectors:disconnect',
   filesRead: 'files:read',
-  filesWrite: 'files:write'
+  filesWrite: 'files:write',
+  schedulesList: 'schedules:list',
+  schedulesGet: 'schedules:get',
+  schedulesCreate: 'schedules:create',
+  schedulesUpdate: 'schedules:update',
+  schedulesDelete: 'schedules:delete',
+  schedulesSetEnabled: 'schedules:set-enabled',
+  schedulesFireNow: 'schedules:fire-now',
+  schedulesChanged: 'schedules:changed'
 } as const

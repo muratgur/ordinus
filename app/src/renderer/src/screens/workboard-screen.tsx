@@ -4,6 +4,7 @@ import {
   Archive,
   ArchiveRestore,
   Bot,
+  CalendarClock,
   CheckCircle2,
   Check,
   ChevronDown,
@@ -1999,6 +2000,7 @@ function RequestHeaderBar({
       <h2 className="min-w-0 truncate text-sm font-semibold">
         {request ? request.title : 'Workboard'}
       </h2>
+      {request ? <LinkedScheduleBadge requestId={request.id} /> : null}
       {request ? (
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => onContinue(request.id)}>
@@ -4651,4 +4653,34 @@ function draftItemDependsOn(
 
 function agentName(agents: Agent[], agentId: string): string {
   return agents.find((agent) => agent.id === agentId)?.name ?? 'Agent'
+}
+
+function LinkedScheduleBadge({ requestId }: { requestId: string }): React.JSX.Element | null {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    let active = true
+    const refresh = async (): Promise<void> => {
+      try {
+        const list = await window.ordinus.schedules.list({ linkedWorkRequestId: requestId })
+        if (active) setCount(list.length)
+      } catch {
+        if (active) setCount(0)
+      }
+    }
+    void refresh()
+    const off = window.ordinus.schedules.onChanged(() => void refresh())
+    return () => {
+      active = false
+      off()
+    }
+  }, [requestId])
+  if (count === 0) return null
+  return (
+    <Link to={appRoutePaths.schedules} title="View linked schedules">
+      <Badge variant="outline" className="gap-1 text-xs">
+        <CalendarClock className="size-3" />
+        {count} schedule{count === 1 ? '' : 's'}
+      </Badge>
+    </Link>
+  )
 }
