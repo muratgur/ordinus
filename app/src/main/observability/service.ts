@@ -448,11 +448,7 @@ function compactPayloadValue(value: unknown, depth: number): unknown {
     return sanitizeActivityDetail(value, 500)
   }
 
-  if (
-    value === null ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
     return value
   }
 

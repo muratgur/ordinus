@@ -1543,11 +1543,7 @@ export class OrdinusDatabase {
 
   getAgentSchedule(input: AgentScheduleGetInput): AgentSchedule {
     const parsed = AgentScheduleGetInputSchema.parse(input)
-    const row = this.db
-      .select()
-      .from(agentSchedules)
-      .where(eq(agentSchedules.id, parsed.id))
-      .get()
+    const row = this.db.select().from(agentSchedules).where(eq(agentSchedules.id, parsed.id)).get()
     if (!row) throw new Error('Schedule was not found.')
     return AgentScheduleSchema.parse(row)
   }

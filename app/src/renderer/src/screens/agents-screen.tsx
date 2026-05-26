@@ -47,7 +47,8 @@ import type {
   ProviderId,
   WorkRequest
 } from '@shared/contracts'
-import { CreateScheduleDialog, disableReasonLabel } from './schedules-screen'
+import { CreateScheduleDialog } from './schedules-screen'
+import { disableReasonLabel } from './schedule-labels'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 type AgentStatus = 'ready' | 'needs-attention' | 'offline'
@@ -129,7 +130,13 @@ export function AgentsScreen(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    void reloadAgents()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void reloadAgents()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [reloadAgents])
 
   function handleAgentSaved(nextAgent: Agent): void {
@@ -1343,9 +1350,15 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
   )
 
   useEffect(() => {
-    void load()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void load()
+    })
     const off = window.ordinus.schedules.onChanged(() => void load(true))
-    return off
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [load])
 
   async function toggle(s: AgentSchedule): Promise<void> {
@@ -1400,10 +1413,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
       ) : (
         <div className="divide-y rounded-md border">
           {schedules.map((s) => (
-            <div
-              key={s.id}
-              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
-            >
+            <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
               <div className="min-w-0 space-y-0.5">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium">{s.name}</span>
@@ -1411,9 +1421,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
                     <span className="text-xs text-amber-600">Last failed</span>
                   ) : null}
                   {!s.enabled ? (
-                    <span className="text-xs text-muted-foreground">
-                      {disableReasonLabel(s)}
-                    </span>
+                    <span className="text-xs text-muted-foreground">{disableReasonLabel(s)}</span>
                   ) : null}
                 </div>
                 <div className="text-xs text-muted-foreground">

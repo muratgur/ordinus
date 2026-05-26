@@ -47,12 +47,12 @@ import type {
 import { appRoutePaths } from '@renderer/app/routes'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
+import { DiagnosticBlock } from '@renderer/components/observability-details'
 import {
-  DiagnosticBlock,
   formatLivenessHealth,
   formatObservedPhase,
   mergeDiagnostics
-} from '@renderer/components/observability-details'
+} from '@renderer/components/observability-diagnostics'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { RequestFileList } from '@renderer/components/file-reference-list'

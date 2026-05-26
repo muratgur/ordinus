@@ -40,7 +40,13 @@ export function AgentFeedbackPanel({
   }, [agentId])
 
   useEffect(() => {
-    void refreshRules()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void refreshRules()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [refreshRules])
 
   const handleSubmit = useCallback(async (): Promise<void> => {

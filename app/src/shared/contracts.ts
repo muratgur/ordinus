@@ -1193,17 +1193,16 @@ export const AgentScheduleCreateInputSchema = z
     message: 'Schedule must provide a cron expression or a runAt timestamp.'
   })
 
-export const AgentScheduleUpdateInputSchema = z
-  .object({
-    id: z.string().min(1),
-    name: z.string().trim().min(1).max(120).optional(),
-    prompt: z.string().trim().min(1).max(16_000).optional(),
-    cron: z.string().trim().min(1).max(200).nullable().optional(),
-    runAt: z.string().trim().min(1).max(40).nullable().optional(),
-    timezone: z.string().trim().min(1).max(80).optional(),
-    linkedWorkRequestId: z.string().min(1).nullable().optional(),
-    enabled: z.boolean().optional()
-  })
+export const AgentScheduleUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(120).optional(),
+  prompt: z.string().trim().min(1).max(16_000).optional(),
+  cron: z.string().trim().min(1).max(200).nullable().optional(),
+  runAt: z.string().trim().min(1).max(40).nullable().optional(),
+  timezone: z.string().trim().min(1).max(80).optional(),
+  linkedWorkRequestId: z.string().min(1).nullable().optional(),
+  enabled: z.boolean().optional()
+})
 
 export const AgentScheduleListInputSchema = z.object({
   agentId: z.string().min(1).optional(),

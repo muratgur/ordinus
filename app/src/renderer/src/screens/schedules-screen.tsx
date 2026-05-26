@@ -20,6 +20,7 @@ import {
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
 import { Switch } from '@renderer/components/ui/switch'
+import { disableReasonLabel } from './schedule-labels'
 
 type PresetKey = 'once' | 'daily' | 'weekly' | 'hourly' | 'advanced'
 
@@ -102,22 +103,6 @@ function formatDateTime(value: string | null): string {
   return d.toLocaleString()
 }
 
-export function disableReasonLabel(schedule: AgentSchedule): string | null {
-  if (schedule.enabled) return null
-  switch (schedule.disableReason) {
-    case 'failures':
-      return `Auto-disabled after ${schedule.consecutiveFailures} failed fires`
-    case 'wr_archived':
-      return 'Linked Work Request was archived'
-    case 'completed':
-      return 'Completed'
-    case 'manual':
-    case null:
-    default:
-      return 'Disabled'
-  }
-}
-
 export function SchedulesScreen(): React.JSX.Element {
   const [schedules, setSchedules] = useState<AgentSchedule[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
@@ -147,11 +132,17 @@ export function SchedulesScreen(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    void load()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void load()
+    })
     const off = window.ordinus.schedules.onChanged(() => {
       void load(true)
     })
-    return off
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [load])
 
   const agentsById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
@@ -339,9 +330,7 @@ function ScheduleTable({
                 Next: {formatDateTime(schedule.nextRunAt)} · Last:{' '}
                 {formatDateTime(schedule.lastRunAt)}
               </div>
-              {disabledLabel ? (
-                <div className="text-xs text-amber-600">{disabledLabel}</div>
-              ) : null}
+              {disabledLabel ? <div className="text-xs text-amber-600">{disabledLabel}</div> : null}
             </div>
             <div className="flex items-center gap-1">
               <Switch
@@ -393,10 +382,7 @@ export function CreateScheduleDialog({
   onCreated,
   defaultAgentId
 }: CreateScheduleDialogProps): React.JSX.Element {
-  const activeAgents = useMemo(
-    () => agents.filter((a) => a.enabled && !a.archivedAt),
-    [agents]
-  )
+  const activeAgents = useMemo(() => agents.filter((a) => a.enabled && !a.archivedAt), [agents])
   const initialAgentId = defaultAgentId ?? activeAgents[0]?.id ?? ''
   const [form, setForm] = useState<ScheduleFormState>(() => defaultFormState(initialAgentId))
   const [submitting, setSubmitting] = useState(false)
@@ -601,9 +587,7 @@ export function CreateScheduleDialog({
             </select>
           </div>
 
-          {formError ? (
-            <div className="text-xs text-destructive">{formError}</div>
-          ) : null}
+          {formError ? <div className="text-xs text-destructive">{formError}</div> : null}
         </div>
 
         <DialogFooter>
