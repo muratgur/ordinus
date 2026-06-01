@@ -2339,13 +2339,22 @@ function PlanReviewDialog({
   const isWaiting = !plan && watching !== null
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
+  const hadPlanRef = useRef(plan !== null)
 
   useEffect(() => {
-    // Focus is the default posture: every time a (new) plan is shown the
-    // detail panel starts closed. Resets only on plan identity change, so
-    // toggling within the same plan is preserved.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot reset on plan change
-    setPanelOpen(false)
+    // Focus is the default posture: the detail panel starts closed every time
+    // a *new* plan arrives (initial open, or after a regenerate that briefly
+    // drops back to the waiting state). We can't key on the plan object
+    // reference here — editing a draft item rebuilds the plan object on every
+    // keystroke, which would spuriously close the panel mid-typing. Instead we
+    // only reset on the null -> present edge, so toggling and editing within
+    // the same plan are preserved.
+    const hasPlan = plan !== null
+    const isNewPlan = hasPlan && !hadPlanRef.current
+    hadPlanRef.current = hasPlan
+    if (isNewPlan) {
+      setPanelOpen(false)
+    }
   }, [plan])
 
   function requestClose(): void {
