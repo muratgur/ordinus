@@ -175,11 +175,26 @@ export const workRequests = sqliteTable('work_requests', {
   summary: text('summary').notNull(),
   workingRoot: text('working_root').notNull().default(''),
   status: text('status').notNull(),
+  // Set only when a Work Request is created from a saved workflow design (new-WR
+  // path). Null for planner-authored requests and for follow-up appends. See
+  // ADR-025.
+  workflowDesignId: text('workflow_design_id'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
   startedAt: text('started_at'),
   completedAt: text('completed_at'),
   archivedAt: text('archived_at')
+})
+
+export const workflowDesigns = sqliteTable('workflow_designs', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  // Single canvas blob: nodes (task fields + x/y) and edges. Positions live only
+  // here; they are stripped when compiling to a WorkboardDraftPlan. See ADR-025.
+  canvas: text('canvas', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
 })
 
 export const pendingPlans = sqliteTable('pending_plans', {

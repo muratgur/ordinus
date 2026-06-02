@@ -82,6 +82,10 @@ import {
   WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestPlanInputSchema,
   WorkboardStartRequestInputSchema,
+  WorkflowDesignCreateInputSchema,
+  WorkflowDesignUpdateInputSchema,
+  WorkflowDesignDeleteInputSchema,
+  WorkflowRunInputSchema,
   WorkRunActionInputSchema,
   WorkspaceSaveConfigInputSchema,
   WorkspaceSelectFolderResultSchema,
@@ -129,6 +133,7 @@ import {
   getAgentProfile,
   listAgentProfiles
 } from '../agents/profiles'
+import { compileWorkflowDesign } from '../workboard/compile-design'
 import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { connectConnector, disconnectConnector, listConnectors } from '../integrations/service'
 import {
@@ -581,6 +586,50 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.workboardStartFollowUp, (_event, payload) => {
     const input = WorkboardStartFollowUpInputSchema.parse(payload)
     const request = database.createWorkRequestFollowUp(input)
+    startWorkRequestRuns(database, runtime, observability, request.id)
+    return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workflowDesignList, () => database.listWorkflowDesigns())
+  ipcMain.handle(ipcChannels.workflowDesignGet, (_event, payload) => {
+    const id = WorkflowDesignDeleteInputSchema.shape.id.parse(payload)
+    return database.getWorkflowDesign(id)
+  })
+  ipcMain.handle(ipcChannels.workflowDesignCreate, (_event, payload) => {
+    const input = WorkflowDesignCreateInputSchema.parse(payload)
+    return database.createWorkflowDesign(input)
+  })
+  ipcMain.handle(ipcChannels.workflowDesignUpdate, (_event, payload) => {
+    const input = WorkflowDesignUpdateInputSchema.parse(payload)
+    return database.updateWorkflowDesign(input)
+  })
+  ipcMain.handle(ipcChannels.workflowDesignDelete, (_event, payload) => {
+    const input = WorkflowDesignDeleteInputSchema.parse(payload)
+    database.deleteWorkflowDesign(input.id)
+  })
+  ipcMain.handle(ipcChannels.workflowRun, (_event, payload) => {
+    const input = WorkflowRunInputSchema.parse(payload)
+    const design = database.getWorkflowDesign(input.designId)
+    if (!design) {
+      throw new Error('Workflow design not found.')
+    }
+
+    const { plan, originalRequest } = compileWorkflowDesign(design)
+
+    // New-WR target links the request back to the design for run history.
+    // Append target reuses the follow-up path as a self-contained sub-DAG and
+    // does NOT claim the existing request's design link (ADR-025).
+    const request =
+      input.target.kind === 'new'
+        ? database.createWorkRequest({
+            originalRequest,
+            plan,
+            workflowDesignId: design.id
+          })
+        : database.createWorkRequestFollowUp({
+            requestId: input.target.requestId,
+            plan
+          })
+
     startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()
   })

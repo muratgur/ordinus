@@ -696,6 +696,7 @@ export const WorkRequestSchema = z.object({
   summary: z.string(),
   workingRoot: WorkspaceRelativePathSchema,
   status: WorkRequestStatusSchema,
+  workflowDesignId: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
   startedAt: z.string().nullable(),
@@ -854,7 +855,10 @@ export const WorkboardGeneratePlanInputSchema = z.object({
 
 export const WorkboardStartRequestInputSchema = z.object({
   originalRequest: z.string().trim().min(1).max(64_000),
-  plan: WorkboardDraftPlanSchema
+  plan: WorkboardDraftPlanSchema,
+  // Set only when the request is compiled from a saved workflow design. Null for
+  // planner-authored requests. See ADR-025.
+  workflowDesignId: z.string().min(1).nullable().default(null)
 })
 
 export const WorkboardDirectStartInputSchema = WorkboardGeneratePlanInputSchema
@@ -944,6 +948,74 @@ export const WorkboardDataSchema = z.object({
   dependencies: z.array(WorkRunDependencySchema),
   contextReferences: z.array(WorkRunContextReferenceSchema),
   inputRequests: z.array(WorkRunInputRequestSchema)
+})
+
+// --- Workflow designs (ADR-025) -------------------------------------------
+//
+// A workflow design is the durable, reusable canvas the user authors visually.
+// Node fields mirror WorkboardDraftItem but are LENIENT (empty allowed): a
+// design is a work-in-progress that may have unfilled nodes. The strict
+// non-empty + assigned-agent checks live in run-gating at compile time, not at
+// save time. Compiling a design strips positions and maps nodes to
+// WorkboardDraftItems.
+
+export const WorkflowCanvasNodeSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  title: z.string().trim().max(160).default(''),
+  instruction: z.string().trim().max(64_000).default(''),
+  expectedOutput: z.string().trim().max(2_000).default(''),
+  assignedAgentId: z.string().max(160).default(''),
+  priority: z.number().int().min(-100).max(100).default(0),
+  position: z.object({ x: z.number(), y: z.number() })
+})
+
+export const WorkflowCanvasEdgeSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  source: z.string().trim().min(1).max(80),
+  target: z.string().trim().min(1).max(80)
+})
+
+export const WorkflowCanvasSchema = z.object({
+  // Capped at 16 to match the WorkboardDraftPlan compile target. A DAG over 16
+  // nodes has at most 120 edges; 256 leaves headroom without being unbounded.
+  nodes: z.array(WorkflowCanvasNodeSchema).max(16).default([]),
+  edges: z.array(WorkflowCanvasEdgeSchema).max(256).default([])
+})
+
+export const WorkflowDesignSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(2_000).default(''),
+  canvas: WorkflowCanvasSchema,
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const WorkflowDesignCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(2_000).default(''),
+  canvas: WorkflowCanvasSchema
+})
+
+export const WorkflowDesignUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(160).optional(),
+  description: z.string().trim().max(2_000).optional(),
+  canvas: WorkflowCanvasSchema.optional()
+})
+
+export const WorkflowDesignDeleteInputSchema = z.object({
+  id: z.string().min(1)
+})
+
+export const WorkflowRunTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('new') }),
+  z.object({ kind: z.literal('append'), requestId: z.string().min(1) })
+])
+
+export const WorkflowRunInputSchema = z.object({
+  designId: z.string().min(1),
+  target: WorkflowRunTargetSchema
 })
 
 export const ObservedRunSourceSurfaceSchema = z.enum(['workboard', 'conversation'])
@@ -1403,6 +1475,16 @@ export type PendingPlan = z.infer<typeof PendingPlanSchema>
 export type PendingPlanCreateInput = z.input<typeof PendingPlanCreateInputSchema>
 export type WorkboardGeneratePlanInput = z.infer<typeof WorkboardGeneratePlanInputSchema>
 export type WorkboardStartRequestInput = z.infer<typeof WorkboardStartRequestInputSchema>
+export type WorkboardStartRequestInputData = z.input<typeof WorkboardStartRequestInputSchema>
+export type WorkflowCanvasNode = z.infer<typeof WorkflowCanvasNodeSchema>
+export type WorkflowCanvasEdge = z.infer<typeof WorkflowCanvasEdgeSchema>
+export type WorkflowCanvas = z.infer<typeof WorkflowCanvasSchema>
+export type WorkflowDesign = z.infer<typeof WorkflowDesignSchema>
+export type WorkflowDesignCreateInput = z.input<typeof WorkflowDesignCreateInputSchema>
+export type WorkflowDesignUpdateInput = z.input<typeof WorkflowDesignUpdateInputSchema>
+export type WorkflowDesignDeleteInput = z.infer<typeof WorkflowDesignDeleteInputSchema>
+export type WorkflowRunTarget = z.infer<typeof WorkflowRunTargetSchema>
+export type WorkflowRunInput = z.infer<typeof WorkflowRunInputSchema>
 export type WorkboardDirectStartInput = z.infer<typeof WorkboardDirectStartInputSchema>
 export type WorkboardRequestDestination = z.infer<typeof WorkboardRequestDestinationSchema>
 export type WorkboardContextReferenceInput = z.infer<typeof WorkboardContextReferenceInputSchema>

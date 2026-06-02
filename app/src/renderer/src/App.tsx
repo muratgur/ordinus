@@ -18,6 +18,7 @@ import { defaultAppRoute, appRoutePaths } from './app/routes'
 import { AgentsScreen } from './screens/agents-screen'
 import { ConversationsScreen } from './screens/conversations-screen'
 import { WorkboardScreen } from './screens/workboard-screen'
+import { WorkflowsScreen } from './screens/workflows-screen'
 import {
   emptyWorkboardDraftReviewState,
   type WorkboardDraftReviewState
@@ -228,6 +229,7 @@ function App(): React.JSX.Element {
               />
             }
           />
+          <Route path={appRoutePaths.workflows} element={<WorkflowsScreen />} />
           <Route path={appRoutePaths.conversations} element={<ConversationsScreen />} />
           <Route path={appRoutePaths.schedules} element={<SchedulesScreen />} />
           <Route
