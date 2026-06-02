@@ -6,12 +6,14 @@ import {
   FileText,
   Info,
   Loader2,
+  MessageSquareText,
   MoreVertical,
   Plus,
   Search,
   Settings2,
   Sparkles,
   Trash2,
+  UserRound,
   WandSparkles
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
@@ -37,14 +39,21 @@ import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import { notify } from '@renderer/lib/notifications'
 import { AgentCreationFlow } from '@renderer/components/agent-creation-flow'
-import { AgentReflectionDialog } from '@renderer/components/agent-reflection-dialog'
+import { AgentAvatar } from '@renderer/components/agent-avatar'
+import { AgentAvatarPicker } from '@renderer/components/agent-avatar-picker'
+import { AgentRoom } from '@renderer/components/agent-room'
+import { AGENT_COLORS, AGENT_SYMBOLS, AVATAR_DELIMITER } from '@renderer/components/agent-palette'
 import type {
   Agent,
   AgentExtraDirectoryEntry,
+  AgentMemoryRule,
   AgentSandbox,
   AgentSchedule,
   AgentSkill,
+  AgentUpdateSettingsInput,
+  AgentRoomSummary,
   ConnectorSummary,
+  ObservedRunSnapshot,
   ProviderId,
   WorkRequest
 } from '@shared/contracts'
@@ -52,17 +61,20 @@ import { CreateScheduleDialog } from './schedules-screen'
 import { disableReasonLabel } from './schedule-labels'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
-type AgentStatus = 'ready' | 'needs-attention' | 'offline'
-type AgentSection = 'instructions' | 'skills' | 'schedules' | 'settings'
+// Roster presence (ADR-027 Phase 7): a teammate is Working when any of their
+// runs is in flight, otherwise Available / Needs setup / Off.
+type AgentPresence = 'working' | 'available' | 'needs-setup' | 'off'
+// ADR-027 agent home: the colleague profile tabs. Chat is the 1:1 room (built
+// in Phase 2); CV/Agenda/About currently wrap the existing panels and are
+// reorganized in Phases 4–6.
+type AgentTab = 'chat' | 'cv' | 'agenda' | 'about'
+// The Trust & access draft (ADR-027 Phase 6). Identity (name/role/enabled/avatar)
+// lives in the header profile dialog and capabilities/connectors on the CV tab;
+// all write through the same updateSettings IPC, sourced from the live agent.
 type SettingsDraft = {
-  name: string
-  role: string
-  capabilities: string
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox
-  connectors: string[]
-  enabled: boolean
 }
 
 const sandboxOptions: Array<{
@@ -89,19 +101,38 @@ const sandboxOptions: Array<{
   }
 ]
 
-const sections: Array<{ id: AgentSection; label: string; icon: typeof Bot }> = [
-  { id: 'instructions', label: 'Instructions', icon: FileText },
-  { id: 'skills', label: 'Skills', icon: Sparkles },
-  { id: 'schedules', label: 'Schedules', icon: CalendarClock },
-  { id: 'settings', label: 'Settings', icon: Settings2 }
+const tabs: Array<{ id: AgentTab; label: string; icon: typeof Bot }> = [
+  { id: 'chat', label: 'Chat', icon: MessageSquareText },
+  { id: 'cv', label: 'CV', icon: FileText },
+  { id: 'agenda', label: 'Agenda', icon: CalendarClock },
+  { id: 'about', label: 'About', icon: UserRound }
 ]
+
+const WORKING_LIFECYCLE = new Set(['queued', 'starting', 'running'])
+
+function getAgentPresence(agent: Agent, busy: boolean): AgentPresence {
+  if (busy) return 'working'
+  if (!agent.enabled) return 'off'
+  if (!agent.instructions.trim()) return 'needs-setup'
+  return 'available'
+}
+
+function presenceLabel(presence: AgentPresence): string {
+  if (presence === 'working') return 'Working…'
+  if (presence === 'available') return 'Available'
+  if (presence === 'needs-setup') return 'Needs setup'
+  return 'Off'
+}
 
 export function AgentsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
+  const [roomSummaries, setRoomSummaries] = useState<AgentRoomSummary[]>([])
+  const [unreadAgentIds, setUnreadAgentIds] = useState<Set<string>>(new Set())
   const [selectedAgentId, setSelectedAgentId] = useState<string>('')
-  const [activeSection, setActiveSection] = useState<AgentSection>('instructions')
+  const [activeTab, setActiveTab] = useState<AgentTab>('chat')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
-  const [reflectionOpen, setReflectionOpen] = useState(false)
+  // The just-created agent greets itself on first room open (ADR-027 Phase 8).
+  const [greetAgentId, setGreetAgentId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -111,11 +142,101 @@ export function AgentsScreen(): React.JSX.Element {
     [agents, selectedAgentId]
   )
 
+  // Live "Working…" presence: track in-flight runs across surfaces. Seed from
+  // the workboard, then keep updated from the global run-changed stream (which
+  // covers both workboard and conversation runs).
+  const observedRunsRef = useRef<Map<string, ObservedRunSnapshot>>(new Map())
+  const roomSummariesRef = useRef<Map<string, AgentRoomSummary>>(new Map())
+  const selectedAgentIdRef = useRef('')
+  const roomSummariesLoadedRef = useRef(false)
+  const [busyAgentIds, setBusyAgentIds] = useState<Set<string>>(new Set())
+  const recomputeBusy = useCallback((): void => {
+    const next = new Set<string>()
+    for (const run of observedRunsRef.current.values()) {
+      if (run.assignedAgentId && WORKING_LIFECYCLE.has(run.lifecycleStatus)) {
+        next.add(run.assignedAgentId)
+      }
+    }
+    setBusyAgentIds(next)
+  }, [])
+
+  useEffect(() => {
+    selectedAgentIdRef.current = selectedAgent?.id ?? ''
+  }, [selectedAgent?.id])
+
+  const applyRoomSummaries = useCallback((nextSummaries: AgentRoomSummary[]): void => {
+    const previousByAgentId = roomSummariesRef.current
+    const nextByAgentId = new Map(nextSummaries.map((summary) => [summary.agentId, summary]))
+    const selectedId = selectedAgentIdRef.current
+
+    if (roomSummariesLoadedRef.current) {
+      setUnreadAgentIds((current) => {
+        const nextUnread = new Set(current)
+        for (const summary of nextSummaries) {
+          const previous = previousByAgentId.get(summary.agentId)
+          const hasNewAgentMessage =
+            summary.lastSpeaker === 'agent' &&
+            summary.lastActivityAt &&
+            summary.lastActivityAt !== previous?.lastActivityAt
+
+          if (summary.agentId === selectedId) {
+            nextUnread.delete(summary.agentId)
+          } else if (hasNewAgentMessage) {
+            nextUnread.add(summary.agentId)
+          }
+        }
+        return nextUnread
+      })
+    }
+
+    roomSummariesLoadedRef.current = true
+    roomSummariesRef.current = nextByAgentId
+    setRoomSummaries(nextSummaries)
+  }, [])
+
+  const reloadRoomSummaries = useCallback(async (): Promise<void> => {
+    applyRoomSummaries(await window.ordinus.conversations.listAgentRoomSummaries())
+  }, [applyRoomSummaries])
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      window.ordinus.observability
+        .listWorkboard()
+        .then((runs) => {
+          if (cancelled) return
+          runs.forEach((run) => observedRunsRef.current.set(run.id, run))
+          recomputeBusy()
+        })
+        .catch(() => {})
+    })
+    const off = window.ordinus.observability.onRunChanged((snapshot) => {
+      observedRunsRef.current.set(snapshot.id, snapshot)
+      recomputeBusy()
+      if (snapshot.sourceSurface === 'conversation') {
+        void reloadRoomSummaries()
+      }
+    })
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [recomputeBusy, reloadRoomSummaries])
+
+  const handleRoomChanged = useCallback((): void => {
+    void reloadRoomSummaries()
+  }, [reloadRoomSummaries])
+
   const reloadAgents = useCallback(async (): Promise<void> => {
     try {
       setLoading(true)
-      const nextAgents = await window.ordinus.agents.list()
+      const [nextAgents, nextRoomSummaries] = await Promise.all([
+        window.ordinus.agents.list(),
+        window.ordinus.conversations.listAgentRoomSummaries()
+      ])
       setAgents(nextAgents)
+      applyRoomSummaries(nextRoomSummaries)
       setSelectedAgentId((current) => {
         if (nextAgents.some((agent) => agent.id === current)) {
           return current
@@ -128,7 +249,7 @@ export function AgentsScreen(): React.JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [applyRoomSummaries])
 
   useEffect(() => {
     let cancelled = false
@@ -148,11 +269,18 @@ export function AgentsScreen(): React.JSX.Element {
       return [nextAgent, ...currentAgents]
     })
     setSelectedAgentId(nextAgent.id)
+    setUnreadAgentIds((current) => {
+      if (!current.has(nextAgent.id)) return current
+      const next = new Set(current)
+      next.delete(nextAgent.id)
+      return next
+    })
   }
 
   function handleAgentCreated(nextAgent: Agent): void {
     handleAgentSaved(nextAgent)
-    setActiveSection('instructions')
+    setGreetAgentId(nextAgent.id)
+    setActiveTab('chat')
     setCreateAgentOpen(false)
   }
 
@@ -166,7 +294,7 @@ export function AgentsScreen(): React.JSX.Element {
       }
       return nextAgents[0]?.id ?? ''
     })
-    setActiveSection('settings')
+    setActiveTab('chat')
   }
 
   async function handleDeleteAgent(): Promise<void> {
@@ -195,62 +323,82 @@ export function AgentsScreen(): React.JSX.Element {
         agents={agents}
         loading={loading}
         selectedAgentId={selectedAgent?.id ?? ''}
+        busyAgentIds={busyAgentIds}
+        roomSummaries={roomSummaries}
+        unreadAgentIds={unreadAgentIds}
         onCreateAgent={() => setCreateAgentOpen(true)}
-        onSelectAgent={setSelectedAgentId}
-        onOpenReflection={() => setReflectionOpen(true)}
+        onSelectAgent={(agentId) => {
+          setUnreadAgentIds((current) => {
+            if (!current.has(agentId)) return current
+            const next = new Set(current)
+            next.delete(agentId)
+            return next
+          })
+          setSelectedAgentId(agentId)
+        }}
       />
 
       <main className="min-w-0 xl:min-h-0">
         <Card className="flex min-h-[760px] flex-col overflow-hidden xl:h-full xl:min-h-0">
-          <div className="flex items-stretch justify-between gap-0 border-b">
-            <div className="flex items-stretch gap-0">
-              {sections.map((section) => {
-                const Icon = section.icon
-                const isActive = activeSection === section.id
-                return (
-                  <button
-                    key={section.id}
-                    type="button"
-                    disabled={!selectedAgent}
-                    onClick={() => setActiveSection(section.id)}
-                    className={cn(
-                      'relative flex items-center gap-1.5 px-4 py-3 text-[12.5px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-40',
-                      isActive
-                        ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
-                        : 'text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    <Icon className="size-3.5 shrink-0" />
-                    {section.label}
-                  </button>
-                )
-              })}
-            </div>
-            {selectedAgent ? <AgentActionsMenu onDelete={() => setDeleteOpen(true)} /> : null}
-          </div>
-
-          <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-            {error ? (
+          {error ? (
+            <CardContent className="flex min-h-0 flex-1 flex-col p-0">
               <EmptyState icon={<Bot />} title="Agents unavailable" detail={error} />
-            ) : selectedAgent ? (
-              <AgentDetail
+            </CardContent>
+          ) : selectedAgent ? (
+            <>
+              <AgentIdentityHeader
                 agent={selectedAgent}
                 agents={agents}
-                activeSection={activeSection}
+                busy={busyAgentIds.has(selectedAgent.id)}
                 onAgentSaved={handleAgentSaved}
+                onDelete={() => setDeleteOpen(true)}
               />
-            ) : (
+              <div className="flex items-stretch gap-0 border-b">
+                {tabs.map((tab) => {
+                  const Icon = tab.icon
+                  const isActive = activeTab === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveTab(tab.id)}
+                      className={cn(
+                        'relative flex items-center gap-1.5 px-4 py-3 text-[12.5px] font-medium transition-colors',
+                        isActive
+                          ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      <Icon className="size-3.5 shrink-0" />
+                      {tab.label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+                <AgentTabContent
+                  agent={selectedAgent}
+                  activeTab={activeTab}
+                  autoGreet={greetAgentId === selectedAgent.id}
+                  onAgentSaved={handleAgentSaved}
+                  onRoomChanged={handleRoomChanged}
+                />
+              </CardContent>
+            </>
+          ) : (
+            <CardContent className="flex min-h-0 flex-1 flex-col p-0">
               <EmptyState
                 icon={<Bot />}
                 title={loading ? 'Loading agents' : 'No agents yet'}
                 detail={
                   loading
                     ? 'Agent records are being loaded from local storage.'
-                    : 'Create an agent to define its role, instructions, and runtime settings.'
+                    : 'Bring an agent to life to start working with a new teammate.'
                 }
               />
-            )}
-          </CardContent>
+            </CardContent>
+          )}
         </Card>
       </main>
 
@@ -259,12 +407,6 @@ export function AgentsScreen(): React.JSX.Element {
         onOpenChange={setCreateAgentOpen}
         onAgentCreated={handleAgentCreated}
         existingAgentNames={agents.map((agent) => agent.name)}
-      />
-
-      <AgentReflectionDialog
-        open={reflectionOpen}
-        onOpenChange={setReflectionOpen}
-        onChanged={() => void reloadAgents()}
       />
 
       {selectedAgent ? (
@@ -349,22 +491,46 @@ function AgentLibrary({
   agents,
   loading,
   selectedAgentId,
+  busyAgentIds,
+  roomSummaries,
+  unreadAgentIds,
   onCreateAgent,
-  onSelectAgent,
-  onOpenReflection
+  onSelectAgent
 }: {
   agents: Agent[]
   loading: boolean
   selectedAgentId: string
+  busyAgentIds: Set<string>
+  roomSummaries: AgentRoomSummary[]
+  unreadAgentIds: Set<string>
   onCreateAgent: () => void
   onSelectAgent: (agentId: string) => void
-  onOpenReflection: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
-  const filteredAgents = agents.filter((agent) => {
-    const value = `${agent.name} ${agent.role}`.toLowerCase()
-    return value.includes(query.trim().toLowerCase())
-  })
+  const roomSummaryByAgentId = useMemo(
+    () => new Map(roomSummaries.map((summary) => [summary.agentId, summary])),
+    [roomSummaries]
+  )
+  const normalizedQuery = query.trim().toLowerCase()
+  const chatRows = agents
+    .map((agent) => {
+      const summary = roomSummaryByAgentId.get(agent.id)
+      const busy = busyAgentIds.has(agent.id)
+      return {
+        agent,
+        busy,
+        unread: unreadAgentIds.has(agent.id),
+        summary,
+        preview: getAgentRoomPreview(summary, busy),
+        timestampLabel: formatAgentRoomTimestamp(summary?.lastActivityAt ?? null),
+        sortTime: getAgentRoomSortTime(agent, summary)
+      }
+    })
+    .filter(({ agent }) => {
+      const searchable = `${agent.name} ${agent.role} ${agent.capabilities}`.toLowerCase()
+      return searchable.includes(normalizedQuery)
+    })
+    .sort(compareAgentChatRows)
 
   return (
     <aside className="min-w-0 xl:min-h-0">
@@ -380,19 +546,9 @@ function AgentLibrary({
                 {loading ? 'Loading' : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label="Agent reflection"
-                onClick={onOpenReflection}
-              >
-                Reflect
-              </Button>
-              <Button size="icon" aria-label="Create agent" onClick={onCreateAgent}>
-                <Plus />
-              </Button>
-            </div>
+            <Button size="icon" aria-label="Create agent" onClick={onCreateAgent}>
+              <Plus />
+            </Button>
           </div>
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -405,29 +561,52 @@ function AgentLibrary({
           </div>
         </CardHeader>
 
-        <CardContent className="ordinus-scrollbar grid gap-2 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-          {filteredAgents.map((agent) => (
+        <CardContent className="ordinus-scrollbar grid gap-0 p-2 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+          {chatRows.map(({ agent, busy, unread, preview, timestampLabel }) => (
             <button
               key={agent.id}
               type="button"
               className={cn(
-                'grid min-w-0 gap-2 rounded-lg border bg-card p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                selectedAgentId === agent.id && 'border-primary/40 bg-primary-soft'
+                'relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                selectedAgentId === agent.id && 'bg-primary-soft/70 pl-3.5'
               )}
               onClick={() => onSelectAgent(agent.id)}
             >
-              <div className="flex min-w-0 items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{agent.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{agent.role}</p>
-                </div>
-                <StatusDot status={getAgentStatus(agent)} />
+              {selectedAgentId === agent.id ? (
+                <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
+              ) : null}
+              <div className="relative row-span-2 size-9 shrink-0">
+                <AgentAvatar avatar={agent.avatar} size={36} />
+                <PresenceDot
+                  presence={getAgentPresence(agent, busy)}
+                  className="absolute bottom-0 right-0 ring-2 ring-background"
+                />
               </div>
+              <p className="min-w-0 truncate text-sm font-semibold leading-5">{agent.name}</p>
+              <span
+                className={cn(
+                  'text-[11px]',
+                  unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                )}
+              >
+                {timestampLabel}
+              </span>
+              <p
+                className={cn(
+                  'col-start-2 col-end-4 min-w-0 truncate text-xs leading-5',
+                  unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                )}
+              >
+                {preview}
+              </p>
+              {unread ? (
+                <span className="absolute right-2 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary" />
+              ) : null}
             </button>
           ))}
 
-          {!loading && filteredAgents.length === 0 ? (
-            <div className="rounded-lg border border-dashed bg-accent p-4 text-sm text-muted-foreground">
+          {!loading && chatRows.length === 0 ? (
+            <div className="m-2 rounded-lg border border-dashed bg-accent p-4 text-sm text-muted-foreground">
               {agents.length === 0 ? 'No agents yet.' : 'No agents match this search.'}
             </div>
           ) : null}
@@ -437,39 +616,654 @@ function AgentLibrary({
   )
 }
 
-function AgentDetail({
+type AgentChatRow = {
+  agent: Agent
+  busy: boolean
+  unread: boolean
+  summary: AgentRoomSummary | undefined
+  preview: string
+  timestampLabel: string
+  sortTime: number
+}
+
+function compareAgentChatRows(left: AgentChatRow, right: AgentChatRow): number {
+  const leftPending = left.summary?.hasPendingInputRequest ? 1 : 0
+  const rightPending = right.summary?.hasPendingInputRequest ? 1 : 0
+  if (leftPending !== rightPending) return rightPending - leftPending
+
+  const leftBusy = left.busy ? 1 : 0
+  const rightBusy = right.busy ? 1 : 0
+  if (leftBusy !== rightBusy) return rightBusy - leftBusy
+
+  return right.sortTime - left.sortTime
+}
+
+function getAgentRoomPreview(summary: AgentRoomSummary | undefined, busy: boolean): string {
+  if (summary?.hasPendingInputRequest) return 'Needs your answer'
+  if (busy) return 'Working...'
+  if (!summary?.lastPreview.trim()) return 'No messages yet'
+  if (summary.lastSpeaker === 'user') return `You: ${summary.lastPreview}`
+  return summary.lastPreview
+}
+
+function getAgentRoomSortTime(agent: Agent, summary: AgentRoomSummary | undefined): number {
+  return Date.parse(summary?.lastActivityAt ?? agent.createdAt) || 0
+}
+
+function formatAgentRoomTimestamp(iso: string | null): string {
+  if (!iso) return 'New'
+
+  const timestamp = new Date(iso)
+  if (Number.isNaN(timestamp.getTime())) return 'New'
+
+  const now = new Date()
+  const today = startOfLocalDay(now)
+  const messageDay = startOfLocalDay(timestamp)
+  const dayMs = 24 * 60 * 60 * 1000
+  const dayDiff = Math.floor((today.getTime() - messageDay.getTime()) / dayMs)
+
+  if (dayDiff === 0) {
+    return timestamp.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+  if (dayDiff === 1) return 'Yesterday'
+  if (dayDiff > 1 && dayDiff < 7) {
+    return timestamp.toLocaleDateString(undefined, { weekday: 'short' })
+  }
+  return timestamp.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function AgentIdentityHeader({
   agent,
   agents,
-  activeSection,
+  busy,
+  onAgentSaved,
+  onDelete
+}: {
+  agent: Agent
+  agents: Agent[]
+  busy: boolean
+  onAgentSaved: (agent: Agent) => void
+  onDelete: () => void
+}): React.JSX.Element {
+  const [profileOpen, setProfileOpen] = useState(false)
+  const presence = getAgentPresence(agent, busy)
+
+  return (
+    <div className="flex items-center gap-3 border-b px-3 py-2.5">
+      <button
+        type="button"
+        aria-label={`Edit ${agent.name}'s profile`}
+        onClick={() => setProfileOpen(true)}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-md p-1 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <AgentAvatar avatar={agent.avatar} size={44} className="shrink-0" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold leading-tight">{agent.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{agent.role}</p>
+        </div>
+      </button>
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <PresenceDot presence={presence} />
+        {presenceLabel(presence)}
+      </span>
+      <AgentActionsMenu onDelete={onDelete} />
+      <EditProfileDialog
+        key={agent.id}
+        agent={agent}
+        agents={agents}
+        open={profileOpen}
+        onOpenChange={setProfileOpen}
+        onAgentSaved={onAgentSaved}
+      />
+    </div>
+  )
+}
+
+// Identity editor reached from the header (ADR-027): avatar, name, role, and
+// whether the teammate is active. Persists through the shared settings payload.
+function EditProfileDialog({
+  agent,
+  agents,
+  open,
+  onOpenChange,
   onAgentSaved
 }: {
   agent: Agent
   agents: Agent[]
-  activeSection: AgentSection
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onAgentSaved: (agent: Agent) => void
 }): React.JSX.Element {
-  if (activeSection === 'instructions') {
-    return <InstructionsPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
-  }
+  const [savedColor, savedSymbol] = agent.avatar.split(AVATAR_DELIMITER)
+  const [color, setColor] = useState(savedColor || AGENT_COLORS[0]?.id || '')
+  const [symbol, setSymbol] = useState(savedSymbol || AGENT_SYMBOLS[0]?.id || '')
+  const [name, setName] = useState(agent.name)
+  const [role, setRole] = useState(agent.role)
+  const [enabled, setEnabled] = useState(agent.enabled)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const nextAvatar = `${color}${AVATAR_DELIMITER}${symbol}`
+  const nameIssue = getAgentNameIssue(name, agent.name, agents, agent.id)
+  const canSave = !nameIssue && Boolean(role.trim()) && !saving
 
-  if (activeSection === 'skills') {
-    return <SkillsPanel key={agent.id} agent={agent} />
-  }
-
-  if (activeSection === 'schedules') {
-    return <AgentSchedulesPanel key={agent.id} agent={agent} />
-  }
-
-  if (activeSection === 'settings') {
-    return (
-      <SettingsPanel key={agent.id} agent={agent} agents={agents} onAgentSaved={onAgentSaved} />
-    )
+  async function handleSave(): Promise<void> {
+    if (!canSave) {
+      return
+    }
+    try {
+      setSaving(true)
+      setError('')
+      const nextAgent = await window.ordinus.agents.updateSettings(
+        buildAgentSettingsPayload(agent, {
+          name: name.trim(),
+          role: role.trim(),
+          enabled,
+          avatar: nextAvatar
+        })
+      )
+      onAgentSaved(nextAgent)
+      onOpenChange(false)
+    } catch (saveError) {
+      setError(getErrorMessage(saveError, 'Profile could not be saved.'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
-    <div className="p-5">
-      <p className="text-sm text-muted-foreground">Select an agent section.</p>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit profile</DialogTitle>
+          <DialogDescription>How {agent.name} shows up on your team.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-1">
+          <div className="flex flex-col items-center gap-3">
+            <AgentAvatar avatar={nextAvatar} size={56} />
+            <AgentAvatarPicker
+              color={color}
+              symbol={symbol}
+              onColorChange={setColor}
+              onSymbolChange={setSymbol}
+              className="w-full"
+            />
+          </div>
+          <AgentNameField
+            name={name}
+            enabled={enabled}
+            nameIssue={nameIssue}
+            onNameChange={setName}
+            onEnabledChange={setEnabled}
+          />
+          <FormField label="Role">
+            <Input
+              maxLength={120}
+              placeholder="Brief description of this agent's purpose"
+              value={role}
+              onChange={(event) => setRole(event.target.value)}
+            />
+          </FormField>
+        </div>
+        {error ? <InlineError message={error} /> : null}
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={saving}
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button" disabled={!canSave} onClick={() => void handleSave()}>
+            {saving ? <Loader2 className="animate-spin" /> : null}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AgentTabContent({
+  agent,
+  activeTab,
+  autoGreet,
+  onAgentSaved,
+  onRoomChanged
+}: {
+  agent: Agent
+  activeTab: AgentTab
+  autoGreet: boolean
+  onAgentSaved: (agent: Agent) => void
+  onRoomChanged: () => void
+}): React.JSX.Element {
+  if (activeTab === 'chat') {
+    return (
+      <AgentRoom key={agent.id} agent={agent} autoGreet={autoGreet} onRoomChanged={onRoomChanged} />
+    )
+  }
+
+  if (activeTab === 'cv') {
+    return <CvTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+  }
+
+  if (activeTab === 'agenda') {
+    return <AgentSchedulesPanel key={agent.id} agent={agent} />
+  }
+
+  return <AboutTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+}
+
+// CV tab (ADR-027 Phase 4): the colleague's résumé — what they're great at
+// (capabilities), the tools they're fluent with (connectors), and their skills.
+// Capabilities and connectors persist through the shared updateSettings IPC.
+function buildAgentSettingsPayload(
+  agent: Agent,
+  overrides: Partial<{
+    name: string
+    role: string
+    capabilities: string
+    providerId: ProviderId
+    model: string
+    sandbox: AgentSandbox
+    connectors: string[]
+    avatar: string
+    enabled: boolean
+  }>
+): AgentUpdateSettingsInput {
+  return {
+    id: agent.id,
+    name: overrides.name ?? agent.name,
+    role: overrides.role ?? agent.role,
+    capabilities: overrides.capabilities ?? agent.capabilities,
+    providerId: overrides.providerId ?? agent.providerId,
+    model: overrides.model ?? agent.model,
+    sandbox: overrides.sandbox ?? agent.sandbox,
+    connectors: overrides.connectors ?? agent.connectors,
+    avatar: overrides.avatar ?? agent.avatar,
+    enabled: overrides.enabled ?? agent.enabled
+  }
+}
+
+function CvTab({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  return (
+    <ScrollArea className="h-full min-h-0">
+      <div className="grid gap-6 p-5">
+        <CvCapabilities agent={agent} onAgentSaved={onAgentSaved} />
+        <CvConnectors agent={agent} onAgentSaved={onAgentSaved} />
+      </div>
+      <div className="border-t">
+        <SkillsPanel agent={agent} />
+      </div>
+    </ScrollArea>
+  )
+}
+
+function CvCapabilities({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  const [value, setValue] = useState(agent.capabilities)
+  const [improving, setImproving] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const dirty = value !== agent.capabilities
+
+  async function handleImprove(): Promise<void> {
+    if (improving) {
+      return
+    }
+    const source = agent.instructions.trim()
+    if (source.length < 12) {
+      return
+    }
+    try {
+      setImproving(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftFromIntent({
+        requestedWork: source,
+        sandbox: agent.sandbox
+      })
+      setValue(nextDraft.capabilities)
+    } catch (improveError) {
+      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
+    } finally {
+      setImproving(false)
+    }
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!dirty || saving) {
+      return
+    }
+    try {
+      setSaving(true)
+      setError('')
+      const nextAgent = await window.ordinus.agents.updateSettings(
+        buildAgentSettingsPayload(agent, { capabilities: value })
+      )
+      onAgentSaved(nextAgent)
+    } catch (saveError) {
+      setError(getErrorMessage(saveError, 'Capabilities could not be saved.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="grid gap-2">
+      <CapabilitiesField
+        value={value}
+        improving={improving}
+        canImprove={agent.instructions.trim().length >= 12}
+        onChange={setValue}
+        onImprove={() => void handleImprove()}
+      />
+      {error ? <InlineError message={error} /> : null}
+      {dirty ? (
+        <div className="flex items-center justify-end gap-3">
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            disabled={saving}
+            onClick={() => setValue(agent.capabilities)}
+          >
+            Discard
+          </button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={saving}
+            onClick={() => void handleSave()}
+          >
+            {saving ? <Loader2 className="animate-spin" /> : null}
+            Save
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function CvConnectors({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  const [connectors, setConnectors] = useState<ConnectorSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busyId, setBusyId] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    window.ordinus.connectors
+      .list()
+      .then((list) => {
+        if (active) setConnectors(list)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  async function toggle(connectorId: string, enabled: boolean): Promise<void> {
+    const set = new Set(agent.connectors)
+    if (enabled) {
+      set.add(connectorId)
+    } else {
+      set.delete(connectorId)
+    }
+    try {
+      setBusyId(connectorId)
+      setError('')
+      const nextAgent = await window.ordinus.agents.updateSettings(
+        buildAgentSettingsPayload(agent, { connectors: [...set] })
+      )
+      onAgentSaved(nextAgent)
+    } catch (toggleError) {
+      setError(getErrorMessage(toggleError, 'That tool could not be updated.'))
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  return (
+    <section className="grid gap-2">
+      <div>
+        <h3 className="text-sm font-semibold leading-tight">Tools &amp; integrations</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          External systems this teammate is fluent with. Authorize connections in Settings →
+          Connections — a tool can be enabled here before its connection is set up.
+        </p>
+      </div>
+      {error ? <InlineError message={error} /> : null}
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : connectors.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No tools available.</p>
+      ) : (
+        <ul className="divide-y rounded-md border">
+          {connectors.map((connector) => (
+            <li key={connector.id} className="flex items-center justify-between gap-4 px-3 py-2">
+              <div className="min-w-0">
+                <span className="text-sm font-medium">{connector.label}</span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {connector.connected ? 'Connected' : 'Not connected'}
+                </span>
+              </div>
+              <Switch
+                checked={agent.connectors.includes(connector.id)}
+                disabled={busyId === connector.id}
+                onCheckedChange={(checked) => void toggle(connector.id, checked)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+// About tab (ADR-027 Phase 6): the working agreement (brief + what they've
+// learned from you) and the quiet "Trust & access" corner.
+function AboutTab({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  const [view, setView] = useState<'agreement' | 'access'>('agreement')
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-1 border-b px-4 py-2">
+        <AboutSegment
+          label="Working agreement"
+          icon={FileText}
+          active={view === 'agreement'}
+          onClick={() => setView('agreement')}
+        />
+        <AboutSegment
+          label="Trust & access"
+          icon={Settings2}
+          active={view === 'access'}
+          onClick={() => setView('access')}
+        />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {view === 'agreement' ? (
+          <WorkingAgreement key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+        ) : (
+          <TrustAccessPanel key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+        )}
+      </div>
     </div>
+  )
+}
+
+// The working agreement: a brief (static instructions) plus the standing rules
+// the agent has learned from the user. Per-agent prune lives here (ADR-027 §8,
+// replacing the global reflection dialog).
+function WorkingAgreement({
+  agent,
+  onAgentSaved
+}: {
+  agent: Agent
+  onAgentSaved: (agent: Agent) => void
+}): React.JSX.Element {
+  return (
+    <ScrollArea className="h-full min-h-0">
+      <div className="grid gap-5 p-5">
+        <section className="grid gap-2">
+          <div>
+            <h3 className="text-sm font-semibold leading-tight">Brief</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              How {agent.name} should work — role, scope, and what to avoid.
+            </p>
+          </div>
+          <div className="h-80 overflow-hidden rounded-lg border bg-card">
+            <InstructionsPanel agent={agent} onAgentSaved={onAgentSaved} />
+          </div>
+        </section>
+        <LearnedRules agent={agent} />
+      </div>
+    </ScrollArea>
+  )
+}
+
+function LearnedRules({ agent }: { agent: Agent }): React.JSX.Element {
+  const [rules, setRules] = useState<AgentMemoryRule[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busyId, setBusyId] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) {
+        return
+      }
+      setLoading(true)
+      window.ordinus.agents
+        .listMemory({ agentId: agent.id })
+        .then((next) => {
+          if (!cancelled) setRules(next)
+        })
+        .catch((loadError) => {
+          if (!cancelled) {
+            setError(getErrorMessage(loadError, 'Could not load what they learned.'))
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [agent.id])
+
+  async function remove(ruleId: string): Promise<void> {
+    try {
+      setBusyId(ruleId)
+      setError('')
+      await window.ordinus.agents.deactivateMemory({ agentId: agent.id, ruleId })
+      setRules((current) => current.filter((rule) => rule.id !== ruleId))
+    } catch (removeError) {
+      setError(getErrorMessage(removeError, 'That rule could not be removed.'))
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  return (
+    <section className="grid gap-2">
+      <div>
+        <h3 className="text-sm font-semibold leading-tight">What {agent.name} learned from you</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Standing preferences you&apos;ve taught. Remove any that no longer apply.
+        </p>
+      </div>
+      {error ? <InlineError message={error} /> : null}
+      {loading ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : rules.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nothing yet — teach {agent.name} as you work together.
+        </p>
+      ) : (
+        <ul className="grid gap-1.5">
+          {rules.map((rule) => (
+            <li
+              key={rule.id}
+              className="group flex items-start gap-2 rounded-md border bg-card px-2.5 py-1.5 text-sm"
+            >
+              <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                {rule.rule}
+              </span>
+              <button
+                type="button"
+                disabled={busyId === rule.id}
+                onClick={() => void remove(rule.id)}
+                className="shrink-0 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
+                aria-label="Remove rule"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function AboutSegment({
+  label,
+  icon: Icon,
+  active,
+  onClick
+}: {
+  label: string
+  icon: typeof Bot
+  active: boolean
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+        active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'
+      )}
+    >
+      <Icon className="size-3.5" />
+      {label}
+    </button>
   )
 }
 
@@ -987,7 +1781,6 @@ function InstructionsPanel({
   const [error, setError] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Revert target — son kaydedilen, session boyunca tutulur
   const revertTargetRef = useRef<string>(savedInstructions)
 
   async function save(value: string): Promise<void> {
@@ -1000,13 +1793,11 @@ function InstructionsPanel({
         id: agent.id,
         instructions: value
       })
-      revertTargetRef.current = savedInstructions // kayıt öncesi versiyonu sakla
+      revertTargetRef.current = savedInstructions
       setSavedInstructions(nextAgent.instructions)
       onAgentSaved(nextAgent)
 
-      // "Saved · Revert" göster
       setSaveStatus('saved')
-      // Revert butonu 4sn sonra solar
       if (revertTimerRef.current) clearTimeout(revertTimerRef.current)
       revertTimerRef.current = setTimeout(() => setSaveStatus('idle'), 4000)
     } catch (saveError) {
@@ -1020,7 +1811,6 @@ function InstructionsPanel({
   function handleChange(value: string): void {
     setInstructions(value)
     setSaveStatus('idle')
-    // Debounce: 2sn sonra otomatik kayıt
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       void save(value)
@@ -1028,7 +1818,6 @@ function InstructionsPanel({
   }
 
   function handleBlur(): void {
-    // Focus kaybolunca bekleyen debounce'u iptal et, hemen kaydet
     if (debounceRef.current) clearTimeout(debounceRef.current)
     void save(instructions)
   }
@@ -1043,7 +1832,6 @@ function InstructionsPanel({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Durum göstergesi — sağ üst, yalnızca gerektiğinde */}
       <div className="absolute right-5 top-4 flex items-center gap-2">
         {saving ? (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1067,7 +1855,6 @@ function InstructionsPanel({
         ) : null}
       </div>
 
-      {/* Editör — sınırsız, panel yüzeyiyle bütünleşik */}
       <textarea
         key={agent.id}
         aria-label={`${agent.name} instructions`}
@@ -1082,52 +1869,24 @@ function InstructionsPanel({
   )
 }
 
-function SettingsPanel({
+// Trust & access (ADR-027 Phase 6): the one quiet machine corner — which engine
+// powers the agent, how much it may touch (sandbox), and extra folders it can
+// reach. Identity (name/role/avatar/enabled) lives in the header profile;
+// capabilities/connectors live on the CV tab.
+function TrustAccessPanel({
   agent,
-  agents,
   onAgentSaved
 }: {
   agent: Agent
-  agents: Agent[]
   onAgentSaved: (agent: Agent) => void
 }): React.JSX.Element {
   const initialSettings = getPersistedSettingsDraft(agent)
   const [savedSettings, setSavedSettings] = useState<SettingsDraft>(initialSettings)
   const [draft, setDraft] = useState<SettingsDraft>(getEditableSettingsDraft(initialSettings))
   const [saving, setSaving] = useState(false)
-  const [improvingCapabilities, setImprovingCapabilities] = useState(false)
   const [error, setError] = useState('')
-  const [availableConnectors, setAvailableConnectors] = useState<ConnectorSummary[]>([])
   const dirty = isSettingsDirty(draft, savedSettings)
-  const nameIssue = getAgentNameIssue(draft.name, savedSettings.name, agents, agent.id)
-  const canSave = dirty && Boolean(draft.model.trim()) && !nameIssue && !saving
-
-  useEffect(() => {
-    let active = true
-    window.ordinus.connectors
-      .list()
-      .then((list) => {
-        if (active) {
-          setAvailableConnectors(list)
-        }
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [])
-
-  function toggleConnector(connectorId: string, enabled: boolean): void {
-    setDraft((current) => {
-      const set = new Set(current.connectors)
-      if (enabled) {
-        set.add(connectorId)
-      } else {
-        set.delete(connectorId)
-      }
-      return { ...current, connectors: [...set] }
-    })
-  }
+  const canSave = dirty && Boolean(draft.model.trim()) && !saving
 
   function updateDraft(next: Partial<SettingsDraft>): void {
     setDraft((current) => {
@@ -1139,31 +1898,6 @@ function SettingsPanel({
     })
   }
 
-  async function handleImproveCapabilities(): Promise<void> {
-    if (improvingCapabilities) {
-      return
-    }
-
-    const source = agent.instructions.trim()
-    if (source.length < 12) {
-      return
-    }
-
-    try {
-      setImprovingCapabilities(true)
-      setError('')
-      const nextDraft = await window.ordinus.agents.draftFromIntent({
-        requestedWork: source,
-        sandbox: draft.sandbox
-      })
-      updateDraft({ capabilities: nextDraft.capabilities })
-    } catch (improveError) {
-      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
-    } finally {
-      setImprovingCapabilities(false)
-    }
-  }
-
   async function handleSave(): Promise<void> {
     if (!canSave) {
       return
@@ -1172,19 +1906,19 @@ function SettingsPanel({
     try {
       setSaving(true)
       setError('')
-      const nextAgent = await window.ordinus.agents.updateSettings({
-        id: agent.id,
-        ...draft,
-        name: draft.name.trim(),
-        role: draft.role.trim(),
-        model: draft.model.trim()
-      })
+      const nextAgent = await window.ordinus.agents.updateSettings(
+        buildAgentSettingsPayload(agent, {
+          providerId: draft.providerId,
+          model: draft.model.trim(),
+          sandbox: draft.sandbox
+        })
+      )
       const nextSettings = getPersistedSettingsDraft(nextAgent)
       setSavedSettings(nextSettings)
       setDraft(getEditableSettingsDraft(nextSettings))
       onAgentSaved(nextAgent)
     } catch (saveError) {
-      setError(getErrorMessage(saveError, 'Settings could not be saved.'))
+      setError(getErrorMessage(saveError, 'Trust & access could not be saved.'))
     } finally {
       setSaving(false)
     }
@@ -1194,35 +1928,11 @@ function SettingsPanel({
     <div className="relative flex h-full min-h-0 flex-col">
       <ScrollArea className="h-full min-h-0">
         <div className={cn('grid gap-5 p-5', dirty && 'pb-24')}>
-          {/* Agent adı + Enabled */}
-          <AgentNameField
-            name={draft.name}
-            enabled={draft.enabled}
-            nameIssue={nameIssue}
-            onNameChange={(name) => updateDraft({ name })}
-            onEnabledChange={(enabled) => updateDraft({ enabled })}
-          />
+          <p className="text-xs text-muted-foreground">
+            The admin corner — which engine powers {agent.name}, how much they can touch, and any
+            extra folders they may reach.
+          </p>
 
-          {/* Role */}
-          <FormField label="Role">
-            <Input
-              maxLength={120}
-              placeholder="Brief description of this agent's purpose"
-              value={draft.role}
-              onChange={(event) => updateDraft({ role: event.target.value })}
-            />
-          </FormField>
-
-          {/* Capabilities */}
-          <CapabilitiesField
-            value={draft.capabilities}
-            improving={improvingCapabilities}
-            canImprove={agent.instructions.trim().length >= 12}
-            onChange={(capabilities) => updateDraft({ capabilities })}
-            onImprove={() => void handleImproveCapabilities()}
-          />
-
-          {/* Runtime */}
           <div className="grid gap-3">
             <div className="grid gap-3 md:grid-cols-2">
               <FormField label="Provider">
@@ -1244,52 +1954,16 @@ function SettingsPanel({
             <RuntimeModelSummary providerId={draft.providerId} model={draft.model} />
           </div>
 
-          {/* Sandbox */}
           <SandboxField
             name="agent-settings-sandbox"
             value={draft.sandbox}
             onChange={(sandbox) => updateDraft({ sandbox })}
           />
 
-          {/* Connectors */}
-          <div className="space-y-2">
-            <div>
-              <h3 className="text-sm font-semibold leading-tight">Connectors</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                External systems this agent may use. Authorize connections in Settings → Connections
-                — an agent can be enabled here before its connection is set up.
-              </p>
-            </div>
-            {availableConnectors.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No connectors available.</p>
-            ) : (
-              <ul className="divide-y rounded-md border">
-                {availableConnectors.map((connector) => (
-                  <li
-                    key={connector.id}
-                    className="flex items-center justify-between gap-4 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <span className="text-sm font-medium">{connector.label}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {connector.connected ? 'Connected' : 'Not connected'}
-                      </span>
-                    </div>
-                    <Switch
-                      checked={draft.connectors.includes(connector.id)}
-                      onCheckedChange={(checked) => toggleConnector(connector.id, checked)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
           <ExtraDirectoriesPanel agentId={agent.id} />
         </div>
       </ScrollArea>
 
-      {/* Save bar — yalnızca dirty'de belirir, panelin altına sabit */}
       {dirty ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
           <div className="pointer-events-auto flex items-center justify-between gap-3 rounded-lg border bg-accent px-4 py-3 shadow-md">
@@ -1490,83 +2164,100 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
     }
   }, [load])
 
-  async function toggle(s: AgentSchedule): Promise<void> {
-    setBusyId(s.id)
+  async function runScheduleAction(scheduleId: string, action: () => Promise<void>): Promise<void> {
+    setBusyId(scheduleId)
     try {
-      await window.ordinus.schedules.setEnabled({ id: s.id, enabled: !s.enabled })
+      await action()
       await load(true)
     } finally {
       setBusyId('')
     }
   }
 
+  async function toggle(s: AgentSchedule): Promise<void> {
+    await runScheduleAction(s.id, async () => {
+      await window.ordinus.schedules.setEnabled({ id: s.id, enabled: !s.enabled })
+    })
+  }
+
   async function fire(s: AgentSchedule): Promise<void> {
-    setBusyId(s.id)
-    try {
+    await runScheduleAction(s.id, async () => {
       await window.ordinus.schedules.fireNow({ id: s.id })
-      await load(true)
-    } finally {
-      setBusyId('')
-    }
+    })
   }
 
   async function remove(s: AgentSchedule): Promise<void> {
     if (!window.confirm(`Delete schedule "${s.name}"?`)) return
-    setBusyId(s.id)
-    try {
+    await runScheduleAction(s.id, async () => {
       await window.ordinus.schedules.delete({ id: s.id })
-      await load(true)
-    } finally {
-      setBusyId('')
-    }
+    })
   }
 
   return (
-    <div className="space-y-3 p-5">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 p-5">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold leading-tight">Schedules</h2>
-          <p className="text-sm text-muted-foreground">Run this agent on a recurring schedule.</p>
+          <h2 className="text-base font-semibold leading-tight">Agenda</h2>
+          <p className="text-sm text-muted-foreground">
+            Standing times {agent.name} works on its own.
+          </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!agent.enabled}>
-          <Plus className="size-4" /> New schedule
+          <Plus className="size-4" /> New
         </Button>
       </div>
+
+      {!agent.enabled ? (
+        <p className="rounded-md border border-dashed bg-accent/40 px-3 py-2 text-xs text-muted-foreground">
+          Enable {agent.name} to add standing work to their agenda.
+        </p>
+      ) : null}
 
       {loading ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : schedules.length === 0 ? (
-        <div className="rounded-md border bg-accent/50 p-4 text-sm text-muted-foreground">
-          No schedules for {agent.name} yet.
+        <div className="grid place-items-center gap-2 rounded-lg border border-dashed bg-accent/40 p-8 text-center">
+          <CalendarClock className="size-7 text-muted-foreground" />
+          <p className="text-sm font-medium">{agent.name}&apos;s agenda is clear</p>
+          <p className="max-w-xs text-sm text-muted-foreground">
+            Add a standing time for {agent.name} to pick up work on their own.
+          </p>
         </div>
       ) : (
-        <div className="divide-y rounded-md border">
+        <ul className="grid gap-2">
           {schedules.map((s) => (
-            <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-              <div className="min-w-0 space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">{s.name}</span>
+            <li
+              key={s.id}
+              className={cn(
+                'flex items-start gap-3 rounded-lg border bg-card p-3',
+                !s.enabled && 'opacity-70'
+              )}
+            >
+              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary">
+                <CalendarClock className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-semibold">{s.name}</span>
                   {s.lastRunStatus === 'failed' ? (
-                    <span className="text-xs text-amber-600">Last failed</span>
+                    <span className="rounded-full bg-status-attention/10 px-1.5 py-px text-[10px] font-medium text-status-attention">
+                      Last run failed
+                    </span>
                   ) : null}
                   {!s.enabled ? (
-                    <span className="text-xs text-muted-foreground">{disableReasonLabel(s)}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {disableReasonLabel(s)}
+                    </span>
                   ) : null}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {s.cron ? `Cron: ${s.cron}` : s.runAt ? `Once: ${s.runAt}` : ''} · Next:{' '}
-                  {s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : '—'}
-                </div>
+                <p className="text-xs text-muted-foreground">{describeSchedule(s)}</p>
+                {s.enabled && s.nextRunAt ? (
+                  <p className="text-xs text-muted-foreground">
+                    Next · {formatNextRun(s.nextRunAt)}
+                  </p>
+                ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busyId === s.id}
-                  onClick={() => void toggle(s)}
-                >
-                  {s.enabled ? 'Disable' : 'Enable'}
-                </Button>
+              <div className="flex shrink-0 items-center gap-1.5">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1575,18 +2266,25 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
                 >
                   Run now
                 </Button>
+                <Switch
+                  aria-label={s.enabled ? 'Disable' : 'Enable'}
+                  checked={s.enabled}
+                  disabled={busyId === s.id}
+                  onCheckedChange={() => void toggle(s)}
+                />
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label="Delete"
                   disabled={busyId === s.id}
                   onClick={() => void remove(s)}
                 >
                   <Trash2 className="size-4" />
                 </Button>
               </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       <CreateScheduleDialog
@@ -1602,6 +2300,83 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
       />
     </div>
   )
+}
+
+const SCHEDULE_WEEKDAYS = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday'
+]
+
+// Human-readable recurrence for the Agenda tab. Falls back to the raw cron for
+// patterns it does not recognize — presentation only, never alters scheduling.
+function describeSchedule(schedule: AgentSchedule): string {
+  if (schedule.runAt) {
+    return `Once · ${new Date(schedule.runAt).toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    })}`
+  }
+  if (schedule.cron) {
+    return describeCron(schedule.cron) ?? `Cron · ${schedule.cron}`
+  }
+  return 'No timing set'
+}
+
+function describeCron(cron: string): string | null {
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) {
+    return null
+  }
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+
+  const everyMinutes = /^\*\/(\d+)$/.exec(minute)
+  if (everyMinutes && hour === '*' && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+    return `Every ${everyMinutes[1]} minutes`
+  }
+  if (
+    /^\d+$/.test(minute) &&
+    hour === '*' &&
+    dayOfMonth === '*' &&
+    month === '*' &&
+    dayOfWeek === '*'
+  ) {
+    return `Hourly at :${pad2(minute)}`
+  }
+
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) {
+    return null
+  }
+  const time = `${pad2(hour)}:${pad2(minute)}`
+
+  if (dayOfMonth === '*' && month === '*') {
+    if (dayOfWeek === '*') return `Every day at ${time}`
+    if (dayOfWeek === '1-5') return `Every weekday at ${time}`
+    if (dayOfWeek === '0,6' || dayOfWeek === '6,0') return `Weekends at ${time}`
+    if (/^\d$/.test(dayOfWeek)) return `Every ${SCHEDULE_WEEKDAYS[Number(dayOfWeek)]} at ${time}`
+  }
+  if (dayOfWeek === '*' && month === '*' && /^\d+$/.test(dayOfMonth)) {
+    return `Monthly on day ${dayOfMonth} at ${time}`
+  }
+  return null
+}
+
+function pad2(value: string): string {
+  return value.padStart(2, '0')
+}
+
+function formatNextRun(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
 }
 
 function DeleteAgentDialog({
@@ -1663,14 +2438,22 @@ function DeleteAgentDialog({
   )
 }
 
-function StatusDot({ status }: { status: AgentStatus }): React.JSX.Element {
+function PresenceDot({
+  presence,
+  className
+}: {
+  presence: AgentPresence
+  className?: string
+}): React.JSX.Element {
   return (
     <span
       className={cn(
-        'mt-1 size-2.5 shrink-0 rounded-full',
-        status === 'ready' && 'bg-status-completed',
-        status === 'needs-attention' && 'bg-status-attention',
-        status === 'offline' && 'bg-muted-foreground'
+        'size-2.5 shrink-0 rounded-full',
+        presence === 'available' && 'bg-status-completed',
+        presence === 'working' && 'animate-pulse bg-status-running',
+        presence === 'needs-setup' && 'bg-status-attention',
+        presence === 'off' && 'bg-muted-foreground',
+        className
       )}
     />
   )
@@ -1754,7 +2537,6 @@ function SandboxField({
   return (
     <div className="grid gap-2">
       <span className="text-xs font-medium text-muted-foreground">Sandbox</span>
-      {/* Kompakt radio satırları */}
       <div className="grid gap-1">
         {sandboxOptions.map((option) => {
           const isSelected = option.value === value
@@ -1784,7 +2566,6 @@ function SandboxField({
                   ) : null}
                 </span>
               </label>
-              {/* Seçilinin açıklaması doğrudan altında */}
               {isSelected ? (
                 <p
                   className={cn(
@@ -1831,26 +2612,11 @@ function InlineError({ message }: { message: string }): React.JSX.Element {
   )
 }
 
-function getAgentStatus(agent: Agent): AgentStatus {
-  if (!agent.enabled) {
-    return 'offline'
-  }
-  if (!agent.instructions.trim()) {
-    return 'needs-attention'
-  }
-  return 'ready'
-}
-
 function getPersistedSettingsDraft(agent: Agent): SettingsDraft {
   return {
-    name: agent.name,
-    role: agent.role,
-    capabilities: agent.capabilities,
     providerId: agent.providerId,
     model: agent.model,
-    sandbox: agent.sandbox,
-    connectors: agent.connectors,
-    enabled: agent.enabled
+    sandbox: agent.sandbox
   }
 }
 
@@ -1863,14 +2629,9 @@ function getEditableSettingsDraft(settings: SettingsDraft): SettingsDraft {
 
 function isSettingsDirty(draft: SettingsDraft, savedSettings: SettingsDraft): boolean {
   return (
-    draft.name !== savedSettings.name ||
-    draft.role !== savedSettings.role ||
-    draft.capabilities !== savedSettings.capabilities ||
     draft.providerId !== savedSettings.providerId ||
     draft.model !== savedSettings.model ||
-    draft.sandbox !== savedSettings.sandbox ||
-    draft.connectors.join(',') !== savedSettings.connectors.join(',') ||
-    draft.enabled !== savedSettings.enabled
+    draft.sandbox !== savedSettings.sandbox
   )
 }
 

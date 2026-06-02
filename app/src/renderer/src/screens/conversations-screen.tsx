@@ -2356,7 +2356,7 @@ function CreateConversationDialog({
   }
 
   async function handleCreate(): Promise<void> {
-    if (selectedAgentIds.length === 0 || saving) return
+    if (selectedAgentIds.length < 2 || saving) return
 
     try {
       setSaving(true)
@@ -2375,12 +2375,13 @@ function CreateConversationDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>New conversation</DialogTitle>
+          <DialogTitle>New group conversation</DialogTitle>
           <DialogDescription>
-            Start a session-backed conversation with one or more agents.
+            Bring two or more agents together. One-on-one chats live in each agent&apos;s room on
+            the Agents screen.
           </DialogDescription>
         </DialogHeader>
-        {enabledAgents.length > 0 ? (
+        {enabledAgents.length >= 2 ? (
           <div className="grid gap-3">
             <div className="grid gap-2">
               <span className="text-xs font-medium text-muted-foreground">Agents</span>
@@ -2414,13 +2415,19 @@ function CreateConversationDialog({
                 onChange={(event) => setTitle(event.target.value)}
               />
             </label>
+            {selectedAgentIds.length === 1 ? (
+              <p className="text-xs text-muted-foreground">
+                Pick at least one more agent — a 1:1 chat lives in that agent&apos;s room on the
+                Agents screen.
+              </p>
+            ) : null}
             {error ? <InlineError message={error} /> : null}
           </div>
         ) : (
           <EmptyState
             icon={<Bot />}
-            title="No enabled agents"
-            detail="Create or enable an agent before starting a conversation."
+            title="Need at least two agents"
+            detail="Group conversations bring two or more enabled agents together. Enable another agent to start one."
           />
         )}
         <DialogFooter>
@@ -2434,7 +2441,7 @@ function CreateConversationDialog({
           </Button>
           <Button
             type="button"
-            disabled={selectedAgentIds.length === 0 || enabledAgents.length === 0 || saving}
+            disabled={selectedAgentIds.length < 2 || enabledAgents.length === 0 || saving}
             onClick={() => void handleCreate()}
           >
             {saving ? <Loader2 className="animate-spin" /> : <Plus />}
@@ -2471,22 +2478,22 @@ function NoConversationState({
         </span>
         <div className="grid gap-2">
           <p className="text-base font-semibold">
-            {agents.length > 0 ? 'Start a conversation with an agent' : 'No agents yet'}
+            {agents.length > 1 ? 'Start a group conversation' : 'No group conversations yet'}
           </p>
           <p className="text-sm leading-6 text-muted-foreground">
-            {agents.length > 0
-              ? 'Mention an agent by name when a conversation has multiple participants.'
-              : 'Create an agent before starting a session-backed conversation.'}
+            {agents.length > 1
+              ? 'Bring two or more agents together and @mention them to route the work. One-on-one chats live in each agent’s room on the Agents screen.'
+              : 'Group conversations need at least two agents. For a 1:1, open an agent’s room on the Agents screen.'}
           </p>
         </div>
-        {agents.length > 0 ? (
+        {agents.length > 1 ? (
           <Button type="button" className="mx-auto" onClick={onCreateConversation}>
             <Plus />
-            New conversation
+            New group conversation
           </Button>
         ) : (
           <Button asChild className="mx-auto">
-            <Link to={appRoutePaths.agents}>Create agent</Link>
+            <Link to={appRoutePaths.agents}>Go to Agents</Link>
           </Button>
         )}
       </div>
@@ -2788,21 +2795,15 @@ function createConversationForAgents(
   title: string
 ): Promise<ConversationDetail> {
   const trimmedTitle = title.trim() || undefined
-  const [firstAgentId] = agentIds
 
-  if (!firstAgentId) {
-    throw new Error('Choose an agent before starting a conversation.')
+  // ADR-027: the Conversations area is the multi-agent group space. One-on-one
+  // chats live in each agent's room on the Agents screen.
+  if (agentIds.length < 2) {
+    throw new Error('Choose at least two agents for a group conversation.')
   }
 
-  if (agentIds.length > 1) {
-    return window.ordinus.conversations.createManual({
-      agentIds,
-      title: trimmedTitle
-    })
-  }
-
-  return window.ordinus.conversations.createDirect({
-    agentId: firstAgentId,
+  return window.ordinus.conversations.createManual({
+    agentIds,
     title: trimmedTitle
   })
 }

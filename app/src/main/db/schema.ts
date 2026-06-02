@@ -57,17 +57,26 @@ export const agentMemory = sqliteTable(
   })
 )
 
-export const conversations = sqliteTable('conversations', {
-  id: text('id').primaryKey(),
-  title: text('title').notNull(),
-  workingRoot: text('working_root').notNull().default(''),
-  mode: text('mode').notNull(),
-  routingMode: text('routing_mode').notNull().default('manual'),
-  status: text('status').notNull(),
-  summary: text('summary').notNull(),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull()
-})
+export const conversations = sqliteTable(
+  'conversations',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    workingRoot: text('working_root').notNull().default(''),
+    mode: text('mode').notNull(),
+    // 'room' = an agent's canonical 1:1 home conversation; 'group' = everything
+    // shown in the Conversations area (multi-agent). See ADR-027.
+    kind: text('kind').notNull().default('group'),
+    routingMode: text('routing_mode').notNull().default('manual'),
+    status: text('status').notNull(),
+    summary: text('summary').notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    kindIdx: index('conversations_kind_idx').on(table.kind)
+  })
+)
 
 export const conversationParticipants = sqliteTable('conversation_participants', {
   id: text('id').primaryKey(),
@@ -95,6 +104,9 @@ export const conversationTurns = sqliteTable('conversation_turns', {
   artifactRefs: text('artifact_refs').notNull().default('[]'),
   changedFiles: text('changed_files').notNull().default('[]'),
   truncated: integer('truncated', { mode: 'boolean' }).notNull(),
+  // True when the provider session could not resume and a fresh session was
+  // started for this turn (ADR-013 fallback). The room shows a gentle note.
+  sessionReset: integer('session_reset', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })

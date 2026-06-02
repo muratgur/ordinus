@@ -4,6 +4,7 @@ import type { Agent, AgentDraft, AgentProfile, AgentProfileCatalog } from '@shar
 import { Dialog, DialogContent } from './ui/dialog'
 import { Input } from './ui/input'
 import { AGENT_COLORS, AGENT_SYMBOLS, AVATAR_DELIMITER } from './agent-palette'
+import { AgentAvatarPicker } from './agent-avatar-picker'
 import { notify } from '../lib/notifications'
 import { cn } from '../lib/utils'
 
@@ -11,10 +12,6 @@ type CreationStep = 'capabilities' | 'shape' | 'greet'
 
 const PULSE_MS = 900
 const TYPE_SPEED_MS = 22
-const REPLY_LINES: [string, string] = [
-  "Hi — I think we're going to work well together.",
-  'Give me a task whenever you’re ready.'
-]
 
 type AgentCreationFlowProps = {
   open: boolean
@@ -231,7 +228,7 @@ export function AgentCreationFlow({
               />
             ) : null}
 
-            {step === 'greet' ? <GreetStage /> : null}
+            {step === 'greet' ? <GreetStage name={name} /> : null}
           </div>
 
           <FlowFooter
@@ -369,47 +366,17 @@ function ShapeStage({
         className="w-full border-0 border-b border-border bg-transparent px-1 py-1.5 text-center text-base outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-foreground"
       />
 
-      <div className="flex justify-center gap-2">
-        {AGENT_COLORS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            aria-label={option.id}
-            onClick={() => onColorChange(option.id)}
-            className={cn(
-              'size-6 rounded-full transition-all duration-200',
-              option.className,
-              color === option.id
-                ? 'scale-110 ring-2 ring-foreground ring-offset-2 ring-offset-background'
-                : 'opacity-75 hover:opacity-100'
-            )}
-          />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-8 gap-1.5">
-        {AGENT_SYMBOLS.map(({ id, Icon }) => (
-          <button
-            key={id}
-            type="button"
-            aria-label={id}
-            onClick={() => onSymbolChange(id)}
-            className={cn(
-              'flex aspect-square items-center justify-center rounded-full transition-all duration-200',
-              symbol === id
-                ? 'bg-foreground text-background'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            <Icon className="size-4" strokeWidth={1.75} />
-          </button>
-        ))}
-      </div>
+      <AgentAvatarPicker
+        color={color}
+        symbol={symbol}
+        onColorChange={onColorChange}
+        onSymbolChange={onSymbolChange}
+      />
     </div>
   )
 }
 
-function GreetStage(): React.JSX.Element {
+function GreetStage({ name }: { name: string }): React.JSX.Element {
   const [phase, setPhase] = useState<'pulse' | 'reply'>('pulse')
 
   useEffect(() => {
@@ -417,12 +384,10 @@ function GreetStage(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [])
 
-  const fullReply = REPLY_LINES.join('\n')
-  const typed = useTypewriter(phase === 'reply' ? fullReply : '', TYPE_SPEED_MS)
-  const firstLineLength = REPLY_LINES[0].length
-  const renderedFirst = typed.length <= firstLineLength ? typed : REPLY_LINES[0]
-  const renderedSecond = typed.length > firstLineLength ? typed.slice(firstLineLength + 1) : ''
-  const fullyTyped = typed.length === fullReply.length && phase === 'reply'
+  const displayName = name.trim() || 'Your agent'
+  const line = `${displayName} is coming to life…`
+  const typed = useTypewriter(phase === 'reply' ? line : '', TYPE_SPEED_MS)
+  const fullyTyped = typed.length === line.length && phase === 'reply'
 
   if (phase === 'pulse') {
     return (
@@ -435,15 +400,12 @@ function GreetStage(): React.JSX.Element {
   return (
     <div className="max-w-xl text-center">
       <p className="text-2xl font-semibold leading-snug tracking-tight">
-        {renderedFirst}
-        {!fullyTyped && renderedSecond.length === 0 ? <Caret /> : null}
+        {typed}
+        {!fullyTyped ? <Caret /> : null}
       </p>
-      {renderedSecond || fullyTyped ? (
-        <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-          {renderedSecond}
-          {!fullyTyped ? <Caret /> : null}
-        </p>
-      ) : null}
+      <p className="mt-3 text-base leading-relaxed text-muted-foreground">
+        They&apos;ll say hello in your chat.
+      </p>
     </div>
   )
 }

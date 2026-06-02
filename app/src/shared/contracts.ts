@@ -533,6 +533,7 @@ export const ConversationTurnSchema = z.object({
   artifactRefs: z.array(WorkspaceRelativePathSchema),
   changedFiles: z.array(WorkspaceRelativePathSchema),
   truncated: z.boolean(),
+  sessionReset: z.boolean().default(false),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -551,11 +552,16 @@ export const ConversationInputRequestSchema = z.object({
   updatedAt: z.string()
 })
 
+// 'room' = an agent's canonical 1:1 home conversation; 'group' = a multi-agent
+// conversation shown in the Conversations area. See ADR-027.
+export const ConversationKindSchema = z.enum(['room', 'group'])
+
 export const ConversationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   workingRoot: WorkspaceRelativePathSchema,
   mode: ConversationModeSchema,
+  kind: ConversationKindSchema.default('group'),
   routingMode: ConversationRoutingModeSchema.default('manual'),
   status: ConversationStatusSchema,
   summary: z.string(),
@@ -567,6 +573,16 @@ export const ConversationListItemSchema = ConversationSchema.extend({
   agentName: z.string(),
   participantCount: z.number().int().nonnegative(),
   lastPreview: z.string()
+})
+
+export const AgentRoomSummarySchema = z.object({
+  agentId: z.string().min(1),
+  conversationId: z.string().min(1),
+  lastPreview: z.string(),
+  lastSpeaker: ConversationTurnSpeakerSchema.nullable(),
+  lastActivityAt: z.string().nullable(),
+  lastTurnStatus: ConversationTurnStatusSchema.nullable(),
+  hasPendingInputRequest: z.boolean()
 })
 
 export const ConversationDetailSchema = ConversationSchema.extend({
@@ -582,6 +598,10 @@ export const ConversationGetInputSchema = z.object({
 export const ConversationCreateDirectInputSchema = z.object({
   agentId: z.string().min(1),
   title: z.string().trim().min(1).max(120).optional()
+})
+
+export const ConversationGetOrCreateRoomInputSchema = z.object({
+  agentId: z.string().min(1)
 })
 
 export const ConversationCreateManualInputSchema = z.object({
@@ -1427,9 +1447,14 @@ export type ConversationTurn = z.infer<typeof ConversationTurnSchema>
 export type ConversationInputRequest = z.infer<typeof ConversationInputRequestSchema>
 export type Conversation = z.infer<typeof ConversationSchema>
 export type ConversationListItem = z.infer<typeof ConversationListItemSchema>
+export type AgentRoomSummary = z.infer<typeof AgentRoomSummarySchema>
 export type ConversationDetail = z.infer<typeof ConversationDetailSchema>
 export type ConversationGetInput = z.infer<typeof ConversationGetInputSchema>
+export type ConversationKind = z.infer<typeof ConversationKindSchema>
 export type ConversationCreateDirectInput = z.infer<typeof ConversationCreateDirectInputSchema>
+export type ConversationGetOrCreateRoomInput = z.infer<
+  typeof ConversationGetOrCreateRoomInputSchema
+>
 export type ConversationCreateManualInput = z.infer<typeof ConversationCreateManualInputSchema>
 export type ConversationSendTurnInput = z.infer<typeof ConversationSendTurnInputSchema>
 export type ConversationUpdateRoutingModeInput = z.infer<

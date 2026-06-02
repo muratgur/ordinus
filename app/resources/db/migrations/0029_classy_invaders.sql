@@ -1,0 +1,1 @@
+ALTER TABLE `conversation_turns` ADD `session_reset` integer DEFAULT false NOT NULL;

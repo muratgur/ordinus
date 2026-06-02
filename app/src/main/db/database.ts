@@ -16,6 +16,7 @@ import {
   AgentMemoryRuleSchema,
   AgentMemoryUpdateInputSchema,
   AgentReflectionSummarySchema,
+  AgentRoomSummarySchema,
   AgentScheduleCreateInputSchema,
   AgentScheduleDeleteInputSchema,
   AgentScheduleGetInputSchema,
@@ -31,6 +32,7 @@ import {
   ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
+  ConversationGetOrCreateRoomInputSchema,
   ConversationDeleteInputSchema,
   ConversationDeleteResultSchema,
   ConversationDetailSchema,
@@ -83,6 +85,7 @@ import {
   type AgentMemoryRule,
   type AgentMemoryUpdateInput,
   type AgentReflectionSummary,
+  type AgentRoomSummary,
   type AgentSchedule,
   type AgentScheduleCreateInput,
   type AgentScheduleDeleteInput,
@@ -94,6 +97,7 @@ import {
   type AgentUpdateSettingsInput,
   type AgentTurnOutcome,
   type ConversationCreateManualInput,
+  type ConversationGetOrCreateRoomInput,
   type ConversationDeleteInput,
   type ConversationDeleteResult,
   type ConversationDetail,
@@ -2891,9 +2895,12 @@ export class OrdinusDatabase {
   }
 
   listConversations(): ConversationListItem[] {
+    // Agent home rooms (kind='room') live in the Agents screen, not here. The
+    // Conversations area lists only multi-agent group conversations (ADR-027).
     return this.db
       .select()
       .from(conversations)
+      .where(eq(conversations.kind, 'group'))
       .orderBy(desc(conversations.updatedAt))
       .all()
       .map((conversation) => {
@@ -2920,6 +2927,50 @@ export class OrdinusDatabase {
           lastPreview: latestTurn?.preview ?? conversation.summary
         })
       })
+  }
+
+  listAgentRoomSummaries(): AgentRoomSummary[] {
+    const rooms = this.db
+      .select({
+        conversationId: conversations.id,
+        agentId: conversationParticipants.agentId
+      })
+      .from(conversations)
+      .innerJoin(
+        conversationParticipants,
+        eq(conversationParticipants.conversationId, conversations.id)
+      )
+      .where(eq(conversations.kind, 'room'))
+      .all()
+
+    return rooms.map((room) => {
+      const latestTurn = this.db
+        .select()
+        .from(conversationTurns)
+        .where(eq(conversationTurns.conversationId, room.conversationId))
+        .orderBy(desc(conversationTurns.sequence), desc(conversationTurns.createdAt))
+        .get()
+      const pendingInputRequest = this.db
+        .select({ id: conversationInputRequests.id })
+        .from(conversationInputRequests)
+        .where(
+          and(
+            eq(conversationInputRequests.conversationId, room.conversationId),
+            eq(conversationInputRequests.status, 'pending')
+          )
+        )
+        .get()
+
+      return AgentRoomSummarySchema.parse({
+        agentId: room.agentId,
+        conversationId: room.conversationId,
+        lastPreview: latestTurn?.preview ?? '',
+        lastSpeaker: latestTurn?.speaker ?? null,
+        lastActivityAt: latestTurn?.updatedAt ?? null,
+        lastTurnStatus: latestTurn?.status ?? null,
+        hasPendingInputRequest: Boolean(pendingInputRequest)
+      })
+    })
   }
 
   getConversation(input: { conversationId: string }): ConversationDetail {
@@ -3008,6 +3059,74 @@ export class OrdinusDatabase {
         updatedAt: now
       })
       .run()
+
+    return this.getConversation({ conversationId })
+  }
+
+  /**
+   * Returns the agent's canonical 1:1 home room, creating it on first access
+   * (ADR-027). There is at most one `kind='room'` conversation per agent. Unlike
+   * direct/manual conversations, a room is openable for a disabled agent so the
+   * user can still review the relationship; sending turns is gated elsewhere.
+   */
+  getOrCreateAgentRoom(input: ConversationGetOrCreateRoomInput): ConversationDetail {
+    const parsed = ConversationGetOrCreateRoomInputSchema.parse(input)
+    const agent = this.getAgent(parsed.agentId)
+
+    const existing = this.db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .innerJoin(
+        conversationParticipants,
+        eq(conversationParticipants.conversationId, conversations.id)
+      )
+      .where(and(eq(conversations.kind, 'room'), eq(conversationParticipants.agentId, agent.id)))
+      .get()
+
+    if (existing) {
+      return this.getConversation({ conversationId: existing.id })
+    }
+
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('Choose a workspace before opening an agent room.')
+    }
+
+    const now = new Date().toISOString()
+    const conversationId = createConversationId()
+    const participantId = createConversationParticipantId()
+    const title = agent.name
+    const workingRoot = createConversationWorkingRoot(title, conversationId)
+    ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
+
+    this.db.transaction((tx) => {
+      tx.insert(conversations)
+        .values({
+          id: conversationId,
+          title,
+          workingRoot,
+          mode: 'direct',
+          kind: 'room',
+          status: 'active',
+          summary: '',
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.insert(conversationParticipants)
+        .values({
+          id: participantId,
+          conversationId,
+          agentId: agent.id,
+          providerId: agent.providerId,
+          model: agent.model,
+          providerSessionRef: null,
+          status: 'ready',
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+    })
 
     return this.getConversation({ conversationId })
   }
@@ -3274,6 +3393,7 @@ export class OrdinusDatabase {
     providerSessionRef: string
     outcome: AgentTurnOutcome
     logRef: string
+    sessionReset?: boolean
   }): ConversationDetail {
     const turn = this.getConversationTurn(input.turnId)
     if (turn.status === 'cancelled') {
@@ -3296,6 +3416,7 @@ export class OrdinusDatabase {
             error: '',
             logRef: input.logRef,
             truncated: false,
+            sessionReset: input.sessionReset ?? false,
             updatedAt: now
           })
           .where(eq(conversationTurns.id, input.turnId))
@@ -3353,6 +3474,7 @@ export class OrdinusDatabase {
         artifactRefs: JSON.stringify(artifactRefs),
         changedFiles: JSON.stringify(changedFiles),
         truncated: output.truncated,
+        sessionReset: input.sessionReset ?? false,
         updatedAt: now
       })
       .where(eq(conversationTurns.id, input.turnId))

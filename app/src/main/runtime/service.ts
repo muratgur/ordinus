@@ -271,13 +271,14 @@ async function sendConversationTurnWithFreshSessionFallback(
       }
     })
 
-    return adapter.sendConversationTurn(
+    const retried = await adapter.sendConversationTurn(
       {
         ...filtered,
         providerSessionRef: null
       },
       context
     )
+    return { ...retried, sessionReset: true }
   }
 }
 

@@ -22,6 +22,7 @@ import type {
   AgentScheduleListInput,
   AgentScheduleSetEnabledInput,
   AgentScheduleUpdateInput,
+  AgentRoomSummary,
   SchedulerEvent,
   AgentMemoryAddInput,
   AgentMemoryDeactivateInput,
@@ -49,6 +50,7 @@ import type {
   ConversationCancelInputRequestInput,
   ConversationCreateDirectInput,
   ConversationCreateManualInput,
+  ConversationGetOrCreateRoomInput,
   ConversationDeleteInput,
   ConversationDeletePreview,
   ConversationDeletePreviewInput,
@@ -189,12 +191,16 @@ const ordinus = {
   conversations: {
     list: async (): Promise<ConversationListItem[]> =>
       ipcRenderer.invoke(ipcChannels.conversationsList),
+    listAgentRoomSummaries: async (): Promise<AgentRoomSummary[]> =>
+      ipcRenderer.invoke(ipcChannels.conversationsListAgentRoomSummaries),
     get: async (input: ConversationGetInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsGet, input),
     createDirect: async (input: ConversationCreateDirectInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsCreateDirect, input),
     createManual: async (input: ConversationCreateManualInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsCreateManual, input),
+    getOrCreateRoom: async (input: ConversationGetOrCreateRoomInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsGetOrCreateRoom, input),
     updateTitle: async (input: ConversationUpdateTitleInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsUpdateTitle, input),
     updateRoutingMode: async (

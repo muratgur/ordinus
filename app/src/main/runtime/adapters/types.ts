@@ -69,6 +69,10 @@ export type RuntimeConversationTurnResult = {
   providerSessionRef: string
   outcome: AgentTurnOutcome
   logRef: string
+  // True when this turn ran on a fresh provider session after the stored one
+  // could not resume (ADR-013 fallback). Adapters leave this unset; the runtime
+  // service sets it on the fallback path.
+  sessionReset?: boolean
 }
 
 export type RuntimeWorkRunInput = {

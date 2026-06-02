@@ -53,6 +53,10 @@ Provider session references are provider-owned hints, not portable product memor
 selection and fresh-session fallback should follow
 `docs/decisions/ADR-013-provider-session-validity-and-fresh-start-fallback.md`.
 
+Each agent's primary surface is a single canonical 1:1 chat room (a one-participant session-backed
+conversation) inside the Agents "home" screen; the Conversations area is reserved for multi-agent
+group rooms. See `docs/decisions/ADR-027-agent-home-chat-room-and-colleague-profile.md`.
+
 ## UI
 
 The renderer uses React, TypeScript, Tailwind, and shadcn/ui primitives. UI should feel calm, operational, and work-focused. Reusable primitives live under `app/src/renderer/src/components/ui`.

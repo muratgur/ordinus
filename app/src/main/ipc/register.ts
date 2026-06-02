@@ -50,6 +50,7 @@ import {
   ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
   ConversationCreateManualInputSchema,
+  ConversationGetOrCreateRoomInputSchema,
   ConversationDeleteInputSchema,
   ConversationDeletePreviewInputSchema,
   ConversationDeletePreviewSchema,
@@ -430,6 +431,9 @@ export function registerIpcHandlers(
   })
   ipcMain.handle(ipcChannels.agentsListReflection, () => database.getAgentReflectionSummary())
   ipcMain.handle(ipcChannels.conversationsList, () => database.listConversations())
+  ipcMain.handle(ipcChannels.conversationsListAgentRoomSummaries, () =>
+    database.listAgentRoomSummaries()
+  )
   ipcMain.handle(ipcChannels.conversationsGet, (_event, payload) => {
     const input = ConversationGetInputSchema.parse(payload)
     return database.getConversation(input)
@@ -441,6 +445,10 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.conversationsCreateManual, (_event, payload) => {
     const input = ConversationCreateManualInputSchema.parse(payload)
     return database.createManualConversation(input)
+  })
+  ipcMain.handle(ipcChannels.conversationsGetOrCreateRoom, (_event, payload) => {
+    const input = ConversationGetOrCreateRoomInputSchema.parse(payload)
+    return database.getOrCreateAgentRoom(input)
   })
   ipcMain.handle(ipcChannels.conversationsUpdateTitle, (_event, payload) => {
     const input = ConversationUpdateTitleInputSchema.parse(payload)
@@ -1699,7 +1707,8 @@ function saveConversationTurnCompletion(
       model: agentTurn.agent.model,
       providerSessionRef: result.providerSessionRef,
       outcome,
-      logRef: result.logRef
+      logRef: result.logRef,
+      sessionReset: result.sessionReset
     })
     if (outcome.outcome === 'needs_input') {
       observability.markConversationWaitingForUser(turnId, outcome.title)

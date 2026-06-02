@@ -2,7 +2,17 @@
 
 ## Status
 
-Proposed
+Proposed — partially superseded by ADR-027
+
+> **Superseded in part by [ADR-027](ADR-027-agent-home-chat-room-and-colleague-profile.md).**
+> ADR-027 gives every agent a 1:1 chat-room home, overturning this ADR's premise that "Ordinus does
+> not have a conversational UI." Specifically: §3's "learning is captured through asynchronous
+> feedback, not chat pins" and the rejected *Pin-on-message in chat* alternative are superseded —
+> in-room "remember this" capture (and later agent-proposed memory) are now first-class. §6/§7
+> (global monthly reflection screen) are refined to per-agent reflection in the About tab plus a
+> gentle stale-archive nudge. The rest of this ADR — the three-layer storage model, agent-scoped
+> `agent_memory`, runtime system-channel injection, recency-ordered selection, the 14-day archive,
+> and the **explicit-confirmation / no-silent-learning** principle — remains in force.
 
 ## Date
 

@@ -22,6 +22,7 @@ import type {
   AgentScheduleListInput,
   AgentScheduleSetEnabledInput,
   AgentScheduleUpdateInput,
+  AgentRoomSummary,
   SchedulerEvent,
   AgentMemoryAddInput,
   AgentMemoryDeactivateInput,
@@ -47,6 +48,7 @@ import type {
   ConversationCancelInputRequestInput,
   ConversationCreateDirectInput,
   ConversationCreateManualInput,
+  ConversationGetOrCreateRoomInput,
   ConversationDeleteInput,
   ConversationDeletePreview,
   ConversationDeletePreviewInput,
@@ -152,9 +154,11 @@ export type OrdinusApi = {
   }
   conversations: {
     list: () => Promise<ConversationListItem[]>
+    listAgentRoomSummaries: () => Promise<AgentRoomSummary[]>
     get: (input: ConversationGetInput) => Promise<ConversationDetail>
     createDirect: (input: ConversationCreateDirectInput) => Promise<ConversationDetail>
     createManual: (input: ConversationCreateManualInput) => Promise<ConversationDetail>
+    getOrCreateRoom: (input: ConversationGetOrCreateRoomInput) => Promise<ConversationDetail>
     updateTitle: (input: ConversationUpdateTitleInput) => Promise<ConversationDetail>
     updateRoutingMode: (input: ConversationUpdateRoutingModeInput) => Promise<ConversationDetail>
     sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>
