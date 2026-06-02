@@ -42,6 +42,8 @@ import type {
   WorkboardDraftItem,
   WorkboardDraftPlan,
   WorkboardRun,
+  WorkflowDesign,
+  WorkflowRunTarget,
   WorkRunInputRequest
 } from '@shared/contracts'
 import { appRoutePaths } from '@renderer/app/routes'
@@ -75,6 +77,13 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { SelectControl } from '@renderer/components/select-control'
+import { DraftItemFields } from '@renderer/components/draft-item-fields'
+import {
+  draftFieldClassName,
+  draftInputClassName,
+  draftTextareaClassName,
+  sortAgentsByUsage
+} from '@renderer/components/draft-item-shared'
 import { cn } from '@renderer/lib/utils'
 import { useLiveness } from '@renderer/app/liveness'
 import type { PlanOperationsController } from '@renderer/app/plan-operations'
@@ -145,9 +154,13 @@ type ComposerContextReference = {
   detail: string
 }
 
+type WorkComposerMode = 'request' | 'workflow'
+
 type WorkComposerState = {
   open: boolean
+  mode: WorkComposerMode
   request: string
+  workflowId: string
   destinationRequestId: string
   contextReferences: ComposerContextReference[]
   requestedAgentIds: string[]
@@ -156,24 +169,14 @@ type WorkComposerState = {
 
 const emptyComposerState: WorkComposerState = {
   open: false,
+  mode: 'request',
   request: '',
+  workflowId: '',
   destinationRequestId: '',
   contextReferences: [],
   requestedAgentIds: [],
   workspacePath: ''
 }
-
-const draftPriorityOptions = [
-  { label: 'Low', value: -1 },
-  { label: 'Normal', value: 0 },
-  { label: 'High', value: 1 }
-] as const
-
-const draftFieldClassName = 'grid min-w-0 gap-1.5 text-xs font-medium text-foreground'
-const draftInputClassName =
-  'h-10 min-w-0 rounded-md border border-input bg-card px-3 text-sm font-normal text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background'
-const draftTextareaClassName =
-  'ordinus-scrollbar min-w-0 resize-none rounded-md border border-input bg-card px-3 py-2 text-sm font-normal leading-6 text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background'
 
 export function WorkboardScreen({
   draftReview,
@@ -185,6 +188,7 @@ export function WorkboardScreen({
   planOperations: PlanOperationsController
 }): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
+  const [workflows, setWorkflows] = useState<WorkflowDesign[]>([])
   const [data, setData] = useState<WorkboardData>({
     requests: [],
     runs: [],
@@ -211,13 +215,15 @@ export function WorkboardScreen({
   async function loadWorkboard(options: { quiet?: boolean } = {}): Promise<void> {
     if (!options.quiet) setBusy('load')
     try {
-      const [nextData, nextAgents] = await Promise.all([
+      const [nextData, nextAgents, nextWorkflows] = await Promise.all([
         window.ordinus.workboard.list(),
-        window.ordinus.agents.list()
+        window.ordinus.agents.list(),
+        window.ordinus.workflows.list()
       ])
       const nextObservedRuns = await window.ordinus.observability.listWorkboard()
       setData(nextData)
       setAgents(nextAgents)
+      setWorkflows(nextWorkflows)
       setObservedRuns(nextObservedRuns)
       setError('')
     } catch (loadError) {
@@ -334,6 +340,10 @@ export function WorkboardScreen({
   }, [watchedOpId, planOperations, onDraftReviewChange])
 
   async function handleSubmitComposer(nextComposer = composer): Promise<void> {
+    if (nextComposer.mode === 'workflow') {
+      await handleRunWorkflowComposer(nextComposer)
+      return
+    }
     if (nextComposer.request.trim().length < 12 || enabledAgents.length === 0 || busy) return
     setError('')
     const submittedRequest = nextComposer.request.trim()
@@ -363,6 +373,30 @@ export function WorkboardScreen({
       await startDraftPlan(plan, target, submittedRequest)
     } catch (submitError) {
       setError(getStartErrorMessage(submitError, target))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function handleRunWorkflowComposer(nextComposer: WorkComposerState): Promise<void> {
+    if (!nextComposer.workflowId || busy) return
+    setError('')
+    setBusy('submit')
+    try {
+      // The composer's destination drives the target: empty = new Work Request,
+      // set = append into that request (ADR-025). Both go through the single
+      // workflowRun IPC / compileDesign funnel.
+      const target: WorkflowRunTarget = nextComposer.destinationRequestId
+        ? { kind: 'append', requestId: nextComposer.destinationRequestId }
+        : { kind: 'new' }
+      const nextData = await window.ordinus.workflows.run({
+        designId: nextComposer.workflowId,
+        target
+      })
+      setData(nextData)
+      setComposer(emptyComposerState)
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : 'Workflow could not be started.')
     } finally {
       setBusy('')
     }
@@ -643,6 +677,7 @@ export function WorkboardScreen({
         composer={composer}
         data={data}
         agents={enabledAgents}
+        workflows={workflows}
         reviewBeforeStart={reviewBeforeStart}
         busy={busy}
         onComposerChange={setComposer}
@@ -767,6 +802,7 @@ function RequestComposerDialog({
   composer,
   data,
   agents,
+  workflows,
   reviewBeforeStart,
   busy,
   onComposerChange,
@@ -778,6 +814,7 @@ function RequestComposerDialog({
   composer: WorkComposerState
   data: WorkboardData
   agents: Agent[]
+  workflows: WorkflowDesign[]
   reviewBeforeStart: boolean
   busy: string
   onComposerChange: (composer: WorkComposerState) => void
@@ -792,7 +829,10 @@ function RequestComposerDialog({
     () => getAgentMentionOptions(agents, mentionPicker?.query ?? ''),
     [agents, mentionPicker?.query]
   )
-  const canSubmit = composer.request.trim().length >= 12 && agents.length > 0 && !busy
+  const isWorkflowMode = composer.mode === 'workflow'
+  const canSubmit = isWorkflowMode
+    ? Boolean(composer.workflowId) && !busy
+    : composer.request.trim().length >= 12 && agents.length > 0 && !busy
   const showMentionPicker = Boolean(mentionPicker && mentionOptions.length > 0)
 
   function update(patch: Partial<WorkComposerState>): void {
@@ -875,11 +915,30 @@ function RequestComposerDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => (!nextOpen ? onClose() : undefined)}>
       <DialogContent className="grid max-h-[calc(100vh-2rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 p-0">
         <DialogHeader className="border-b px-5 py-3 pr-12 sm:px-6">
-          <DialogTitle>New request</DialogTitle>
+          <DialogTitle>{isWorkflowMode ? 'Run workflow' : 'New request'}</DialogTitle>
         </DialogHeader>
 
         <div className="min-h-0 overflow-y-auto p-4 ordinus-scrollbar sm:p-5">
           <div className="grid gap-3">
+            <div className="inline-flex w-fit items-center gap-1 rounded-md border bg-background p-0.5 text-xs font-medium">
+              {(['request', 'workflow'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={composer.mode === mode}
+                  className={cn(
+                    'rounded px-3 py-1 transition-colors',
+                    composer.mode === mode
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                  onClick={() => update({ mode })}
+                >
+                  {mode === 'request' ? 'Describe' : 'Saved workflow'}
+                </button>
+              ))}
+            </div>
+
             <div className="overflow-visible rounded-lg border bg-card">
               <div className="grid gap-2 border-b bg-background/40 p-3 sm:grid-cols-2">
                 <WorkRequestSelect
@@ -887,77 +946,96 @@ function RequestComposerDialog({
                   destinationRequestId={composer.destinationRequestId}
                   onDestinationChange={handleDestinationChange}
                 />
-                <ContinueFromSelect composer={composer} data={data} onComposerChange={update} />
+                {isWorkflowMode ? null : (
+                  <ContinueFromSelect composer={composer} data={data} onComposerChange={update} />
+                )}
               </div>
 
-              <div className="relative overflow-visible">
-                {showMentionPicker ? (
-                  <AgentMentionPicker
-                    activeIndex={activeMentionIndex}
-                    options={mentionOptions}
-                    onActiveIndexChange={setActiveMentionIndex}
-                    onSelect={(option) => {
-                      if (mentionPicker) selectMention(option, mentionPicker)
-                    }}
-                  />
-                ) : null}
-                <textarea
-                  ref={textareaRef}
-                  className="ordinus-scrollbar min-h-48 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
-                  placeholder="Describe what should happen. Use @agent as an assignment hint."
-                  value={composer.request}
-                  onChange={handleTextareaChange}
-                  onKeyDown={handleTextareaKeyDown}
-                  onClick={(event) =>
-                    updateMentionPicker(
-                      event.currentTarget.value,
-                      event.currentTarget.selectionStart
-                    )
-                  }
-                  onKeyUp={(event) => {
-                    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+              {isWorkflowMode ? (
+                <WorkflowComposerPicker
+                  workflows={workflows}
+                  workflowId={composer.workflowId}
+                  onSelect={(workflowId) => update({ workflowId })}
+                />
+              ) : (
+                <div className="relative overflow-visible">
+                  {showMentionPicker ? (
+                    <AgentMentionPicker
+                      activeIndex={activeMentionIndex}
+                      options={mentionOptions}
+                      onActiveIndexChange={setActiveMentionIndex}
+                      onSelect={(option) => {
+                        if (mentionPicker) selectMention(option, mentionPicker)
+                      }}
+                    />
+                  ) : null}
+                  <textarea
+                    ref={textareaRef}
+                    className="ordinus-scrollbar min-h-48 w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+                    placeholder="Describe what should happen. Use @agent as an assignment hint."
+                    value={composer.request}
+                    onChange={handleTextareaChange}
+                    onKeyDown={handleTextareaKeyDown}
+                    onClick={(event) =>
                       updateMentionPicker(
                         event.currentTarget.value,
                         event.currentTarget.selectionStart
                       )
                     }
-                  }}
-                />
-              </div>
+                    onKeyUp={(event) => {
+                      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                        updateMentionPicker(
+                          event.currentTarget.value,
+                          event.currentTarget.selectionStart
+                        )
+                      }
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
-            <FileContextPanel composer={composer} data={data} onComposerChange={update} />
+            {isWorkflowMode ? null : (
+              <FileContextPanel composer={composer} data={data} onComposerChange={update} />
+            )}
           </div>
         </div>
 
         <DialogFooter className="flex-col gap-3 border-t bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <label
-            className={cn(
-              'inline-flex h-8 w-fit cursor-pointer items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors',
-              reviewBeforeStart
-                ? 'border-primary/30 bg-primary-soft text-foreground'
-                : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
-            )}
-          >
-            <input
-              type="checkbox"
-              className="sr-only"
-              checked={reviewBeforeStart}
-              onChange={(event) => onReviewBeforeStartChange(event.target.checked)}
-            />
-            <span
+          {isWorkflowMode ? (
+            <p className="text-xs text-muted-foreground">
+              Runs the saved workflow
+              {composer.destinationRequestId ? ' into the selected request' : ' as a new request'}.
+            </p>
+          ) : (
+            <label
               className={cn(
-                'grid size-4 place-items-center rounded border transition-colors',
+                'inline-flex h-8 w-fit cursor-pointer items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors',
                 reviewBeforeStart
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-card'
+                  ? 'border-primary/30 bg-primary-soft text-foreground'
+                  : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground'
               )}
-              aria-hidden="true"
             >
-              {reviewBeforeStart ? <Check className="size-3" /> : null}
-            </span>
-            Review before start
-          </label>
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={reviewBeforeStart}
+                onChange={(event) => onReviewBeforeStartChange(event.target.checked)}
+              />
+              <span
+                className={cn(
+                  'grid size-4 place-items-center rounded border transition-colors',
+                  reviewBeforeStart
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-card'
+                )}
+                aria-hidden="true"
+              >
+                {reviewBeforeStart ? <Check className="size-3" /> : null}
+              </span>
+              Review before start
+            </label>
+          )}
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>
               Cancel
@@ -965,17 +1043,65 @@ function RequestComposerDialog({
             <Button onClick={() => onSubmit(composer)} disabled={!canSubmit}>
               {busy === 'submit' ? (
                 <Loader2 className="animate-spin" />
-              ) : reviewBeforeStart ? (
-                <Send />
-              ) : (
+              ) : isWorkflowMode || !reviewBeforeStart ? (
                 <Play />
+              ) : (
+                <Send />
               )}
-              {reviewBeforeStart ? 'Review plan' : 'Start work'}
+              {isWorkflowMode ? 'Run workflow' : reviewBeforeStart ? 'Review plan' : 'Start work'}
             </Button>
           </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function WorkflowComposerPicker({
+  workflows,
+  workflowId,
+  onSelect
+}: {
+  workflows: WorkflowDesign[]
+  workflowId: string
+  onSelect: (workflowId: string) => void
+}): React.JSX.Element {
+  if (workflows.length === 0) {
+    return (
+      <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+        No saved workflows yet. Design one in the Workflows tab first.
+      </div>
+    )
+  }
+
+  return (
+    <div className="ordinus-scrollbar max-h-64 overflow-y-auto p-2">
+      {workflows.map((workflow) => {
+        const selected = workflow.id === workflowId
+        return (
+          <button
+            key={workflow.id}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onSelect(workflow.id)}
+            className={cn(
+              'flex w-full flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors',
+              'mb-1.5 last:mb-0',
+              selected
+                ? 'border-primary bg-primary-soft'
+                : 'border-border bg-background hover:bg-accent'
+            )}
+          >
+            <span className="text-sm font-medium text-foreground">{workflow.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {workflow.canvas.nodes.length} Work Item
+              {workflow.canvas.nodes.length === 1 ? '' : 's'}
+              {workflow.description ? ` · ${workflow.description}` : ''}
+            </span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -2663,44 +2789,7 @@ function DraftItemEditor({
         </p>
         <h3 className="mt-1 text-sm font-semibold">Work item</h3>
       </div>
-      <label className={draftFieldClassName}>
-        Item name
-        <input
-          className={draftInputClassName}
-          value={item.title}
-          onChange={(event) => onChange({ title: event.target.value })}
-        />
-      </label>
-      <label className={draftFieldClassName}>
-        Assigned agent
-        <SelectControl
-          value={item.assignedAgentId}
-          onChange={(assignedAgentId) => onChange({ assignedAgentId })}
-        >
-          {sortAgentsByUsage(agents).map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.name}
-            </option>
-          ))}
-        </SelectControl>
-      </label>
-      <label className={draftFieldClassName}>
-        Instruction
-        <textarea
-          className={cn(draftTextareaClassName, 'min-h-28')}
-          value={item.instruction}
-          onChange={(event) => onChange({ instruction: event.target.value })}
-        />
-      </label>
-      <label className={draftFieldClassName}>
-        Expected output
-        <textarea
-          className={cn(draftTextareaClassName, 'min-h-20')}
-          value={item.expectedOutput}
-          onChange={(event) => onChange({ expectedOutput: event.target.value })}
-        />
-      </label>
-      <DraftPriorityControl value={item.priority} onChange={(priority) => onChange({ priority })} />
+      <DraftItemFields value={item} agents={agents} onChange={onChange} />
       <DraftDependencyChecklist
         item={item}
         items={items}
@@ -2708,47 +2797,6 @@ function DraftItemEditor({
         onChange={onChange}
       />
       <DraftDependencyMap item={item} items={items} stageById={stageById} />
-    </div>
-  )
-}
-
-function DraftPriorityControl({
-  value,
-  onChange
-}: {
-  value: number
-  onChange: (value: number) => void
-}): React.JSX.Element {
-  const selectedValue = value < 0 ? -1 : value > 0 ? 1 : 0
-
-  return (
-    <div className="grid min-w-0 gap-1">
-      <p className="text-xs font-medium text-muted-foreground">Priority</p>
-      <div className="grid min-w-0 grid-cols-3 overflow-hidden rounded-md border bg-background">
-        {draftPriorityOptions.map((option) => {
-          const selected = option.value === selectedValue
-
-          return (
-            <button
-              key={option.value}
-              type="button"
-              aria-pressed={selected}
-              className={cn(
-                'h-10 min-w-0 truncate border-r px-3 text-sm font-medium transition-colors last:border-r-0',
-                selected
-                  ? 'bg-card text-foreground shadow-inner'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-              onClick={() => onChange(option.value)}
-            >
-              {option.label}
-            </button>
-          )
-        })}
-      </div>
-      <p className="text-xs leading-5 text-muted-foreground">
-        Used to order Work Items that are ready at the same time.
-      </p>
     </div>
   )
 }
@@ -4134,20 +4182,6 @@ function getAgentMentionOptions(agents: Agent[], query: string): AgentMentionOpt
   }
 
   return options.filter((option) => option.label.toLocaleLowerCase().includes(normalizedQuery))
-}
-
-function sortAgentsByUsage(agents: Agent[]): Agent[] {
-  return [...agents].sort((left, right) => {
-    const leftUsed = left.lastUsedAt ? Date.parse(left.lastUsedAt) : 0
-    const rightUsed = right.lastUsedAt ? Date.parse(right.lastUsedAt) : 0
-    if (leftUsed !== rightUsed) {
-      return rightUsed - leftUsed
-    }
-    if (left.useCount !== right.useCount) {
-      return right.useCount - left.useCount
-    }
-    return left.name.localeCompare(right.name)
-  })
 }
 
 function buildAgentUsageDetail(agent: Agent): string {

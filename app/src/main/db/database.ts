@@ -57,6 +57,9 @@ import {
   WorkboardStartRequestPlanInputSchema,
   WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestInputSchema,
+  WorkflowDesignSchema,
+  WorkflowDesignCreateInputSchema,
+  WorkflowDesignUpdateInputSchema,
   WorkRunActionInputSchema,
   WorkRunCompleteInputSchema,
   WorkRunContextReferenceSchema,
@@ -121,7 +124,7 @@ import {
   type WorkboardContextReferenceInput,
   type WorkboardStartFollowUpInput,
   type WorkboardStartRequestPlanInput,
-  type WorkboardStartRequestInput,
+  type WorkboardStartRequestInputData,
   type WorkRunCompleteInput,
   type WorkRunContextReference,
   type WorkRunCreateInput,
@@ -132,6 +135,9 @@ import {
   type WorkRunInputRequest,
   type WorkRunInputSummary,
   type WorkRequest,
+  type WorkflowDesign,
+  type WorkflowDesignCreateInput,
+  type WorkflowDesignUpdateInput,
   type WorkspaceConfig,
   type WorkspaceSaveConfigInput,
   type WorkspaceUpdateSystemDefaultInput
@@ -157,6 +163,7 @@ import {
   workRunEvents,
   workRunInputRequests,
   workRuns,
+  workflowDesigns,
   workspaceConfig
 } from './schema'
 import {
@@ -835,6 +842,71 @@ export class OrdinusDatabase {
     this.db.delete(pendingPlans).where(eq(pendingPlans.id, id)).run()
   }
 
+  listWorkflowDesigns(): WorkflowDesign[] {
+    return this.db
+      .select()
+      .from(workflowDesigns)
+      .orderBy(desc(workflowDesigns.updatedAt))
+      .all()
+      .map((row) => WorkflowDesignSchema.parse(row))
+  }
+
+  getWorkflowDesign(id: string): WorkflowDesign | null {
+    const row = this.db.select().from(workflowDesigns).where(eq(workflowDesigns.id, id)).get()
+    return row ? WorkflowDesignSchema.parse(row) : null
+  }
+
+  createWorkflowDesign(input: WorkflowDesignCreateInput): WorkflowDesign {
+    const parsed = WorkflowDesignCreateInputSchema.parse(input)
+    const now = new Date().toISOString()
+    const design = WorkflowDesignSchema.parse({
+      id: `wfd-${randomUUID()}`,
+      name: parsed.name,
+      description: parsed.description,
+      canvas: parsed.canvas,
+      createdAt: now,
+      updatedAt: now
+    })
+
+    this.db.insert(workflowDesigns).values(design).run()
+
+    return design
+  }
+
+  updateWorkflowDesign(input: WorkflowDesignUpdateInput): WorkflowDesign {
+    const parsed = WorkflowDesignUpdateInputSchema.parse(input)
+    const existing = this.getWorkflowDesign(parsed.id)
+    if (!existing) {
+      throw new Error('Workflow design not found.')
+    }
+
+    const now = new Date().toISOString()
+    const next = WorkflowDesignSchema.parse({
+      ...existing,
+      name: parsed.name ?? existing.name,
+      description: parsed.description ?? existing.description,
+      canvas: parsed.canvas ?? existing.canvas,
+      updatedAt: now
+    })
+
+    this.db
+      .update(workflowDesigns)
+      .set({
+        name: next.name,
+        description: next.description,
+        canvas: next.canvas,
+        updatedAt: next.updatedAt
+      })
+      .where(eq(workflowDesigns.id, next.id))
+      .run()
+
+    return next
+  }
+
+  deleteWorkflowDesign(id: string): void {
+    this.db.delete(workflowDesigns).where(eq(workflowDesigns.id, id)).run()
+  }
+
   listAgentMemoryRules(input: AgentMemoryListInput): AgentMemoryRule[] {
     const parsed = AgentMemoryListInputSchema.parse(input)
     const condition = parsed.includeInactive
@@ -1207,7 +1279,7 @@ export class OrdinusDatabase {
     return this.getWorkRequest(requestId)
   }
 
-  createWorkRequest(input: WorkboardStartRequestInput): WorkRequest {
+  createWorkRequest(input: WorkboardStartRequestInputData): WorkRequest {
     const parsed = WorkboardStartRequestInputSchema.parse(input)
     const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
     const workspace = this.getWorkspaceConfig()
@@ -1242,6 +1314,7 @@ export class OrdinusDatabase {
           summary: plan.summary,
           workingRoot,
           status: 'active',
+          workflowDesignId: parsed.workflowDesignId,
           createdAt: now,
           updatedAt: now,
           startedAt: null,

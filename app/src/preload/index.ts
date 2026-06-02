@@ -94,6 +94,11 @@ import type {
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
+  WorkflowDesign,
+  WorkflowDesignCreateInput,
+  WorkflowDesignUpdateInput,
+  WorkflowDesignDeleteInput,
+  WorkflowRunInput,
   WorkRunActionInput,
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
@@ -257,6 +262,19 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workboardArchiveRequest, input),
     unarchiveRequest: async (input: WorkboardUnarchiveRequestInput): Promise<WorkboardData> =>
       ipcRenderer.invoke(ipcChannels.workboardUnarchiveRequest, input)
+  },
+  workflows: {
+    list: async (): Promise<WorkflowDesign[]> => ipcRenderer.invoke(ipcChannels.workflowDesignList),
+    get: async (id: string): Promise<WorkflowDesign | null> =>
+      ipcRenderer.invoke(ipcChannels.workflowDesignGet, id),
+    create: async (input: WorkflowDesignCreateInput): Promise<WorkflowDesign> =>
+      ipcRenderer.invoke(ipcChannels.workflowDesignCreate, input),
+    update: async (input: WorkflowDesignUpdateInput): Promise<WorkflowDesign> =>
+      ipcRenderer.invoke(ipcChannels.workflowDesignUpdate, input),
+    delete: async (input: WorkflowDesignDeleteInput): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.workflowDesignDelete, input),
+    run: async (input: WorkflowRunInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workflowRun, input)
   },
   observability: {
     listWorkboard: async (): Promise<ObservedRunSnapshot[]> =>

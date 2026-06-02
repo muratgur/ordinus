@@ -92,6 +92,11 @@ import type {
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
+  WorkflowDesign,
+  WorkflowDesignCreateInput,
+  WorkflowDesignUpdateInput,
+  WorkflowDesignDeleteInput,
+  WorkflowRunInput,
   WorkRunActionInput,
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
@@ -179,6 +184,14 @@ export type OrdinusApi = {
     checkPaths: (input: WorkboardCheckPathsInput) => Promise<WorkboardPathStatus[]>
     archiveRequest: (input: WorkboardArchiveRequestInput) => Promise<WorkboardData>
     unarchiveRequest: (input: WorkboardUnarchiveRequestInput) => Promise<WorkboardData>
+  }
+  workflows: {
+    list: () => Promise<WorkflowDesign[]>
+    get: (id: string) => Promise<WorkflowDesign | null>
+    create: (input: WorkflowDesignCreateInput) => Promise<WorkflowDesign>
+    update: (input: WorkflowDesignUpdateInput) => Promise<WorkflowDesign>
+    delete: (input: WorkflowDesignDeleteInput) => Promise<void>
+    run: (input: WorkflowRunInput) => Promise<WorkboardData>
   }
   observability: {
     listWorkboard: () => Promise<ObservedRunSnapshot[]>
