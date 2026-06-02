@@ -40,6 +40,7 @@ import type {
   AgentSkillGetInput,
   AgentSkillsListInput,
   AgentSkillUpdateInput,
+  AgentSetPinnedInput,
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
@@ -133,6 +134,7 @@ export type OrdinusApi = {
     create: (input: AgentCreateInput) => Promise<Agent>
     updateInstructions: (input: AgentUpdateInstructionsInput) => Promise<Agent>
     updateSettings: (input: AgentUpdateSettingsInput) => Promise<Agent>
+    setPinned: (input: AgentSetPinnedInput) => Promise<Agent>
     delete: (input: AgentDeleteInput) => Promise<AgentDeleteResult>
     listSkills: (input: AgentSkillsListInput) => Promise<AgentSkill[]>
     getSkill: (input: AgentSkillGetInput) => Promise<AgentSkillDetail>

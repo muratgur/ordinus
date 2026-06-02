@@ -30,6 +30,7 @@ import {
   AgentSkillGetInputSchema,
   AgentSkillUpdateInputSchema,
   AgentSkillsListInputSchema,
+  AgentSetPinnedInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
   AgentExtraDirectoryAddInputSchema,
@@ -306,6 +307,10 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.agentsUpdateSettings, (_event, payload) => {
     const input = AgentUpdateSettingsInputSchema.parse(payload)
     return database.updateAgentSettings(input)
+  })
+  ipcMain.handle(ipcChannels.agentsSetPinned, (_event, payload) => {
+    const input = AgentSetPinnedInputSchema.parse(payload)
+    return database.setAgentPinned(input)
   })
   ipcMain.handle(ipcChannels.agentsDelete, (_event, payload) => {
     const input = AgentDeleteInputSchema.parse(payload)

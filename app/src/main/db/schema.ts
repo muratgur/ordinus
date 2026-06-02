@@ -34,6 +34,7 @@ export const agents = sqliteTable('agents', {
     .default([]),
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
   avatar: text('avatar').notNull().default(''),
+  pinnedAt: text('pinned_at'),
   lastUsedAt: text('last_used_at'),
   useCount: integer('use_count').notNull().default(0),
   archivedAt: text('archived_at'),

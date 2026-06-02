@@ -25,6 +25,7 @@ import {
   AgentScheduleSetEnabledInputSchema,
   AgentScheduleUpdateInputSchema,
   AgentSchema,
+  AgentSetPinnedInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
   ConversationCancelTurnInputSchema,
@@ -93,6 +94,7 @@ import {
   type AgentScheduleListInput,
   type AgentScheduleSetEnabledInput,
   type AgentScheduleUpdateInput,
+  type AgentSetPinnedInput,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
   type AgentTurnOutcome,
@@ -775,6 +777,24 @@ export class OrdinusDatabase {
         connectors: parsed.connectors,
         enabled: parsed.enabled,
         ...(parsed.avatar !== undefined ? { avatar: parsed.avatar } : {}),
+        updatedAt: now
+      })
+      .where(eq(agents.id, parsed.id))
+      .run()
+
+    return this.getAgent(parsed.id)
+  }
+
+  setAgentPinned(input: AgentSetPinnedInput): Agent {
+    const parsed = AgentSetPinnedInputSchema.parse(input)
+    const agent = this.getAgent(parsed.id)
+    const now = new Date().toISOString()
+    const pinnedAt = parsed.pinned ? (agent.pinnedAt ?? now) : null
+
+    this.db
+      .update(agents)
+      .set({
+        pinnedAt,
         updatedAt: now
       })
       .where(eq(agents.id, parsed.id))

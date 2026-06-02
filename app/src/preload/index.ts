@@ -42,6 +42,7 @@ import type {
   AgentSkillGetInput,
   AgentSkillsListInput,
   AgentSkillUpdateInput,
+  AgentSetPinnedInput,
   AgentUpdateInstructionsInput,
   AgentUpdateSettingsInput,
   AppInfo,
@@ -147,6 +148,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.agentsUpdateInstructions, input),
     updateSettings: async (input: AgentUpdateSettingsInput): Promise<Agent> =>
       ipcRenderer.invoke(ipcChannels.agentsUpdateSettings, input),
+    setPinned: async (input: AgentSetPinnedInput): Promise<Agent> =>
+      ipcRenderer.invoke(ipcChannels.agentsSetPinned, input),
     delete: async (input: AgentDeleteInput): Promise<AgentDeleteResult> =>
       ipcRenderer.invoke(ipcChannels.agentsDelete, input),
     listSkills: async (input: AgentSkillsListInput): Promise<AgentSkill[]> =>

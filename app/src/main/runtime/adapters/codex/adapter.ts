@@ -103,6 +103,11 @@ export const codexProviderAdapter: ProviderAdapter = {
   }
 }
 
+// Codex prints "Reading prompt from stdin..." to stderr as its first line when
+// it reads the prompt over stdin. It is not an error — skip it so failure
+// messages surface the real cause instead of this preamble.
+const IGNORED_CODEX_DIAGNOSTICS = [/reading prompt from stdin/i]
+
 async function disconnectCodexProvider(context: ProviderRuntimeContext): Promise<ProviderStatus> {
   return disconnectCliProvider({
     providerId: 'codex',
@@ -316,7 +321,12 @@ async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<A
 
     if (result.code !== 0) {
       throw new Error(
-        firstLine(result.stderr || result.stdout) || 'Codex could not draft the agent.'
+        readCliFailureMessage({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ignoredDiagnosticPatterns: IGNORED_CODEX_DIAGNOSTICS,
+          defaultMessage: 'Codex could not draft the agent.'
+        })
       )
     }
 
@@ -369,7 +379,12 @@ async function generateCodexOrchestrationPlan(
 
     if (result.code !== 0) {
       throw new Error(
-        firstLine(result.stderr || result.stdout) || 'Codex could not route this message.'
+        readCliFailureMessage({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ignoredDiagnosticPatterns: IGNORED_CODEX_DIAGNOSTICS,
+          defaultMessage: 'Codex could not route this message.'
+        })
       )
     }
 
@@ -420,7 +435,12 @@ async function generateCodexWorkboardPlan(
 
     if (result.code !== 0) {
       throw new Error(
-        firstLine(result.stderr || result.stdout) || 'Codex could not prepare this Work Request.'
+        readCliFailureMessage({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ignoredDiagnosticPatterns: IGNORED_CODEX_DIAGNOSTICS,
+          defaultMessage: 'Codex could not prepare this Work Request.'
+        })
       )
     }
 

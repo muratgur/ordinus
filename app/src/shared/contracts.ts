@@ -139,6 +139,7 @@ export const AgentSchema = z.object({
   extraDirectories: AgentExtraDirectoriesSchema,
   enabled: z.boolean(),
   avatar: z.string().default(''),
+  pinnedAt: z.string().nullable().default(null),
   lastUsedAt: z.string().nullable().default(null),
   useCount: z.number().int().nonnegative().default(0),
   archivedAt: z.string().nullable().default(null),
@@ -265,6 +266,11 @@ export const AgentUpdateSettingsInputSchema = z.object({
   connectors: AgentConnectorsSchema,
   avatar: z.string().optional(),
   enabled: z.boolean()
+})
+
+export const AgentSetPinnedInputSchema = z.object({
+  id: z.string().min(1),
+  pinned: z.boolean()
 })
 
 export const AgentDeleteInputSchema = z.object({
@@ -1405,6 +1411,7 @@ export type AgentDraft = z.infer<typeof AgentDraftSchema>
 export type AgentCreateInput = z.infer<typeof AgentCreateInputSchema>
 export type AgentUpdateInstructionsInput = z.infer<typeof AgentUpdateInstructionsInputSchema>
 export type AgentUpdateSettingsInput = z.infer<typeof AgentUpdateSettingsInputSchema>
+export type AgentSetPinnedInput = z.infer<typeof AgentSetPinnedInputSchema>
 export type AgentDeleteInput = z.infer<typeof AgentDeleteInputSchema>
 export type AgentDeleteResult = z.infer<typeof AgentDeleteResultSchema>
 export type AgentExtraDirectoryAddInput = z.infer<typeof AgentExtraDirectoryAddInputSchema>

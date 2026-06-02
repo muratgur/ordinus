@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-export const databaseSchemaVersion = 30
+export const databaseSchemaVersion = 31
 
 export function getMigrationsFolder(): string {
   if (app.isPackaged) {

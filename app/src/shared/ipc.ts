@@ -14,6 +14,7 @@ export const ipcChannels = {
   agentsCreate: 'agents:create',
   agentsUpdateInstructions: 'agents:update-instructions',
   agentsUpdateSettings: 'agents:update-settings',
+  agentsSetPinned: 'agents:set-pinned',
   agentsDelete: 'agents:delete',
   agentsListSkills: 'agents:list-skills',
   agentsGetSkill: 'agents:get-skill',

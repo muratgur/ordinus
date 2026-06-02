@@ -7,7 +7,7 @@ import {
   Info,
   Loader2,
   MessageSquareText,
-  MoreVertical,
+  Pin,
   Plus,
   Search,
   Settings2,
@@ -117,13 +117,6 @@ function getAgentPresence(agent: Agent, busy: boolean): AgentPresence {
   return 'available'
 }
 
-function presenceLabel(presence: AgentPresence): string {
-  if (presence === 'working') return 'Working…'
-  if (presence === 'available') return 'Available'
-  if (presence === 'needs-setup') return 'Needs setup'
-  return 'Off'
-}
-
 export function AgentsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [roomSummaries, setRoomSummaries] = useState<AgentRoomSummary[]>([])
@@ -136,10 +129,15 @@ export function AgentsScreen(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteTargetAgentId, setDeleteTargetAgentId] = useState('')
   const [deleting, setDeleting] = useState(false)
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
     [agents, selectedAgentId]
+  )
+  const deleteTargetAgent = useMemo(
+    () => agents.find((agent) => agent.id === deleteTargetAgentId) ?? null,
+    [agents, deleteTargetAgentId]
   )
 
   // Live "Working…" presence: track in-flight runs across surfaces. Seed from
@@ -288,6 +286,12 @@ export function AgentsScreen(): React.JSX.Element {
     const nextAgents = agents.filter((agent) => agent.id !== agentId)
 
     setAgents(nextAgents)
+    setUnreadAgentIds((current) => {
+      if (!current.has(agentId)) return current
+      const next = new Set(current)
+      next.delete(agentId)
+      return next
+    })
     setSelectedAgentId((current) => {
       if (current !== agentId) {
         return current
@@ -298,15 +302,16 @@ export function AgentsScreen(): React.JSX.Element {
   }
 
   async function handleDeleteAgent(): Promise<void> {
-    if (!selectedAgent) {
+    if (!deleteTargetAgent) {
       return
     }
 
     try {
       setDeleting(true)
-      await window.ordinus.agents.delete({ id: selectedAgent.id })
+      await window.ordinus.agents.delete({ id: deleteTargetAgent.id })
       setDeleteOpen(false)
-      handleAgentDeleted(selectedAgent.id)
+      handleAgentDeleted(deleteTargetAgent.id)
+      setDeleteTargetAgentId('')
     } catch (deleteError) {
       notify.error({
         title: 'Agent could not be deleted',
@@ -314,6 +319,36 @@ export function AgentsScreen(): React.JSX.Element {
       })
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function handleTogglePinned(agent: Agent): Promise<void> {
+    const previousAgents = agents
+    const pinned = !agent.pinnedAt
+    const now = new Date().toISOString()
+    const optimisticPinnedAt = pinned ? now : null
+
+    setAgents((currentAgents) =>
+      currentAgents.map((currentAgent) =>
+        currentAgent.id === agent.id
+          ? { ...currentAgent, pinnedAt: optimisticPinnedAt, updatedAt: now }
+          : currentAgent
+      )
+    )
+
+    try {
+      const nextAgent = await window.ordinus.agents.setPinned({ id: agent.id, pinned })
+      setAgents((currentAgents) =>
+        currentAgents.map((currentAgent) =>
+          currentAgent.id === nextAgent.id ? nextAgent : currentAgent
+        )
+      )
+    } catch (pinError) {
+      setAgents(previousAgents)
+      notify.error({
+        title: pinned ? 'Agent could not be pinned' : 'Agent could not be unpinned',
+        description: getErrorMessage(pinError, 'Please try again.')
+      })
     }
   }
 
@@ -327,6 +362,10 @@ export function AgentsScreen(): React.JSX.Element {
         roomSummaries={roomSummaries}
         unreadAgentIds={unreadAgentIds}
         onCreateAgent={() => setCreateAgentOpen(true)}
+        onDeleteAgent={(agent) => {
+          setDeleteTargetAgentId(agent.id)
+          setDeleteOpen(true)
+        }}
         onSelectAgent={(agentId) => {
           setUnreadAgentIds((current) => {
             if (!current.has(agentId)) return current
@@ -336,6 +375,7 @@ export function AgentsScreen(): React.JSX.Element {
           })
           setSelectedAgentId(agentId)
         }}
+        onTogglePinned={(agent) => void handleTogglePinned(agent)}
       />
 
       <main className="min-w-0 xl:min-h-0">
@@ -349,9 +389,7 @@ export function AgentsScreen(): React.JSX.Element {
               <AgentIdentityHeader
                 agent={selectedAgent}
                 agents={agents}
-                busy={busyAgentIds.has(selectedAgent.id)}
                 onAgentSaved={handleAgentSaved}
-                onDelete={() => setDeleteOpen(true)}
               />
               <div className="flex items-stretch gap-0 border-b">
                 {tabs.map((tab) => {
@@ -409,79 +447,20 @@ export function AgentsScreen(): React.JSX.Element {
         existingAgentNames={agents.map((agent) => agent.name)}
       />
 
-      {selectedAgent ? (
+      {deleteTargetAgent ? (
         <DeleteAgentDialog
-          agentId={selectedAgent.id}
-          agentName={selectedAgent.name}
+          agentId={deleteTargetAgent.id}
+          agentName={deleteTargetAgent.name}
           deleting={deleting}
           open={deleteOpen}
           onDelete={() => void handleDeleteAgent()}
-          onOpenChange={setDeleteOpen}
+          onOpenChange={(open) => {
+            setDeleteOpen(open)
+            if (!open && !deleting) {
+              setDeleteTargetAgentId('')
+            }
+          }}
         />
-      ) : null}
-    </div>
-  )
-}
-
-function AgentActionsMenu({ onDelete }: { onDelete: () => void }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    function handlePointerDown(event: PointerEvent): void {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
-        setOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
-
-  return (
-    <div ref={containerRef} className="relative flex items-center pr-2">
-      <button
-        type="button"
-        aria-label="Agent actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        onClick={() => setOpen((value) => !value)}
-      >
-        <MoreVertical className="size-4" />
-      </button>
-      {open ? (
-        <div
-          role="menu"
-          className="absolute right-2 top-[calc(100%-4px)] z-20 min-w-44 rounded-md border bg-card p-1 shadow-md"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-status-attention transition-colors hover:bg-accent"
-            onClick={() => {
-              setOpen(false)
-              onDelete()
-            }}
-          >
-            <Trash2 className="size-3.5" />
-            Delete this agent
-          </button>
-        </div>
       ) : null}
     </div>
   )
@@ -495,7 +474,9 @@ function AgentLibrary({
   roomSummaries,
   unreadAgentIds,
   onCreateAgent,
-  onSelectAgent
+  onDeleteAgent,
+  onSelectAgent,
+  onTogglePinned
 }: {
   agents: Agent[]
   loading: boolean
@@ -504,7 +485,9 @@ function AgentLibrary({
   roomSummaries: AgentRoomSummary[]
   unreadAgentIds: Set<string>
   onCreateAgent: () => void
+  onDeleteAgent: (agent: Agent) => void
   onSelectAgent: (agentId: string) => void
+  onTogglePinned: (agent: Agent) => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const roomSummaryByAgentId = useMemo(
@@ -519,6 +502,7 @@ function AgentLibrary({
       return {
         agent,
         busy,
+        pinned: Boolean(agent.pinnedAt),
         unread: unreadAgentIds.has(agent.id),
         summary,
         preview: getAgentRoomPreview(summary, busy),
@@ -531,6 +515,9 @@ function AgentLibrary({
       return searchable.includes(normalizedQuery)
     })
     .sort(compareAgentChatRows)
+  const lastPinnedIndex = chatRows.reduce((lastIndex, row, index) => {
+    return row.pinned ? index : lastIndex
+  }, -1)
 
   return (
     <aside className="min-w-0 xl:min-h-0">
@@ -561,48 +548,96 @@ function AgentLibrary({
           </div>
         </CardHeader>
 
-        <CardContent className="ordinus-scrollbar grid gap-0 p-2 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-          {chatRows.map(({ agent, busy, unread, preview, timestampLabel }) => (
-            <button
-              key={agent.id}
-              type="button"
-              className={cn(
-                'relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                selectedAgentId === agent.id && 'bg-primary-soft/70 pl-3.5'
-              )}
-              onClick={() => onSelectAgent(agent.id)}
-            >
-              {selectedAgentId === agent.id ? (
-                <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
-              ) : null}
-              <div className="relative row-span-2 size-9 shrink-0">
-                <AgentAvatar avatar={agent.avatar} size={36} />
-                <PresenceDot
-                  presence={getAgentPresence(agent, busy)}
-                  className="absolute bottom-0 right-0 ring-2 ring-background"
-                />
+        <CardContent className="ordinus-scrollbar grid auto-rows-min content-start gap-0 p-2 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+          {chatRows.map(({ agent, busy, pinned, unread, preview, timestampLabel }, index) => (
+            <div key={agent.id}>
+              <div
+                role="button"
+                tabIndex={0}
+                className={cn(
+                  'group relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  selectedAgentId === agent.id && 'bg-primary-soft/70 pl-3.5'
+                )}
+                onClick={() => onSelectAgent(agent.id)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) {
+                    return
+                  }
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onSelectAgent(agent.id)
+                  }
+                }}
+              >
+                {selectedAgentId === agent.id ? (
+                  <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
+                ) : null}
+                <div className="relative row-span-2 size-9 shrink-0">
+                  <AgentAvatar avatar={agent.avatar} size={36} />
+                  <PresenceDot
+                    presence={getAgentPresence(agent, busy)}
+                    className="absolute bottom-0 right-0 ring-2 ring-background"
+                  />
+                </div>
+                <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold leading-5">
+                  <span className="min-w-0 truncate">{agent.name}</span>
+                  {pinned ? <Pin className="size-3 shrink-0 text-primary" /> : null}
+                </p>
+                <div className="relative min-w-16 pr-3 text-right">
+                  <span
+                    className={cn(
+                      'text-[11px] transition-opacity group-hover:opacity-0 group-focus-within:opacity-0',
+                      unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                    )}
+                  >
+                    {timestampLabel}
+                  </span>
+                  <div className="absolute right-0 top-1/2 flex -translate-y-1/2 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      aria-label={pinned ? `Unpin ${agent.name}` : `Pin ${agent.name}`}
+                      title={pinned ? 'Unpin agent' : 'Pin agent'}
+                      className={cn(
+                        'flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        pinned && 'text-primary'
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onTogglePinned(agent)
+                      }}
+                    >
+                      <Pin className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${agent.name}`}
+                      title="Delete agent"
+                      className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-status-attention/10 hover:text-status-attention focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onDeleteAgent(agent)
+                      }}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <p
+                  className={cn(
+                    'col-start-2 col-end-4 min-w-0 truncate text-xs leading-5',
+                    unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  {preview}
+                </p>
+                {unread ? (
+                  <span className="absolute right-2 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary transition-all group-hover:right-14 group-focus-within:right-14" />
+                ) : null}
               </div>
-              <p className="min-w-0 truncate text-sm font-semibold leading-5">{agent.name}</p>
-              <span
-                className={cn(
-                  'text-[11px]',
-                  unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                )}
-              >
-                {timestampLabel}
-              </span>
-              <p
-                className={cn(
-                  'col-start-2 col-end-4 min-w-0 truncate text-xs leading-5',
-                  unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                )}
-              >
-                {preview}
-              </p>
-              {unread ? (
-                <span className="absolute right-2 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary" />
+              {index === lastPinnedIndex && index < chatRows.length - 1 ? (
+                <div className="mx-3 my-1 border-t border-dashed border-border" />
               ) : null}
-            </button>
+            </div>
           ))}
 
           {!loading && chatRows.length === 0 ? (
@@ -619,6 +654,7 @@ function AgentLibrary({
 type AgentChatRow = {
   agent: Agent
   busy: boolean
+  pinned: boolean
   unread: boolean
   summary: AgentRoomSummary | undefined
   preview: string
@@ -627,6 +663,10 @@ type AgentChatRow = {
 }
 
 function compareAgentChatRows(left: AgentChatRow, right: AgentChatRow): number {
+  const leftPinned = left.pinned ? 1 : 0
+  const rightPinned = right.pinned ? 1 : 0
+  if (leftPinned !== rightPinned) return rightPinned - leftPinned
+
   const leftPending = left.summary?.hasPendingInputRequest ? 1 : 0
   const rightPending = right.summary?.hasPendingInputRequest ? 1 : 0
   if (leftPending !== rightPending) return rightPending - leftPending
@@ -679,18 +719,13 @@ function startOfLocalDay(date: Date): Date {
 function AgentIdentityHeader({
   agent,
   agents,
-  busy,
-  onAgentSaved,
-  onDelete
+  onAgentSaved
 }: {
   agent: Agent
   agents: Agent[]
-  busy: boolean
   onAgentSaved: (agent: Agent) => void
-  onDelete: () => void
 }): React.JSX.Element {
   const [profileOpen, setProfileOpen] = useState(false)
-  const presence = getAgentPresence(agent, busy)
 
   return (
     <div className="flex items-center gap-3 border-b px-3 py-2.5">
@@ -706,11 +741,6 @@ function AgentIdentityHeader({
           <p className="truncate text-xs text-muted-foreground">{agent.role}</p>
         </div>
       </button>
-      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <PresenceDot presence={presence} />
-        {presenceLabel(presence)}
-      </span>
-      <AgentActionsMenu onDelete={onDelete} />
       <EditProfileDialog
         key={agent.id}
         agent={agent}
