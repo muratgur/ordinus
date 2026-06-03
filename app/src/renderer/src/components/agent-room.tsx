@@ -332,7 +332,7 @@ function Composer({
   onCancel: () => void
 }): React.JSX.Element {
   const placeholder = waitingForInput
-    ? `Answer ${agent.name}'s question above to continue…`
+    ? 'Answer the question above to continue…'
     : `Message ${agent.name}…`
 
   return (
@@ -727,7 +727,7 @@ function RoomEmptyState({ agent }: { agent: Agent }): React.JSX.Element {
       <p className="text-sm font-semibold">{agent.name}</p>
       {agent.role ? <p className="text-xs text-muted-foreground">{agent.role}</p> : null}
       <p className="mt-1 text-sm text-muted-foreground">
-        Say hi, or hand {agent.name} a task to get started.
+        Say hi, or hand them a task to get started.
       </p>
     </div>
   )

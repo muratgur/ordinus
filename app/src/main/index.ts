@@ -16,13 +16,17 @@ const observability = createObservabilityService(database)
 let scheduler: SchedulerService | null = null
 
 const preferredWindowSize = {
-  width: 1360,
-  height: 860
+  width: 1440,
+  height: 900
 }
 
+// Keep the minimum at (or above) the renderer's `xl` desktop breakpoint (1280px)
+// so the window never opens in the cramped 1024–1280 responsive zone. Below this
+// width the multi-pane screens (Agents/Workboard/Conversations/Settings) collapse
+// to their stacked fallback, which we only want as a deliberate-resize safety net.
 const minimumWindowSize = {
-  width: 1024,
-  height: 680
+  width: 1280,
+  height: 760
 }
 
 const windowScreenMargin = 48

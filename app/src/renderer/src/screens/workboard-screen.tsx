@@ -3179,7 +3179,7 @@ function RunDetailHeader({
           </Button>
         </div>
         {files.length > 0 ? (
-          <div className="mt-2 grid gap-1">
+          <div className="mt-2 grid max-h-[4.75rem] gap-1 overflow-y-auto pr-2 ordinus-scrollbar">
             {files.map((file) => (
               <AttachmentChip
                 key={file.path}

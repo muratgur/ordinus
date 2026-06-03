@@ -74,6 +74,8 @@ const invalidSessionPatterns = [
   /\binvalid thread\b/i
 ]
 
+const conversationProcessTimeoutMs = 30 * 60 * 1000
+
 export class ProviderSessionInvalidError extends Error {
   constructor(message: string) {
     super(message)
@@ -127,13 +129,10 @@ export function runConversationProcess({
     let stderr = ''
     let stdoutLineBuffer = ''
 
-    process.cleanupTimer = setTimeout(
-      () => {
-        process.cancelled = true
-        child.kill()
-      },
-      10 * 60 * 1000
-    )
+    process.cleanupTimer = setTimeout(() => {
+      process.cancelled = true
+      child.kill()
+    }, conversationProcessTimeoutMs)
 
     const cleanup = (): void => {
       if (process.cleanupTimer) {

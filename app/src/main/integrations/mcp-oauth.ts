@@ -40,6 +40,23 @@ function parseResourceMetadataUrl(header: string | null): string | null {
   return match ? match[1] : null
 }
 
+function uniqueUrls(urls: string[]): string[] {
+  return [...new Set(urls)]
+}
+
+function getAuthorizationServerMetadataUrls(authServerUrl: string): string[] {
+  const issuer = new URL(authServerUrl)
+  const issuerPath = issuer.pathname === '/' ? '' : issuer.pathname.replace(/\/$/, '')
+  const issuerBase = `${issuer.origin}${issuerPath}`
+
+  return uniqueUrls([
+    `${issuer.origin}/.well-known/oauth-authorization-server${issuerPath}`,
+    `${issuerBase}/.well-known/oauth-authorization-server`,
+    `${issuerBase}/.well-known/openid-configuration`,
+    `${issuer.origin}/.well-known/openid-configuration${issuerPath}`
+  ])
+}
+
 /**
  * Resolves the authorization server for a remote MCP endpoint: probe the
  * endpoint for a `WWW-Authenticate` challenge, fall back to the well-known
@@ -81,10 +98,13 @@ export async function discoverAuthServer(mcpUrl: string): Promise<AuthServerMeta
     authServerUrl = origin
   }
 
-  const asBase = authServerUrl.replace(/\/$/, '')
-  const metadata =
-    (await fetchJson(`${asBase}/.well-known/oauth-authorization-server`)) ??
-    (await fetchJson(`${asBase}/.well-known/openid-configuration`))
+  let metadata: Record<string, unknown> | null = null
+  for (const candidate of getAuthorizationServerMetadataUrls(authServerUrl)) {
+    metadata = await fetchJson(candidate)
+    if (metadata) {
+      break
+    }
+  }
 
   if (!metadata) {
     throw new Error(
@@ -99,7 +119,8 @@ export async function discoverAuthServer(mcpUrl: string): Promise<AuthServerMeta
   }
 
   return {
-    issuer: typeof metadata.issuer === 'string' ? metadata.issuer : asBase,
+    issuer:
+      typeof metadata.issuer === 'string' ? metadata.issuer : authServerUrl.replace(/\/$/, ''),
     authorizationEndpoint,
     tokenEndpoint,
     registrationEndpoint:

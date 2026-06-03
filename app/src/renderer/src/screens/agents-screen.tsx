@@ -67,7 +67,7 @@ type AgentPresence = 'working' | 'available' | 'needs-setup' | 'off'
 // ADR-027 agent home: the colleague profile tabs. Chat is the 1:1 room (built
 // in Phase 2); CV/Agenda/About currently wrap the existing panels and are
 // reorganized in Phases 4–6.
-type AgentTab = 'chat' | 'cv' | 'agenda' | 'about'
+type AgentTab = 'chat' | 'skills' | 'agenda' | 'about'
 // The Trust & access draft (ADR-027 Phase 6). Identity (name/role/enabled/avatar)
 // lives in the header profile dialog and capabilities/connectors on the CV tab;
 // all write through the same updateSettings IPC, sourced from the live agent.
@@ -103,7 +103,7 @@ const sandboxOptions: Array<{
 
 const tabs: Array<{ id: AgentTab; label: string; icon: typeof Bot }> = [
   { id: 'chat', label: 'Chat', icon: MessageSquareText },
-  { id: 'cv', label: 'CV', icon: FileText },
+  { id: 'skills', label: 'Skills', icon: Sparkles },
   { id: 'agenda', label: 'Agenda', icon: CalendarClock },
   { id: 'about', label: 'About', icon: UserRound }
 ]
@@ -773,12 +773,37 @@ function EditProfileDialog({
   const [symbol, setSymbol] = useState(savedSymbol || AGENT_SYMBOLS[0]?.id || '')
   const [name, setName] = useState(agent.name)
   const [role, setRole] = useState(agent.role)
+  const [capabilities, setCapabilities] = useState(agent.capabilities)
   const [enabled, setEnabled] = useState(agent.enabled)
+  const [improving, setImproving] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const nextAvatar = `${color}${AVATAR_DELIMITER}${symbol}`
   const nameIssue = getAgentNameIssue(name, agent.name, agents, agent.id)
   const canSave = !nameIssue && Boolean(role.trim()) && !saving
+
+  async function handleImprove(): Promise<void> {
+    if (improving) {
+      return
+    }
+    const source = agent.instructions.trim()
+    if (source.length < 12) {
+      return
+    }
+    try {
+      setImproving(true)
+      setError('')
+      const nextDraft = await window.ordinus.agents.draftFromIntent({
+        requestedWork: source,
+        sandbox: agent.sandbox
+      })
+      setCapabilities(nextDraft.capabilities)
+    } catch (improveError) {
+      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
+    } finally {
+      setImproving(false)
+    }
+  }
 
   async function handleSave(): Promise<void> {
     if (!canSave) {
@@ -791,6 +816,7 @@ function EditProfileDialog({
         buildAgentSettingsPayload(agent, {
           name: name.trim(),
           role: role.trim(),
+          capabilities,
           enabled,
           avatar: nextAvatar
         })
@@ -806,10 +832,10 @@ function EditProfileDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Edit profile</DialogTitle>
-          <DialogDescription>How {agent.name} shows up on your team.</DialogDescription>
+          <DialogDescription>How this teammate shows up on your team.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-1">
           <div className="flex flex-col items-center gap-3">
@@ -837,6 +863,13 @@ function EditProfileDialog({
               onChange={(event) => setRole(event.target.value)}
             />
           </FormField>
+          <CapabilitiesField
+            value={capabilities}
+            improving={improving}
+            canImprove={agent.instructions.trim().length >= 12}
+            onChange={setCapabilities}
+            onImprove={() => void handleImprove()}
+          />
         </div>
         {error ? <InlineError message={error} /> : null}
         <DialogFooter>
@@ -877,8 +910,8 @@ function AgentTabContent({
     )
   }
 
-  if (activeTab === 'cv') {
-    return <CvTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+  if (activeTab === 'skills') {
+    return <SkillsTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
   }
 
   if (activeTab === 'agenda') {
@@ -888,9 +921,9 @@ function AgentTabContent({
   return <AboutTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
 }
 
-// CV tab (ADR-027 Phase 4): the colleague's résumé — what they're great at
-// (capabilities), the tools they're fluent with (connectors), and their skills.
-// Capabilities and connectors persist through the shared updateSettings IPC.
+// Skills tab (ADR-027 Phase 4): the colleague's abilities — their skills and
+// the tools/connectors they're fluent with. Connectors persist through the
+// shared updateSettings IPC; capabilities now live in the profile dialog.
 function buildAgentSettingsPayload(
   agent: Agent,
   overrides: Partial<{
@@ -919,7 +952,7 @@ function buildAgentSettingsPayload(
   }
 }
 
-function CvTab({
+function SkillsTab({
   agent,
   onAgentSaved
 }: {
@@ -928,104 +961,11 @@ function CvTab({
 }): React.JSX.Element {
   return (
     <ScrollArea className="h-full min-h-0">
-      <div className="grid gap-6 p-5">
-        <CvCapabilities agent={agent} onAgentSaved={onAgentSaved} />
+      <SkillsPanel agent={agent} />
+      <div className="border-t p-5">
         <CvConnectors agent={agent} onAgentSaved={onAgentSaved} />
       </div>
-      <div className="border-t">
-        <SkillsPanel agent={agent} />
-      </div>
     </ScrollArea>
-  )
-}
-
-function CvCapabilities({
-  agent,
-  onAgentSaved
-}: {
-  agent: Agent
-  onAgentSaved: (agent: Agent) => void
-}): React.JSX.Element {
-  const [value, setValue] = useState(agent.capabilities)
-  const [improving, setImproving] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const dirty = value !== agent.capabilities
-
-  async function handleImprove(): Promise<void> {
-    if (improving) {
-      return
-    }
-    const source = agent.instructions.trim()
-    if (source.length < 12) {
-      return
-    }
-    try {
-      setImproving(true)
-      setError('')
-      const nextDraft = await window.ordinus.agents.draftFromIntent({
-        requestedWork: source,
-        sandbox: agent.sandbox
-      })
-      setValue(nextDraft.capabilities)
-    } catch (improveError) {
-      setError(getErrorMessage(improveError, 'Capabilities could not be generated.'))
-    } finally {
-      setImproving(false)
-    }
-  }
-
-  async function handleSave(): Promise<void> {
-    if (!dirty || saving) {
-      return
-    }
-    try {
-      setSaving(true)
-      setError('')
-      const nextAgent = await window.ordinus.agents.updateSettings(
-        buildAgentSettingsPayload(agent, { capabilities: value })
-      )
-      onAgentSaved(nextAgent)
-    } catch (saveError) {
-      setError(getErrorMessage(saveError, 'Capabilities could not be saved.'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <section className="grid gap-2">
-      <CapabilitiesField
-        value={value}
-        improving={improving}
-        canImprove={agent.instructions.trim().length >= 12}
-        onChange={setValue}
-        onImprove={() => void handleImprove()}
-      />
-      {error ? <InlineError message={error} /> : null}
-      {dirty ? (
-        <div className="flex items-center justify-end gap-3">
-          <button
-            type="button"
-            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            disabled={saving}
-            onClick={() => setValue(agent.capabilities)}
-          >
-            Discard
-          </button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            disabled={saving}
-            onClick={() => void handleSave()}
-          >
-            {saving ? <Loader2 className="animate-spin" /> : null}
-            Save
-          </Button>
-        </div>
-      ) : null}
-    </section>
   )
 }
 
@@ -1170,10 +1110,10 @@ function WorkingAgreement({
           <div>
             <h3 className="text-sm font-semibold leading-tight">Brief</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              How {agent.name} should work — role, scope, and what to avoid.
+              How this teammate should work — role, scope, and what to avoid.
             </p>
           </div>
-          <div className="h-80 overflow-hidden rounded-lg border bg-card">
+          <div className="flex h-80 flex-col overflow-hidden rounded-lg border bg-card">
             <InstructionsPanel agent={agent} onAgentSaved={onAgentSaved} />
           </div>
         </section>
@@ -1231,7 +1171,7 @@ function LearnedRules({ agent }: { agent: Agent }): React.JSX.Element {
   return (
     <section className="grid gap-2">
       <div>
-        <h3 className="text-sm font-semibold leading-tight">What {agent.name} learned from you</h3>
+        <h3 className="text-sm font-semibold leading-tight">What this teammate learned from you</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Standing preferences you&apos;ve taught. Remove any that no longer apply.
         </p>
@@ -1241,7 +1181,7 @@ function LearnedRules({ agent }: { agent: Agent }): React.JSX.Element {
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : rules.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          Nothing yet — teach {agent.name} as you work together.
+          Nothing yet — teach them as you work together.
         </p>
       ) : (
         <ul className="grid gap-1.5">
@@ -1889,7 +1829,7 @@ function InstructionsPanel({
         key={agent.id}
         aria-label={`${agent.name} instructions`}
         className="ordinus-scrollbar h-full w-full flex-1 resize-none bg-transparent p-5 pt-4 font-mono text-xs leading-6 text-foreground shadow-none outline-none placeholder:text-muted-foreground/50"
-        placeholder={`Describe what ${agent.name} is responsible for.\n\nInclude:\n- Role and purpose\n- Scope of work\n- What it should avoid\n- How it should verify its work`}
+        placeholder={`Describe what this teammate is responsible for.\n\nInclude:\n- Role and purpose\n- Scope of work\n- What they should avoid\n- How they verify their work`}
         spellCheck={false}
         value={instructions}
         onChange={(event) => handleChange(event.target.value)}
@@ -1959,7 +1899,7 @@ function TrustAccessPanel({
       <ScrollArea className="h-full min-h-0">
         <div className={cn('grid gap-5 p-5', dirty && 'pb-24')}>
           <p className="text-xs text-muted-foreground">
-            The admin corner — which engine powers {agent.name}, how much they can touch, and any
+            The admin corner — which engine powers this teammate, how much they can touch, and any
             extra folders they may reach.
           </p>
 
@@ -2229,7 +2169,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
         <div>
           <h2 className="text-base font-semibold leading-tight">Agenda</h2>
           <p className="text-sm text-muted-foreground">
-            Standing times {agent.name} works on its own.
+            Standing times this teammate works on their own.
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!agent.enabled}>
@@ -2239,7 +2179,7 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
 
       {!agent.enabled ? (
         <p className="rounded-md border border-dashed bg-accent/40 px-3 py-2 text-xs text-muted-foreground">
-          Enable {agent.name} to add standing work to their agenda.
+          Enable this teammate to add standing work to their agenda.
         </p>
       ) : null}
 
@@ -2248,9 +2188,9 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
       ) : schedules.length === 0 ? (
         <div className="grid place-items-center gap-2 rounded-lg border border-dashed bg-accent/40 p-8 text-center">
           <CalendarClock className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">{agent.name}&apos;s agenda is clear</p>
+          <p className="text-sm font-medium">Nothing on the agenda yet</p>
           <p className="max-w-xs text-sm text-muted-foreground">
-            Add a standing time for {agent.name} to pick up work on their own.
+            Add a standing time for this teammate to pick up work on their own.
           </p>
         </div>
       ) : (
