@@ -58,7 +58,11 @@ import type {
   WorkRequest
 } from '@shared/contracts'
 import { CreateScheduleDialog } from './schedules-screen'
-import { disableReasonLabel } from './schedule-labels'
+import { AgentScheduleGroup } from './schedules/agent-schedule-group'
+import { DeleteScheduleDialog } from './schedules/delete-schedule-dialog'
+import { agentColor } from '@renderer/lib/agent-color'
+import { useThemeMode } from '@renderer/hooks/use-theme-mode'
+import { useTickingNow } from '@renderer/hooks/use-ticking-now'
 import { getDefaultModelForProvider, getProviderModelOptions } from '@shared/provider-models'
 
 // Roster presence (ADR-027 Phase 7): a teammate is Working when any of their
@@ -2101,7 +2105,18 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
+  const [deleting, setDeleting] = useState<AgentSchedule | null>(null)
   const [busyId, setBusyId] = useState('')
+  const theme = useThemeMode()
+  const nextTargets = useMemo(
+    () =>
+      schedules
+        .filter((s) => s.enabled && s.nextRunAt)
+        .map((s) => new Date(s.nextRunAt as string).getTime())
+        .filter((t) => Number.isFinite(t)),
+    [schedules]
+  )
+  const now = useTickingNow(nextTargets)
 
   const load = useCallback(
     async (quiet = false): Promise<void> => {
@@ -2156,12 +2171,14 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
     })
   }
 
-  async function remove(s: AgentSchedule): Promise<void> {
-    if (!window.confirm(`Delete schedule "${s.name}"?`)) return
+  async function confirmDelete(s: AgentSchedule): Promise<void> {
     await runScheduleAction(s.id, async () => {
       await window.ordinus.schedules.delete({ id: s.id })
     })
+    setDeleting(null)
   }
+
+  const color = agentColor(agent.id, theme).dot
 
   return (
     <div className="space-y-4 p-5">
@@ -2172,9 +2189,6 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
             Standing times this teammate works on their own.
           </p>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!agent.enabled}>
-          <Plus className="size-4" /> New
-        </Button>
       </div>
 
       {!agent.enabled ? (
@@ -2185,76 +2199,19 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
 
       {loading ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : schedules.length === 0 ? (
-        <div className="grid place-items-center gap-2 rounded-lg border border-dashed bg-accent/40 p-8 text-center">
-          <CalendarClock className="size-7 text-muted-foreground" />
-          <p className="text-sm font-medium">Nothing on the agenda yet</p>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            Add a standing time for this teammate to pick up work on their own.
-          </p>
-        </div>
       ) : (
-        <ul className="grid gap-2">
-          {schedules.map((s) => (
-            <li
-              key={s.id}
-              className={cn(
-                'flex items-start gap-3 rounded-lg border bg-card p-3',
-                !s.enabled && 'opacity-70'
-              )}
-            >
-              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary">
-                <CalendarClock className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1 space-y-0.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm font-semibold">{s.name}</span>
-                  {s.lastRunStatus === 'failed' ? (
-                    <span className="rounded-full bg-status-attention/10 px-1.5 py-px text-[10px] font-medium text-status-attention">
-                      Last run failed
-                    </span>
-                  ) : null}
-                  {!s.enabled ? (
-                    <span className="text-[10px] text-muted-foreground">
-                      {disableReasonLabel(s)}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="text-xs text-muted-foreground">{describeSchedule(s)}</p>
-                {s.enabled && s.nextRunAt ? (
-                  <p className="text-xs text-muted-foreground">
-                    Next · {formatNextRun(s.nextRunAt)}
-                  </p>
-                ) : null}
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busyId === s.id}
-                  onClick={() => void fire(s)}
-                >
-                  Run now
-                </Button>
-                <Switch
-                  aria-label={s.enabled ? 'Disable' : 'Enable'}
-                  checked={s.enabled}
-                  disabled={busyId === s.id}
-                  onCheckedChange={() => void toggle(s)}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Delete"
-                  disabled={busyId === s.id}
-                  onClick={() => void remove(s)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <AgentScheduleGroup
+          agent={agent}
+          schedules={schedules}
+          busyId={busyId}
+          agentColor={color}
+          variant="embedded"
+          now={now}
+          onAdd={agent.enabled ? () => setCreateOpen(true) : undefined}
+          onFire={(s) => void fire(s)}
+          onToggle={(s) => void toggle(s)}
+          onDelete={(s) => setDeleting(s)}
+        />
       )}
 
       <CreateScheduleDialog
@@ -2268,85 +2225,15 @@ function AgentSchedulesPanel({ agent }: { agent: Agent }): React.JSX.Element {
           void load(true)
         }}
       />
+
+      <DeleteScheduleDialog
+        schedule={deleting}
+        busy={Boolean(deleting && busyId === deleting.id)}
+        onClose={() => setDeleting(null)}
+        onConfirm={(s) => void confirmDelete(s)}
+      />
     </div>
   )
-}
-
-const SCHEDULE_WEEKDAYS = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday'
-]
-
-// Human-readable recurrence for the Agenda tab. Falls back to the raw cron for
-// patterns it does not recognize — presentation only, never alters scheduling.
-function describeSchedule(schedule: AgentSchedule): string {
-  if (schedule.runAt) {
-    return `Once · ${new Date(schedule.runAt).toLocaleString(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short'
-    })}`
-  }
-  if (schedule.cron) {
-    return describeCron(schedule.cron) ?? `Cron · ${schedule.cron}`
-  }
-  return 'No timing set'
-}
-
-function describeCron(cron: string): string | null {
-  const parts = cron.trim().split(/\s+/)
-  if (parts.length !== 5) {
-    return null
-  }
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
-
-  const everyMinutes = /^\*\/(\d+)$/.exec(minute)
-  if (everyMinutes && hour === '*' && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-    return `Every ${everyMinutes[1]} minutes`
-  }
-  if (
-    /^\d+$/.test(minute) &&
-    hour === '*' &&
-    dayOfMonth === '*' &&
-    month === '*' &&
-    dayOfWeek === '*'
-  ) {
-    return `Hourly at :${pad2(minute)}`
-  }
-
-  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) {
-    return null
-  }
-  const time = `${pad2(hour)}:${pad2(minute)}`
-
-  if (dayOfMonth === '*' && month === '*') {
-    if (dayOfWeek === '*') return `Every day at ${time}`
-    if (dayOfWeek === '1-5') return `Every weekday at ${time}`
-    if (dayOfWeek === '0,6' || dayOfWeek === '6,0') return `Weekends at ${time}`
-    if (/^\d$/.test(dayOfWeek)) return `Every ${SCHEDULE_WEEKDAYS[Number(dayOfWeek)]} at ${time}`
-  }
-  if (dayOfWeek === '*' && month === '*' && /^\d+$/.test(dayOfMonth)) {
-    return `Monthly on day ${dayOfMonth} at ${time}`
-  }
-  return null
-}
-
-function pad2(value: string): string {
-  return value.padStart(2, '0')
-}
-
-function formatNextRun(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }
 
 function DeleteAgentDialog({

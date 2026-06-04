@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarClock, Plus, RefreshCw, Trash2, Zap } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { CalendarClock, Plus, Users } from 'lucide-react'
 import type { Agent, AgentSchedule, WorkRequest } from '@shared/contracts'
-import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle
-} from '@renderer/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -19,8 +12,14 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
-import { Switch } from '@renderer/components/ui/switch'
-import { disableReasonLabel } from './schedule-labels'
+import { agentColor } from '@renderer/lib/agent-color'
+import { useThemeMode } from '@renderer/hooks/use-theme-mode'
+import { useTickingNow } from '@renderer/hooks/use-ticking-now'
+import { appRoutePaths } from '@renderer/app/routes'
+import { AgentScheduleGroup } from './schedules/agent-schedule-group'
+import { WhatsNextStrip } from './schedules/whats-next-strip'
+import { ScheduleSkeleton } from './schedules/schedule-skeleton'
+import { DeleteScheduleDialog } from './schedules/delete-schedule-dialog'
 
 type PresetKey = 'once' | 'daily' | 'weekly' | 'hourly' | 'advanced'
 
@@ -40,6 +39,8 @@ interface ScheduleFormState {
 }
 
 const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+const COLLAPSE_PREFIX = 'ordinus.schedules.collapsed:'
 
 function defaultFormState(agentId: string): ScheduleFormState {
   const now = new Date()
@@ -88,19 +89,12 @@ function buildExpression(form: ScheduleFormState): { cron: string | null; runAt:
   }
 }
 
-function humanizeSchedule(schedule: AgentSchedule): string {
-  if (schedule.runAt && !schedule.cron) {
-    return `Once at ${new Date(schedule.runAt).toLocaleString()}`
+function writeCollapsed(agentId: string, collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(COLLAPSE_PREFIX + agentId, collapsed ? '1' : '0')
+  } catch {
+    // ignore
   }
-  if (schedule.cron) return `Cron: ${schedule.cron}`
-  return '—'
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return '—'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return value
-  return d.toLocaleString()
 }
 
 export function SchedulesScreen(): React.JSX.Element {
@@ -108,9 +102,28 @@ export function SchedulesScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [loading, setLoading] = useState(true)
+  const [showSkeleton, setShowSkeleton] = useState(false)
   const [error, setError] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
+  const [deleting, setDeleting] = useState<AgentSchedule | null>(null)
+  const [defaultAgentId, setDefaultAgentId] = useState<string | undefined>(undefined)
   const [busyId, setBusyId] = useState('')
+  const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({})
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const collapsedInitialized = useRef(false)
+  const navigate = useNavigate()
+  const theme = useThemeMode()
+
+  // Tick cadence driven by upcoming fires.
+  const nextTargets = useMemo(
+    () =>
+      schedules
+        .filter((s) => s.enabled && s.nextRunAt)
+        .map((s) => new Date(s.nextRunAt as string).getTime())
+        .filter((t) => Number.isFinite(t)),
+    [schedules]
+  )
+  const now = useTickingNow(nextTargets)
 
   const load = useCallback(async (quiet = false): Promise<void> => {
     if (!quiet) setLoading(true)
@@ -145,8 +158,107 @@ export function SchedulesScreen(): React.JSX.Element {
     }
   }, [load])
 
+  // Skeleton only shows up if loading exceeds 600ms, avoiding a flash on quick
+  // fetches.
+  useEffect(() => {
+    if (!loading) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot reset when loading completes
+      setShowSkeleton(false)
+      return
+    }
+    const t = window.setTimeout(() => setShowSkeleton(true), 600)
+    return () => window.clearTimeout(t)
+  }, [loading])
+
   const agentsById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
-  const requestsById = useMemo(() => new Map(requests.map((r) => [r.id, r])), [requests])
+
+  // Agents that have at least one schedule, plus any pinned active agents (so
+  // the user can add to a colleague that doesn't have anything yet).
+  const groupedAgents = useMemo(() => {
+    const byAgent = new Map<string, AgentSchedule[]>()
+    for (const s of schedules) {
+      const list = byAgent.get(s.agentId) ?? []
+      list.push(s)
+      byAgent.set(s.agentId, list)
+    }
+    const ids = new Set<string>(byAgent.keys())
+    for (const a of agents) {
+      if (a.enabled && !a.archivedAt && a.pinnedAt) ids.add(a.id)
+    }
+    const sorted = [...ids]
+      .map((id) => ({ agent: agentsById.get(id) ?? null, schedules: byAgent.get(id) ?? [], id }))
+      .sort((a, b) => {
+        const aPin = a.agent?.pinnedAt ? 1 : 0
+        const bPin = b.agent?.pinnedAt ? 1 : 0
+        if (aPin !== bPin) return bPin - aPin
+        const an = a.agent?.name ?? ''
+        const bn = b.agent?.name ?? ''
+        return an.localeCompare(bn)
+      })
+    return sorted
+  }, [schedules, agents, agentsById])
+
+  // Default-collapse rules (S2a + S7f):
+  //  ≤5 agents: all expanded
+  //  >5: pinned + agents with a fire in the next 48h expanded; otherwise first 3.
+  useEffect(() => {
+    if (collapsedInitialized.current) return
+    if (loading) return
+    if (groupedAgents.length === 0) {
+      collapsedInitialized.current = true
+      return
+    }
+    const next: Record<string, boolean> = {}
+    const cutoff = Date.now() + 48 * 3_600_000
+    const hasSoonFire = (list: AgentSchedule[]): boolean =>
+      list.some((s) => {
+        if (!s.enabled || !s.nextRunAt) return false
+        const t = new Date(s.nextRunAt).getTime()
+        return !Number.isNaN(t) && t <= cutoff
+      })
+    let openedFallback = 0
+    for (const { id, agent, schedules: list } of groupedAgents) {
+      const stored = window.localStorage.getItem(COLLAPSE_PREFIX + id)
+      if (stored != null) {
+        next[id] = stored === '1'
+        continue
+      }
+      if (groupedAgents.length <= 5) {
+        next[id] = false
+        continue
+      }
+      const shouldOpen = Boolean(agent?.pinnedAt) || hasSoonFire(list)
+      next[id] = !shouldOpen
+      if (shouldOpen) openedFallback++
+    }
+    // If >5 and nothing was opened (no pin, no near fires), open first 3.
+    if (groupedAgents.length > 5 && openedFallback === 0) {
+      let i = 0
+      for (const { id } of groupedAgents) {
+        if (i >= 3) break
+        if (window.localStorage.getItem(COLLAPSE_PREFIX + id) == null) {
+          next[id] = false
+          i++
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot init from groupedAgents + localStorage
+    setCollapsedMap(next)
+    collapsedInitialized.current = true
+  }, [groupedAgents, loading])
+
+  function toggleCollapse(agentId: string): void {
+    setCollapsedMap((prev) => {
+      const nextVal = !prev[agentId]
+      writeCollapsed(agentId, nextVal)
+      return { ...prev, [agentId]: nextVal }
+    })
+  }
+
+  function openCreate(agentId?: string): void {
+    setDefaultAgentId(agentId)
+    setCreateOpen(true)
+  }
 
   async function toggleEnabled(schedule: AgentSchedule): Promise<void> {
     setBusyId(schedule.id)
@@ -172,11 +284,11 @@ export function SchedulesScreen(): React.JSX.Element {
     }
   }
 
-  async function remove(schedule: AgentSchedule): Promise<void> {
-    if (!window.confirm(`Delete schedule "${schedule.name}"?`)) return
+  async function confirmDelete(schedule: AgentSchedule): Promise<void> {
     setBusyId(schedule.id)
     try {
       await window.ordinus.schedules.delete({ id: schedule.id })
+      setDeleting(null)
       await load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not delete schedule.')
@@ -185,75 +297,91 @@ export function SchedulesScreen(): React.JSX.Element {
     }
   }
 
-  const enabledSchedules = schedules.filter((s) => s.enabled)
-  const disabledSchedules = schedules.filter((s) => !s.enabled)
+  function focusSchedule(schedule: AgentSchedule): void {
+    setCollapsedMap((prev) => {
+      if (prev[schedule.agentId]) {
+        writeCollapsed(schedule.agentId, false)
+        return { ...prev, [schedule.agentId]: false }
+      }
+      return prev
+    })
+    setHighlightId(schedule.id)
+    window.setTimeout(() => setHighlightId(null), 1100)
+  }
+
+  const hasAnyAgent = agents.length > 0
+  const activeAgents = useMemo(() => agents.filter((a) => a.enabled && !a.archivedAt), [agents])
 
   return (
-    <div className="space-y-4 py-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <CalendarClock className="size-5 text-primary" />
-          <h1 className="text-lg font-semibold leading-tight tracking-tight">Schedules</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => void load()}>
-            <RefreshCw className="size-4" />
-          </Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={agents.length === 0}>
-            <Plus className="size-4" /> New schedule
-          </Button>
-        </div>
-      </div>
-
+    <div className="space-y-5 py-6">
       {error ? (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <span className="truncate">{error}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 text-destructive hover:text-destructive"
+            onClick={() => void load()}
+          >
+            Retry
+          </Button>
         </div>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Active</CardTitle>
-          <CardDescription>
-            {enabledSchedules.length} enabled schedule{enabledSchedules.length === 1 ? '' : 's'}.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="text-sm text-muted-foreground">Loading…</div>
-          ) : enabledSchedules.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No active schedules yet.</div>
-          ) : (
-            <ScheduleTable
-              schedules={enabledSchedules}
-              agentsById={agentsById}
-              requestsById={requestsById}
-              busyId={busyId}
-              onToggle={toggleEnabled}
-              onFire={fireNow}
-              onDelete={remove}
-            />
-          )}
-        </CardContent>
-      </Card>
+      {loading && showSkeleton ? <ScheduleSkeleton /> : null}
 
-      {disabledSchedules.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Disabled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScheduleTable
-              schedules={disabledSchedules}
-              agentsById={agentsById}
-              requestsById={requestsById}
-              busyId={busyId}
-              onToggle={toggleEnabled}
-              onFire={fireNow}
-              onDelete={remove}
-            />
-          </CardContent>
-        </Card>
+      {!loading && !hasAnyAgent ? (
+        <EmptyNoAgents onGo={() => navigate(appRoutePaths.agents)} />
+      ) : null}
+
+      {!loading && hasAnyAgent ? (
+        <>
+          {groupedAgents.length === 0 ? (
+            <EmptyNoSchedules onAdd={() => openCreate(undefined)} />
+          ) : (
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <WhatsNextStrip
+                  schedules={schedules}
+                  agentsById={agentsById}
+                  agentColorFor={(id) => agentColor(id, theme).dot}
+                  now={now}
+                  onSelect={focusSchedule}
+                />
+              </div>
+              <Button
+                size="sm"
+                onClick={() => openCreate(undefined)}
+                disabled={activeAgents.length === 0}
+                className="shrink-0"
+              >
+                <Plus className="size-4" /> New schedule
+              </Button>
+            </div>
+          )}
+          {groupedAgents.length === 0 ? null : (
+            <div className="space-y-3">
+              {groupedAgents.map(({ id, agent, schedules: list }) => (
+                <AgentScheduleGroup
+                  key={id}
+                  agent={agent}
+                  schedules={list}
+                  busyId={busyId}
+                  agentColor={agentColor(id, theme).dot}
+                  variant="standalone"
+                  collapsed={collapsedMap[id] ?? false}
+                  highlightId={highlightId}
+                  now={now}
+                  onToggleCollapse={() => toggleCollapse(id)}
+                  onAdd={() => openCreate(id)}
+                  onFire={(s) => void fireNow(s)}
+                  onToggle={(s) => void toggleEnabled(s)}
+                  onDelete={(s) => setDeleting(s)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       ) : null}
 
       <CreateScheduleDialog
@@ -261,106 +389,55 @@ export function SchedulesScreen(): React.JSX.Element {
         onOpenChange={setCreateOpen}
         agents={agents}
         requests={requests}
+        defaultAgentId={defaultAgentId}
         onCreated={() => {
           setCreateOpen(false)
           void load(true)
         }}
       />
+
+      <DeleteScheduleDialog
+        schedule={deleting}
+        busy={Boolean(deleting && busyId === deleting.id)}
+        onClose={() => setDeleting(null)}
+        onConfirm={(s) => void confirmDelete(s)}
+      />
     </div>
   )
 }
 
-interface ScheduleTableProps {
-  schedules: AgentSchedule[]
-  agentsById: Map<string, Agent>
-  requestsById: Map<string, WorkRequest>
-  busyId: string
-  onToggle: (s: AgentSchedule) => void
-  onFire: (s: AgentSchedule) => void
-  onDelete: (s: AgentSchedule) => void
+function EmptyNoAgents({ onGo }: { onGo: () => void }): React.JSX.Element {
+  return (
+    <div className="grid place-items-center gap-3 rounded-lg border border-dashed border-border/60 bg-card shadow-sm px-6 py-12 text-center">
+      <CalendarClock className="size-8 text-muted-foreground/60" />
+      <div>
+        <p className="text-sm font-medium">No teammates yet</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          Schedules live on agents. Add a teammate first.
+        </p>
+      </div>
+      <Button size="sm" onClick={onGo} className="gap-1">
+        <Users className="size-3.5" />
+        Go to Agents
+      </Button>
+    </div>
+  )
 }
 
-function ScheduleTable({
-  schedules,
-  agentsById,
-  requestsById,
-  busyId,
-  onToggle,
-  onFire,
-  onDelete
-}: ScheduleTableProps): React.JSX.Element {
+function EmptyNoSchedules({ onAdd }: { onAdd: () => void }): React.JSX.Element {
   return (
-    <div className="divide-y">
-      {schedules.map((schedule) => {
-        const agent = agentsById.get(schedule.agentId)
-        const linkedRequest = schedule.linkedWorkRequestId
-          ? requestsById.get(schedule.linkedWorkRequestId)
-          : null
-        const disabledLabel = disableReasonLabel(schedule)
-        return (
-          <div
-            key={schedule.id}
-            className="grid grid-cols-[1fr_auto] items-center gap-3 py-3 first:pt-0 last:pb-0"
-          >
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="font-medium leading-tight">{schedule.name}</div>
-                <Badge variant="secondary" className="text-xs">
-                  {agent ? agent.name : 'Missing agent'}
-                </Badge>
-                {linkedRequest ? (
-                  <Badge variant="outline" className="text-xs">
-                    WR: {linkedRequest.title}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-xs">
-                    Lazy WR
-                  </Badge>
-                )}
-                {schedule.lastRunStatus === 'failed' ? (
-                  <Badge variant="failed" className="text-xs">
-                    Last failed
-                  </Badge>
-                ) : null}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {humanizeSchedule(schedule)} · TZ {schedule.timezone}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Next: {formatDateTime(schedule.nextRunAt)} · Last:{' '}
-                {formatDateTime(schedule.lastRunAt)}
-              </div>
-              {disabledLabel ? <div className="text-xs text-amber-600">{disabledLabel}</div> : null}
-            </div>
-            <div className="flex items-center gap-1">
-              <Switch
-                checked={schedule.enabled}
-                disabled={busyId === schedule.id}
-                onCheckedChange={() => onToggle(schedule)}
-                aria-label={schedule.enabled ? 'Disable' : 'Enable'}
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={busyId === schedule.id}
-                onClick={() => onFire(schedule)}
-                title="Fire now"
-              >
-                <Zap className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={busyId === schedule.id}
-                onClick={() => onDelete(schedule)}
-                title="Delete"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          </div>
-        )
-      })}
+    <div className="grid place-items-center gap-3 rounded-lg border border-dashed border-border/60 bg-card shadow-sm px-6 py-10 text-center">
+      <CalendarClock className="size-7 text-muted-foreground/60" />
+      <div>
+        <p className="text-sm font-medium">Nothing on anyone&rsquo;s agenda</p>
+        <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+          Give a teammate a standing time — they&rsquo;ll pick up the work on their own.
+        </p>
+      </div>
+      <Button size="sm" onClick={onAdd} className="gap-1">
+        <Plus className="size-3.5" />
+        New schedule
+      </Button>
     </div>
   )
 }
@@ -452,7 +529,7 @@ export function CreateScheduleDialog({
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Agent</label>
             <select
-              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              className="h-9 w-full rounded-md border border-input bg-card px-2 text-sm text-foreground"
               value={form.agentId}
               onChange={(e) => setForm({ ...form, agentId: e.target.value })}
             >
@@ -477,7 +554,7 @@ export function CreateScheduleDialog({
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Prompt</label>
             <textarea
-              className="min-h-[88px] w-full rounded-md border bg-background px-2 py-1 text-sm"
+              className="min-h-[88px] w-full rounded-md border border-input bg-card px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground"
               value={form.prompt}
               onChange={(e) => setForm({ ...form, prompt: e.target.value })}
               placeholder="What should the agent do each time?"
@@ -499,7 +576,7 @@ export function CreateScheduleDialog({
                 </Button>
               ))}
             </div>
-            <div className="rounded-md border bg-muted/30 p-2 text-sm">
+            <div className="rounded-md p-1 text-sm">
               {form.preset === 'once' ? (
                 <div className="flex gap-2">
                   <Input
@@ -574,7 +651,7 @@ export function CreateScheduleDialog({
               Link to Work Request (optional)
             </label>
             <select
-              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              className="h-9 w-full rounded-md border border-input bg-card px-2 text-sm text-foreground"
               value={form.linkedWorkRequestId}
               onChange={(e) => setForm({ ...form, linkedWorkRequestId: e.target.value })}
             >
