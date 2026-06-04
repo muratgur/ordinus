@@ -6,10 +6,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/idealabs/ordinus.git"
+    "url": "https://github.com/muratgur/ordinus.git"
   },
   "bugs": {
-    "url": "https://github.com/idealabs/ordinus/issues"
+    "url": "https://github.com/muratgur/ordinus/issues"
   },
   "engines": {
     "node": ">=22.13.0",

@@ -34,3 +34,7 @@ app/.env.*
 Thumbs.db
 .vscode/
 .idea/
+
+# Local agent / tooling state (not part of the project)
+.claude/worktrees/
+.playwright-mcp/

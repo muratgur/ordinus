@@ -1,6 +1,6 @@
-appId: com.idealabs.ordinus
+appId: com.muratgur.ordinus
 productName: Ordinus
-copyright: Copyright (c) 2026 IdeaLabs
+copyright: Copyright (c) 2026 Murat Gür
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   buildResources: build
@@ -22,6 +22,7 @@ win:
   executableName: ordinus
   icon: build/icon.ico
   requestedExecutionLevel: asInvoker
+  signAndEditExecutable: false
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -30,24 +31,10 @@ nsis:
 mac:
   icon: build/icon.icns
   category: public.app-category.developer-tools
-  hardenedRuntime: true
+  identity: null
+  hardenedRuntime: false
   gatekeeperAssess: false
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
-  notarize: true
+  notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
-linux:
-  target:
-    - AppImage
-    - snap
-    - deb
-  maintainer: IdeaLabs
-  category: Utility
-  icon: build/icon.png
-appImage:
-  artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://github.com/idealabs/ordinus/releases

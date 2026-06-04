@@ -118,7 +118,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.idealabs.ordinus')
+  electronApp.setAppUserModelId('com.muratgur.ordinus')
 
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)

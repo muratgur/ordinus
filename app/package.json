@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "description": "Local-first agent orchestration shell.",
   "main": "./out/main/index.js",
-  "author": "IdeaLabs",
+  "author": "Murat Gür",
   "license": "MIT",
-  "homepage": "https://github.com/idealabs/ordinus",
+  "homepage": "https://github.com/muratgur/ordinus",
   "repository": {
     "type": "git",
-    "url": "https://github.com/idealabs/ordinus.git"
+    "url": "https://github.com/muratgur/ordinus.git"
   },
   "bugs": {
-    "url": "https://github.com/idealabs/ordinus/issues"
+    "url": "https://github.com/muratgur/ordinus/issues"
   },
   "keywords": [
     "electron",

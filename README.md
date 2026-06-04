@@ -1,79 +1,88 @@
+![Ordinus](docs/screenshots/hero-banner.gif)
+
 # Ordinus
 
-Ordinus is a desktop workspace for coordinating AI agents around real software work. It is built as a local-first Electron app with a secure main/preload/renderer boundary and a minimal SQLite foundation.
+> A local-first desktop app that lets you compose AI agents from your own Codex / Claude / Gemini CLIs into scheduled workflows — all your data stays on your machine.
 
-The repository root contains product guidance, project skills, and documentation. The Electron application lives in `app/`.
+<!-- TODO: replace placeholder pitch above with final wording -->
 
-## Quick Start
+[![Download](https://img.shields.io/badge/download-latest-blue)](https://github.com/muratgur/ordinus/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![Electron](https://img.shields.io/badge/Electron-39-47848F?logo=electron&logoColor=white)
+![Built with Claude](https://img.shields.io/badge/built%20with-Claude%20Code-d97757)
 
-Use Node.js `22.13.0` or newer. If you use `nvm` or `fnm`, run:
+---
+
+## Download
+
+Pick your platform from the [latest release](https://github.com/muratgur/ordinus/releases/latest):
+
+| Platform | File | Notes |
+|---|---|---|
+| **macOS** (Apple Silicon) | `Ordinus-<version>.dmg` | Unsigned. First launch: right-click the app in `/Applications` → **Open** → confirm. |
+| **Windows** (x64) | `ordinus-<version>-setup.exe` | Unsigned. SmartScreen shows "Windows protected your PC" — click **More info → Run anyway**. |
+
+> Builds are unsigned for now, so your OS will warn you before launching. The app is fully local-first — nothing is uploaded anywhere.
+
+## What it does
+
+![Agents](docs/screenshots/agents.png)
+
+**Agents.** Compose roles (article writer, code reviewer, security engineer, …) backed by your local AI CLIs. Each agent has a profile, capabilities, and its own conversation space.
+
+![Workflow Designer](docs/screenshots/workflow-designer.png)
+
+**Workflow Designer.** Visually wire agents and tasks into a DAG. Compiles down to a runnable plan; reuse the same engine across manual runs and schedules.
+
+![Workboard](docs/screenshots/workboard.png)
+
+**Workboard.** Watch tasks execute, inspect provider output, and steer runs in flight.
+
+## Why local-first
+
+- Your prompts, conversations, and workflow definitions live in a local SQLite database — no cloud account, no per-seat pricing.
+- Providers run as local CLI processes (Codex, Claude, Gemini). Ordinus orchestrates them; it does not proxy your tokens through a third-party service.
+- No telemetry. No phone-home.
+
+## Build from source
+
+Requires Node.js `22.13.0+` and the platform toolchains electron-builder needs.
 
 ```bash
-nvm use
-```
-
-```bash
-cd app
-npm install
-npm run dev
-```
-
-## Common Commands
-
-Run these from `app/`:
-
-```bash
+git clone https://github.com/muratgur/ordinus.git
+cd ordinus/app
 npm ci
-npm run typecheck
-npm run lint
-npm run build
-npm run build:win
-npm run build:win:local
+npm run dev          # run in dev mode
+npm run build:mac    # produce a .dmg under app/dist
+npm run build:win    # produce a .exe installer under app/dist
 ```
 
-Generate SQLite migrations after changing the Drizzle schema:
+For Windows builds on a non-signing machine, use `npm run build:win:local`.
 
-```bash
-npm run db:generate
-```
+## Status
 
-UI primitives are managed with shadcn/ui:
+Ordinus is pre-1.0. APIs, schemas, and the UI may change between releases. The 0.x line is a public showcase — feedback welcome, but breaking changes will happen without ceremony.
 
-```bash
-npm run ui:info
-npm run ui:check
-npm run ui:add -- button
-```
+## Built with Claude Code
 
-## Repository Layout
+This project is developed AI-assisted using [Claude Code](https://claude.ai/code). The `.claude/skills/` directory contains the project-specific skills (architecture guides, IPC contracts, secure-boundary rules, etc.) that shape how the AI collaborates on the codebase. If you're curious about agent-assisted development workflows, those files are worth a read.
 
-```text
-.
-|-- AGENTS.md
-|-- CONTRIBUTING.md
-|-- SECURITY.md
-|-- LICENSE
-|-- .github/workflows/
-|-- .github/ISSUE_TEMPLATE/
-|-- .codex/skills/
-|-- docs/
-`-- app/
-    |-- src/main/
-    |-- src/preload/
-    |-- src/renderer/
-    `-- src/shared/
-```
+## Documentation
 
-## Product Direction
-
-Ordinus should feel like a calm command center for AI-assisted work. Keep agent activity visible, preserve user control, and avoid adding broad integrations before the core local runtime is stable.
+- [Architecture](docs/architecture.md)
+- [Provider runtime contract](docs/provider-runtime-contract.md)
+- [Packaging & release](docs/packaging-release.md)
+- [Product brief](docs/product-brief.md)
+- [Agent guide](AGENTS.md)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Small, well-scoped changes are easiest to land.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## License
 
-Ordinus is licensed under the [MIT License](LICENSE).
-
-See [docs/product-brief.md](docs/product-brief.md), [docs/architecture.md](docs/architecture.md), [docs/migration-strategy.md](docs/migration-strategy.md), [docs/provider-runtime-contract.md](docs/provider-runtime-contract.md), [docs/packaging-release.md](docs/packaging-release.md), and [AGENTS.md](AGENTS.md) before making product or architecture changes.
+[MIT](LICENSE) © 2026 Murat Gür

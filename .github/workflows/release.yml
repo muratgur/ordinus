@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS (arm64)
+            build_cmd: npm run build && npx electron-builder --mac --arm64 --publish never
+            artifact_glob: 'app/dist/*.dmg'
+          - os: windows-latest
+            label: Windows (x64)
+            build_cmd: npm run build && npx electron-builder --win --x64 --publish never --config.win.signAndEditExecutable=false
+            artifact_glob: 'app/dist/*.exe'
+
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build & package
+        run: ${{ matrix.build_cmd }}
+        env:
+          # Ensure electron-builder does not attempt signing/notarization.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ordinus-${{ runner.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List artifacts
+        run: find dist -type f
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/*.dmg
+            dist/**/*.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: false

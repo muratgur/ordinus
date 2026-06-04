@@ -1,76 +1,76 @@
 # Packaging And Release
 
-Ordinus uses electron-builder for desktop packages. Local builds should stay easy, but release builds must be signed and traceable.
+Ordinus uses electron-builder to package the desktop app and GitHub Actions to publish releases automatically.
 
-## Current Package Identity
+## Package Identity
 
 - Product name: `Ordinus`
-- App id: `com.idealabs.ordinus`
+- App id: `com.muratgur.ordinus`
 - Executable name: `ordinus`
-- Publisher/author: `IdeaLabs`
-- Package metadata: repository, bugs URL, homepage, license, keywords
+- Publisher/author: `Murat Gür`
 - Icon source: `app/build/icon.svg`
 - Platform icons: `app/build/icon.ico`, `app/build/icon.icns`, `app/build/icon.png`
 
-## Build Commands
+## Supported Targets
 
-- `npm run build:unpack`: local unpacked smoke package.
-- `npm run build:win:local`: Windows installer build with the local executable edit/sign workaround enabled.
-- `npm run build:win`: normal Windows package build.
-- `npm run release:win`: Windows release build, fails if signing is not configured.
-- `npm run release:mac`: macOS release build, fails if signing is not configured.
+The automated release pipeline builds two artifacts:
 
-## Windows Code Signing Plan
+| Platform | Architecture | Artifact |
+|---|---|---|
+| macOS | arm64 (Apple Silicon) | `Ordinus-<version>-mac-arm64.dmg` |
+| Windows | x64 | `ordinus-<version>-setup.exe` |
 
-Production Windows artifacts must be signed. electron-builder signs automatically when the signing configuration is provided. Preferred release options:
+Linux and Intel macOS builds are not produced. Contributors on those platforms can build locally from source.
 
-1. Azure Trusted Signing for CI-based signing.
-2. Standard code signing certificate stored as CI secret.
-3. EV certificate for immediate reputation, used from a secure signing host or hardware token.
+## Local Build Commands
 
-Do not keep `signAndEditExecutable: false` in the production config. That flag is only used by local scripts to work around Windows development machines where electron-builder cannot edit/sign the executable.
+Run these from `app/`:
 
-Release command:
+- `npm run build:unpack` — local unpacked smoke package.
+- `npm run build:mac` — macOS `.dmg` build.
+- `npm run build:win` — Windows installer build.
+- `npm run build:win:local` — Windows installer build with the local executable edit/sign workaround enabled (use this on machines where electron-builder cannot edit/sign the executable).
 
-```bash
-npm run release:win
-```
+Output appears under `app/dist/`.
 
-Required signing variables depend on the selected provider. For Azure Trusted Signing, use the Azure tenant/client/profile variables described by electron-builder.
+## Code Signing
 
-## macOS Signing And Notarization Plan
+Builds are currently **unsigned** on both platforms. Users see an OS warning on first launch (Gatekeeper on macOS, SmartScreen on Windows) and confirm manually.
 
-macOS release builds should use Developer ID signing, hardened runtime, and Apple notarization. The config enables hardened runtime and notarization; notarization becomes active when Apple credentials are provided.
+When signing becomes worthwhile, both `app/electron-builder.yml` and `.github/workflows/release.yml` will need updates:
 
-Preferred notarization credentials:
+- **macOS**: re-enable `hardenedRuntime`, `notarize`, add Apple Developer credentials as GitHub Actions secrets, restore `entitlements`.
+- **Windows**: provide a signing certificate (Azure Trusted Signing, standard, or EV) and remove `signAndEditExecutable: false` from the release command.
 
-- `APPLE_API_KEY`
-- `APPLE_API_KEY_ID`
-- `APPLE_API_ISSUER`
+## Release Workflow
 
-Fallback credentials:
+Releases are tag-driven. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 
-- `APPLE_ID`
-- `APPLE_APP_SPECIFIC_PASSWORD`
-- `APPLE_TEAM_ID`
+1. Builds the macOS and Windows artifacts in parallel.
+2. Uploads them as workflow artifacts.
+3. Creates a GitHub Release at that tag and attaches the `.dmg` and `.exe` files. Release notes are auto-generated from commits.
 
-Release command:
+### Cutting a release
 
 ```bash
-npm run release:mac
+# 1. Bump version in both package.json files (root and app/).
+# 2. Commit.
+git commit -am "chore: bump to v0.2.0"
+
+# 3. Tag and push.
+git tag v0.2.0
+git push --follow-tags
 ```
 
-## Entitlements
+The workflow takes ~10–15 minutes. Watch progress under the repository **Actions** tab; the release appears under **Releases** when the job completes.
 
-The app does not request camera, microphone, photos, documents, downloads, or automation entitlements. Keep entitlements minimal and add new entries only when a shipped feature requires them.
+## Updates
 
-Current macOS entitlement:
-
-- `com.apple.security.cs.allow-jit`
+Auto-update is not enabled. Users download new versions manually from the [Releases](https://github.com/muratgur/ordinus/releases) page. Installing over an existing version is supported by both `.dmg` (drag-to-Applications replaces the prior app) and the NSIS installer (uninstalls the old version first).
 
 ## References
 
+- [electron-builder configuration](https://www.electron.build/configuration.html)
 - [electron-builder Windows code signing](https://www.electron.build/code-signing-win.html)
 - [electron-builder macOS code signing](https://www.electron.build/code-signing-mac)
-- [electron-builder macOS notarize config](https://www.electron.build/electron-builder.interface.macconfiguration)
-- [electron-builder forceCodeSigning config](https://www.electron.build/configuration.html)
+- [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
