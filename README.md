@@ -17,12 +17,32 @@
 
 Pick your platform from the [latest release](https://github.com/muratgur/ordinus/releases/latest):
 
-| Platform | File | Notes |
-|---|---|---|
-| **macOS** (Apple Silicon) | `Ordinus-<version>.dmg` | Unsigned. First launch: right-click the app in `/Applications` → **Open** → confirm. |
-| **Windows** (x64) | `ordinus-<version>-setup.exe` | Unsigned. SmartScreen shows "Windows protected your PC" — click **More info → Run anyway**. |
+| Platform | File |
+|---|---|
+| **macOS** (Apple Silicon) | `Ordinus-<version>.dmg` |
+| **Windows** (x64) | `ordinus-<version>-setup.exe` |
 
 > Builds are unsigned for now, so your OS will warn you before launching. The app is fully local-first — nothing is uploaded anywhere.
+
+### First launch — macOS
+
+The DMG is unsigned, so macOS Gatekeeper will refuse to open it with a misleading **"Ordinus is damaged and can't be opened"** message. The app is not damaged — Gatekeeper just blocks unsigned apps that carry the quarantine attribute set by your browser.
+
+1. Open the `.dmg` and **drag `Ordinus.app` onto the `Applications` shortcut** (don't double-click the icon inside the DMG window — that runs it from a read-only volume).
+2. In Terminal, strip the quarantine attribute, then launch:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Ordinus.app
+   open /Applications/Ordinus.app
+   ```
+
+You only do this once. After the first launch, the app opens normally.
+
+### First launch — Windows
+
+SmartScreen will show **"Windows protected your PC"**. Click **More info** → **Run anyway**.
+
+The installer puts Ordinus under `Program Files` and creates a Start Menu / Desktop shortcut. Subsequent launches open without prompts.
 
 ## What it does
 
