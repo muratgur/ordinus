@@ -2,7 +2,7 @@
 
 **11 nodes**, **14 connections**.
 
-> This is a markdown spec of the workflow. The original `design.json` is in this same folder — when Ordinus gains workflow import, you'll be able to load it directly. Until then, recreate the nodes manually in your Workflow Designer using the spec below.
+> Recreate these nodes in your Workflow Designer to reproduce this workflow.
 
 ![overview](overview.png)
 

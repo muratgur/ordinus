@@ -6,11 +6,9 @@ Real projects built with Ordinus, end-to-end. Each entry shows the original prom
 
 ## Shape Survivor — a Godot game in ~12 hours, zero human-written code
 
-[![Shape Survivor](shape-survivor/assets/hero.gif)](shape-survivor/)
-
 A complete Brotato-like with 6 characters, 7 weapons, 8 waves, a boss, draft upgrades, a shop, and a codex — all procedurally drawn, no assets. Built by a 6-agent crew (Creative Director, Game Designer, Analyst, Game Critic, Developer, CEO) running 3 reusable workflows over 142 tasks.
 
-**[Read the story →](shape-survivor/)** &nbsp;·&nbsp; **[Game repo →](https://github.com/muratgur/godot-brotato-like-shape-survivor)**
+**[Read the story →](shape-survivor/)** &nbsp;·&nbsp; **[Game repo →](https://github.com/muratgur/shape-survivor)**
 
 ---
 
@@ -23,7 +21,6 @@ Each `<slug>/` folder contains:
 - `workflows/<name>/` — one folder per reusable workflow, with:
   - `overview.png` — Workflow Designer screenshot
   - `README.md` — node-by-node spec (agent, prompt, expected output, dependencies)
-  - `design.json` — raw Ordinus export (importable once workflow import lands)
 - `agents/` — one markdown per agent in the crew, in the same shape Ordinus uses internally
 
 ## Contributing a use case

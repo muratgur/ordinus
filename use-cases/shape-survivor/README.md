@@ -4,7 +4,7 @@
 
 ![Shape Survivor gameplay](assets/hero.gif)
 
-**Game repo:** https://github.com/muratgur/godot-brotato-like-shape-survivor (the playable Godot project)
+**Game repo:** https://github.com/muratgur/shape-survivor (the playable Godot project)
 **This page:** how Ordinus built it — the prompt I gave, the agents and workflows I set up, what came back.
 
 ---
@@ -85,7 +85,7 @@ Used once mid-build to push past the initial 6-wave plan. Inspects current pacin
 
 ![Level Expansion workflow](workflows/level-expansion/overview.png)
 
-Each workflow's `README.md` has the full node-by-node spec (agent + instruction + expected output + dependencies). The `design.json` next to it is the raw Ordinus export — passive archive today, importable when Ordinus ships workflow import.
+Each workflow's `README.md` has the full node-by-node spec (agent + instruction + expected output + dependencies).
 
 ### Workboard snapshot
 
@@ -112,8 +112,8 @@ Each workflow's `README.md` has the full node-by-node spec (agent + instruction 
 3. **Recreate the 3 workflows** — for now (until import lands), use each `workflows/<name>/README.md` as a spec and rebuild the nodes manually in the Workflow Designer. The `overview.png` next to each spec shows the visual layout.
 4. **Drop your own ask** — pick a different game genre, point it at your agents, and run.
 
-When Ordinus gains workflow & agent import (it's [on the roadmap](https://github.com/muratgur/ordinus/issues?q=is%3Aissue+export+import)), steps 2 and 3 collapse into "open file → done."
+When Ordinus gains workflow & agent import, steps 2 and 3 collapse into "open file → done."
 
 ## License
 
-This use-case page and the workflow / agent definitions are MIT-licensed alongside Ordinus. The game itself is also MIT — see the [game repo](https://github.com/muratgur/godot-brotato-like-shape-survivor).
+This use-case page and the workflow / agent definitions are MIT-licensed alongside Ordinus. The game itself is also MIT — see the [game repo](https://github.com/muratgur/shape-survivor).
