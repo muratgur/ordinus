@@ -1,4 +1,9 @@
-import { AgentTurnOutcomeSchema, type AgentTurnOutcome } from '@shared/contracts'
+import {
+  AgentTurnOutcomeSchema,
+  agentTurnOutcomeContentMaxLength,
+  workRunResultSummaryMaxLength,
+  type AgentTurnOutcome
+} from '@shared/contracts'
 import { parseJsonFromCliOutput } from '../cli/output'
 
 export const agentTurnOutcomeJsonSchema = {
@@ -6,7 +11,7 @@ export const agentTurnOutcomeJsonSchema = {
   additionalProperties: false,
   properties: {
     outcome: { type: 'string', enum: ['final_response', 'needs_input'] },
-    content: { type: ['string', 'null'], maxLength: 64000 },
+    content: { type: ['string', 'null'], maxLength: agentTurnOutcomeContentMaxLength },
     artifactRefs: {
       type: ['array', 'null'],
       maxItems: 64,
@@ -254,6 +259,7 @@ Input request rules:
 
 Final response rules:
 - Keep content as a concise result summary, not a full copied report when files were created.
+- Keep content under ${workRunResultSummaryMaxLength} characters. If the useful result is longer, write it to a workspace file and summarize that file.
 - Format content as GitHub-flavored Markdown.
 - Use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose when presenting multiple points.
 - Use fenced code blocks for code, commands, diffs, logs, or structured snippets.

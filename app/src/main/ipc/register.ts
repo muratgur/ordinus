@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, posix as pathPosix, relative, resolve } from 'node:path'
 import {
   AgentArchiveInputSchema,
   AgentDeleteInputSchema,
@@ -92,6 +92,7 @@ import {
   WorkspaceSaveConfigInputSchema,
   WorkspaceSelectFolderResultSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
+  workRunResultSummaryMaxLength,
   validateWorkboardDraftPlanDependencies,
   type Agent,
   type AgentTurnOutcome,
@@ -155,6 +156,19 @@ const workRequestConcurrencyLimit = 3
 let activeScheduler: SchedulerService | null = null
 
 type ReportedWorkspaceFileRefs = WorkspaceWorkingFolderContext & {
+  artifactRefs: string[]
+  changedFiles: string[]
+}
+
+type WorkRunCompletionOutputInput = WorkspaceWorkingFolderContext & {
+  runId: string
+  content: string
+  artifactRefs: string[]
+  changedFiles: string[]
+}
+
+type WorkRunCompletionOutput = {
+  resultSummary: string
   artifactRefs: string[]
   changedFiles: string[]
 }
@@ -1391,14 +1405,22 @@ function startPreparedWorkRun(
           changedFiles: result.outcome.changedFiles
         })
         assertReportedFileRefsExist(fileRefs.missingRefs)
-        database.completeWorkRun({
+        const completionOutput = prepareWorkRunCompletionOutput({
+          workspaceRoot: workspaceContext.workspaceRoot,
+          workingRoot: workspaceContext.workingRoot,
           runId: prepared.run.id,
-          resultSummary: result.outcome.content,
-          providerSessionRef: result.providerSessionRef,
+          content: result.outcome.content,
           artifactRefs: fileRefs.artifactRefs,
           changedFiles: fileRefs.changedFiles
         })
-        observability.markWorkboardCompleted(prepared.run.id, result.outcome.content)
+        database.completeWorkRun({
+          runId: prepared.run.id,
+          resultSummary: completionOutput.resultSummary,
+          providerSessionRef: result.providerSessionRef,
+          artifactRefs: completionOutput.artifactRefs,
+          changedFiles: completionOutput.changedFiles
+        })
+        observability.markWorkboardCompleted(prepared.run.id, completionOutput.resultSummary)
         activeScheduler?.notifyRunTerminal(prepared.run.id, true)
       } catch (error) {
         saveWorkRunFailure(database, prepared.run.id, error)
@@ -1553,6 +1575,87 @@ function resolveReportedFileRefs(input: ReportedWorkspaceFileRefs): {
     changedFiles: changedFiles.existingRefs,
     missingRefs: Array.from(new Set([...artifactRefs.missingRefs, ...changedFiles.missingRefs]))
   }
+}
+
+function prepareWorkRunCompletionOutput(
+  input: WorkRunCompletionOutputInput
+): WorkRunCompletionOutput {
+  const content = input.content.trim()
+
+  if (content.length <= workRunResultSummaryMaxLength) {
+    return {
+      resultSummary: content,
+      artifactRefs: input.artifactRefs,
+      changedFiles: input.changedFiles
+    }
+  }
+
+  const fullResultRef = writeAutomaticFullResultArtifact(input)
+
+  return {
+    resultSummary: createBoundedLongResultSummary(content, fullResultRef),
+    artifactRefs: prependBoundedUniqueRef(input.artifactRefs, fullResultRef, 64),
+    changedFiles: prependBoundedUniqueRef(input.changedFiles, fullResultRef, 128)
+  }
+}
+
+function writeAutomaticFullResultArtifact(input: WorkRunCompletionOutputInput): string {
+  const fileName = `full-result-${safeFileSuffix(input.runId)}.md`
+  const relativePath = pathPosix.join(input.workingRoot, fileName)
+  const absolutePath = resolveWorkspaceRelativePath(input.workspaceRoot, relativePath)
+  mkdirSync(dirname(absolutePath), { recursive: true })
+  writeFileSync(absolutePath, createAutomaticFullResultDocument(input.content), 'utf8')
+  return relativePath
+}
+
+function createAutomaticFullResultDocument(content: string): string {
+  return [
+    '---',
+    'title: Full Work Item Result',
+    'summary: Full agent response saved automatically because it exceeded the Workboard summary limit.',
+    'created_by: Ordinus',
+    `created_at: ${new Date().toISOString()}`,
+    'tags:',
+    '  - workboard',
+    '  - full-result',
+    '---',
+    '',
+    '# Full Work Item Result',
+    '',
+    'The agent returned more text than the Workboard summary can hold. Ordinus saved the full response here and kept a shortened summary on the Workboard.',
+    '',
+    '## Result',
+    '',
+    content.trim(),
+    ''
+  ].join('\n')
+}
+
+function createBoundedLongResultSummary(content: string, fullResultRef: string): string {
+  const prefix = [
+    `Full result saved to \`${fullResultRef}\`.`,
+    '',
+    'The Workboard is showing a shortened summary so this Work Item can finish reliably.',
+    ''
+  ].join('\n')
+  const suffix = `\n\n... Full result: \`${fullResultRef}\``
+  const availableLength = Math.max(0, workRunResultSummaryMaxLength - prefix.length - suffix.length)
+  const excerpt = content.slice(0, availableLength).trimEnd()
+
+  return `${prefix}${excerpt}${suffix}`.slice(0, workRunResultSummaryMaxLength)
+}
+
+function prependBoundedUniqueRef(refs: string[], ref: string, maxRefs: number): string[] {
+  return [ref, ...refs.filter((candidate) => candidate !== ref)].slice(0, maxRefs)
+}
+
+function safeFileSuffix(value: string): string {
+  return (
+    value
+      .replace(/[^a-zA-Z0-9-]/g, '')
+      .slice(-12)
+      .toLowerCase() || 'result'
+  )
 }
 
 function saveWorkRunFailure(database: OrdinusDatabase, runId: string, error: unknown): void {

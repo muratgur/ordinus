@@ -31,7 +31,22 @@ export function parseJsonFromCliOutput(value: string): unknown {
   try {
     return JSON.parse(trimmed)
   } catch {
-    // Some CLIs print diagnostics before the final JSON object. Prefer the last parseable JSON line.
+    // Some CLIs wrap the requested JSON in a Markdown code fence.
+  }
+
+  const fencedJson = extractFencedJson(trimmed)
+  if (fencedJson) {
+    try {
+      return JSON.parse(fencedJson)
+    } catch {
+      // Fall back to the more permissive extraction paths below.
+    }
+  }
+
+  try {
+    return JSON.parse(extractJsonObject(trimmed))
+  } catch {
+    // Some CLIs print JSONL diagnostics. Prefer the last parseable JSON line as a fallback.
   }
 
   const lines = trimmed
@@ -48,6 +63,11 @@ export function parseJsonFromCliOutput(value: string): unknown {
   }
 
   return JSON.parse(extractJsonObject(trimmed))
+}
+
+function extractFencedJson(value: string): string {
+  const match = value.match(/^```(?:json|JSON)?\s*\r?\n([\s\S]*?)\r?\n```$/)
+  return match ? match[1].trim() : ''
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

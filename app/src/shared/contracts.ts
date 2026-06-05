@@ -494,10 +494,13 @@ export const WorkspaceRelativePathSchema = z
     'Path cannot contain parent directory segments.'
   )
 
+export const workRunResultSummaryMaxLength = 16_000
+export const agentTurnOutcomeContentMaxLength = 256_000
+
 export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('final_response'),
-    content: z.string().trim().min(1).max(64_000),
+    content: z.string().trim().min(1).max(agentTurnOutcomeContentMaxLength),
     artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
     changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([])
   }),
@@ -844,7 +847,11 @@ export const WorkRunActionInputSchema = z.object({
 })
 
 export const WorkRunCompleteInputSchema = WorkRunActionInputSchema.extend({
-  resultSummary: z.string().trim().min(1, 'Result summary is required.').max(16_000),
+  resultSummary: z
+    .string()
+    .trim()
+    .min(1, 'Result summary is required.')
+    .max(workRunResultSummaryMaxLength),
   artifactRef: z.string().trim().max(500).optional(),
   artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
   changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([]),
