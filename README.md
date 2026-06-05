@@ -79,6 +79,14 @@ npm run build:win    # produce a .exe installer under app/dist
 
 For Windows builds on a non-signing machine, use `npm run build:win:local`.
 
+## Use cases
+
+Real projects built end-to-end with Ordinus — original prompt, agent crew, workflows, and what came out.
+
+[**Shape Survivor**](use-cases/shape-survivor/) — a complete Godot Brotato-like with 6 characters, 7 weapons, 8 waves, and a boss, built in ~12 hours by a 6-agent crew across 142 tasks. Zero human-written code.
+
+[Browse all use cases →](use-cases/)
+
 ## Status
 
 Ordinus is pre-1.0. APIs, schemas, and the UI may change between releases. The 0.x line is a public showcase — feedback welcome, but breaking changes will happen without ceremony.
