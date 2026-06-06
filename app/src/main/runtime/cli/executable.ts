@@ -10,6 +10,10 @@ export type CliExecutable = {
 
 export type FindCliExecutableOptions = {
   nodeScriptCandidates?: (executable: CliExecutable) => string[]
+  // Ordinus-scoped npm prefix bin directory. When set, the resolver checks
+  // here first — managed installs (ADR-028) land in this directory and must
+  // take precedence over any PATH-installed copy of the same CLI.
+  prefixBinDir?: string
 }
 
 export async function findCliExecutable(
@@ -22,7 +26,23 @@ export async function findCliExecutable(
     return normalizeCliExecutable({ command: configured, shell: false }, options)
   }
 
-  if (process.platform !== 'win32') {
+  const isWin = process.platform === 'win32'
+
+  if (options.prefixBinDir) {
+    const prefixCandidates = isWin
+      ? [
+          join(options.prefixBinDir, `${commandName}.cmd`),
+          join(options.prefixBinDir, `${commandName}.exe`)
+        ]
+      : [join(options.prefixBinDir, commandName)]
+    const found = prefixCandidates.find((candidate) => existsSync(candidate))
+    if (found) {
+      const shell = isWin && found.toLowerCase().endsWith('.cmd')
+      return normalizeCliExecutable({ command: found, shell }, options)
+    }
+  }
+
+  if (!isWin) {
     return normalizeCliExecutable({ command: commandName, shell: false }, options)
   }
 

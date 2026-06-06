@@ -582,6 +582,7 @@ function getGeminiEnvironment(): NodeJS.ProcessEnv {
 
 async function findGeminiExecutable(): Promise<CliExecutable | null> {
   return findCliExecutable('gemini', 'GEMINI_BIN', {
+    prefixBinDir: getSystemPaths().cliBin,
     nodeScriptCandidates: (executable) => [
       getCliSiblingNodeModuleScript(executable, ['@google', 'gemini-cli'], ['bundle', 'gemini.js'])
     ]

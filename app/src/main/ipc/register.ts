@@ -119,6 +119,14 @@ import type { RuntimeService } from '../runtime'
 import type { ObservabilityService } from '../observability/service'
 import type { SanitizedInvocationSummary } from '../observability/types'
 import { SchedulerService, computeNextRunAt } from '../scheduler/service'
+import { OnboardingService } from '../onboarding/service'
+import {
+  OnboardingSelectProvidersInputSchema,
+  OnboardingConfirmWorkspaceInputSchema,
+  OnboardingInstallProviderInputSchema,
+  OnboardingMarkProviderAuthedInputSchema,
+  OnboardingCompleteInputSchema
+} from '@shared/contracts'
 import type { SchedulerEvent } from '@shared/contracts'
 import {
   createAgentSkill,
@@ -847,6 +855,32 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.schedulesFireNow, (_event, payload) => {
     const input = AgentScheduleFireNowInputSchema.parse(payload)
     return scheduler.fireNow(input.id)
+  })
+
+  const onboarding = new OnboardingService(database)
+
+  ipcMain.handle(ipcChannels.onboardingGetStatus, () => onboarding.getStatus())
+  ipcMain.handle(ipcChannels.onboardingAdvanceFromWelcome, () => onboarding.advanceFromWelcome())
+  ipcMain.handle(ipcChannels.onboardingSelectProviders, (_event, payload) => {
+    const input = OnboardingSelectProvidersInputSchema.parse(payload)
+    return onboarding.selectProviders(input.providerIds)
+  })
+  ipcMain.handle(ipcChannels.onboardingConfirmWorkspace, (_event, payload) => {
+    const input = OnboardingConfirmWorkspaceInputSchema.parse(payload)
+    return onboarding.confirmWorkspace(input)
+  })
+  ipcMain.handle(ipcChannels.onboardingInstallProvider, async (_event, payload) => {
+    const input = OnboardingInstallProviderInputSchema.parse(payload)
+    return onboarding.installProviderAndStream(input.providerId)
+  })
+  ipcMain.handle(ipcChannels.onboardingMarkProviderAuthed, (_event, payload) => {
+    const input = OnboardingMarkProviderAuthedInputSchema.parse(payload)
+    return onboarding.markProviderAuthed(input.providerId, input.authed)
+  })
+  ipcMain.handle(ipcChannels.onboardingResetProviders, () => onboarding.resetProviders())
+  ipcMain.handle(ipcChannels.onboardingComplete, (_event, payload) => {
+    const input = OnboardingCompleteInputSchema.parse(payload)
+    return onboarding.complete(input.agentId)
   })
 
   return scheduler

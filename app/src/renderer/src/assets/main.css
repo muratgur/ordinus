@@ -196,4 +196,27 @@ a {
   .ordinus-scrollbar::-webkit-scrollbar-corner {
     background: transparent;
   }
+
+  /* Indeterminate progress shimmer for the onboarding install rows. The
+     element should be sized as a fraction of its container; the keyframe
+     slides it across, wrapping. See ADR-028. */
+  @keyframes ordinus-install-shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
+  .ordinus-install-shimmer {
+    animation: ordinus-install-shimmer 1.6s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ordinus-install-shimmer {
+      animation: none;
+      transform: translateX(0);
+      width: 100% !important;
+      opacity: 0.4;
+    }
+  }
 }

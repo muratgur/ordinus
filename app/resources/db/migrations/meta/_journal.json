@@ -218,6 +218,13 @@
       "when": 1780401000000,
       "tag": "0030_agent_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1780781670706,
+      "tag": "0031_brief_namora",
+      "breakpoints": true
     }
   ]
 }

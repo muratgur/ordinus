@@ -104,7 +104,10 @@ import type {
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
   WorkspaceUpdateSystemDefaultInput,
-  WorkspaceSelectFolderResult
+  WorkspaceSelectFolderResult,
+  OnboardingStatus,
+  OnboardingInstallEventEnvelope,
+  ProviderId
 } from '@shared/contracts'
 
 export type OrdinusApi = {
@@ -230,6 +233,23 @@ export type OrdinusApi = {
     setEnabled: (input: AgentScheduleSetEnabledInput) => Promise<AgentSchedule>
     fireNow: (input: AgentScheduleFireNowInput) => Promise<{ runId: string; requestId: string }>
     onChanged: (callback: (event?: SchedulerEvent) => void) => () => void
+  }
+  onboarding: {
+    getStatus: () => Promise<OnboardingStatus>
+    advanceFromWelcome: () => Promise<OnboardingStatus>
+    selectProviders: (input: { providerIds: ProviderId[] }) => Promise<OnboardingStatus>
+    confirmWorkspace: (input: {
+      workspaceRoot: string
+      workspaceName: string
+    }) => Promise<{ status: OnboardingStatus; workspace: WorkspaceConfig }>
+    installProvider: (input: { providerId: ProviderId }) => Promise<OnboardingStatus>
+    markProviderAuthed: (input: {
+      providerId: ProviderId
+      authed: boolean
+    }) => Promise<OnboardingStatus>
+    resetProviders: () => Promise<OnboardingStatus>
+    complete: (input: { agentId: string }) => Promise<OnboardingStatus>
+    onInstallEvent: (callback: (envelope: OnboardingInstallEventEnvelope) => void) => () => void
   }
 }
 

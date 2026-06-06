@@ -536,7 +536,9 @@ function getClaudeEnvironment(): NodeJS.ProcessEnv {
 }
 
 function findClaudeExecutable(): Promise<CliExecutable | null> {
-  return findCliExecutable('claude', 'CLAUDE_BIN')
+  return findCliExecutable('claude', 'CLAUDE_BIN', {
+    prefixBinDir: getSystemPaths().cliBin
+  })
 }
 
 function startClaudeLogin(

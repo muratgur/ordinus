@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type {
   AppInfo,
   DbStatus,
+  OnboardingStatus,
   ProviderId,
   SetupStatus,
   SystemPaths,
@@ -24,19 +25,19 @@ import {
   type WorkboardDraftReviewState
 } from './screens/workboard-draft-review'
 import { SchedulesScreen } from './screens/schedules-screen'
-import { SetupScreen } from './screens/setup-screen'
 import { SettingsScreen } from './screens/settings-screen'
+import { OnboardingFlow } from './screens/onboarding/onboarding-flow'
 
 type ShellState = {
   appInfo: AppInfo | null
   paths: SystemPaths | null
   dbStatus: DbStatus | null
   setupStatus: SetupStatus | null
+  onboardingStatus: OnboardingStatus | null
   error: string
   setupError: string
   busyAction: string
   loading: boolean
-  entered: boolean
 }
 
 function App(): React.JSX.Element {
@@ -45,10 +46,10 @@ function App(): React.JSX.Element {
     paths: null,
     dbStatus: null,
     setupStatus: null,
+    onboardingStatus: null,
     error: '',
     setupError: '',
     busyAction: '',
-    entered: false,
     loading: true
   })
   const [workboardDraftReview, setWorkboardDraftReview] = useState<WorkboardDraftReviewState>(
@@ -73,7 +74,7 @@ function App(): React.JSX.Element {
     planOperations.dismissPlanOp(operation.id)
   }
 
-  async function loadStatus(options: { stayOnSetup?: boolean } = {}): Promise<void> {
+  async function loadStatus(): Promise<void> {
     setState((current) => ({ ...current, loading: true, error: '' }))
 
     try {
@@ -86,7 +87,10 @@ function App(): React.JSX.Element {
         window.ordinus.system.getPaths(),
         window.ordinus.db.getStatus()
       ])
-      const setupStatus = await window.ordinus.setup.getStatus()
+      const [setupStatus, onboardingStatus] = await Promise.all([
+        window.ordinus.setup.getStatus(),
+        window.ordinus.onboarding.getStatus()
+      ])
 
       setState((current) => ({
         ...current,
@@ -94,9 +98,9 @@ function App(): React.JSX.Element {
         paths,
         dbStatus,
         setupStatus,
+        onboardingStatus,
         error: '',
-        loading: false,
-        entered: options.stayOnSetup ? current.entered : setupStatus.ready
+        loading: false
       }))
     } catch (error) {
       setState((current) => ({
@@ -143,54 +147,43 @@ function App(): React.JSX.Element {
   async function saveWorkspace(input: WorkspaceSaveConfigInput): Promise<void> {
     await runSetupAction('save-workspace', async () => {
       await window.ordinus.workspace.saveConfig(input)
-      await loadStatus({ stayOnSetup: true })
+      await loadStatus()
     })
   }
 
   async function connectProvider(providerId: ProviderId): Promise<void> {
     await runSetupAction(`connect-${providerId}`, async () => {
       await window.ordinus.runtime.connectProvider({ providerId })
-      await loadStatus({ stayOnSetup: true })
+      await loadStatus()
     })
   }
 
   async function refreshProvider(providerId: ProviderId): Promise<void> {
     await runSetupAction(`refresh-${providerId}`, async () => {
       await window.ordinus.runtime.refreshProvider({ providerId })
-      await loadStatus({ stayOnSetup: true })
+      await loadStatus()
     })
   }
 
   async function disconnectProvider(providerId: ProviderId): Promise<void> {
     await runSetupAction(`disconnect-${providerId}`, async () => {
       await window.ordinus.runtime.disconnectProvider({ providerId })
-      await loadStatus({ stayOnSetup: true })
+      await loadStatus()
     })
   }
 
   async function updateSystemDefault(input: WorkspaceUpdateSystemDefaultInput): Promise<void> {
     await runSetupAction('system-default', async () => {
       await window.ordinus.workspace.updateSystemDefault(input)
-      await loadStatus({ stayOnSetup: true })
+      await loadStatus()
     })
   }
 
-  if (state.setupStatus && (!state.setupStatus.ready || !state.entered)) {
-    const providerSetupKey = state.setupStatus.providers
-      .map((provider) => `${provider.id}:${provider.connected}`)
-      .join('|')
-
+  if (state.onboardingStatus && !state.onboardingStatus.onboardedAt) {
     return (
-      <SetupScreen
-        key={`${state.setupStatus.workspace?.updatedAt ?? 'setup-required'}:${state.setupStatus.ready}:${providerSetupKey}`}
-        status={state.setupStatus}
-        busyAction={state.busyAction}
-        error={state.setupError}
-        onSelectFolder={selectWorkspaceFolder}
-        onSaveWorkspace={saveWorkspace}
-        onConnectProvider={connectProvider}
-        onRefreshProvider={refreshProvider}
-        onEnter={() => setState((current) => ({ ...current, entered: true }))}
+      <OnboardingFlow
+        initialStatus={state.onboardingStatus}
+        onCompleted={() => void loadStatus()}
       />
     )
   }

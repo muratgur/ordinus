@@ -481,7 +481,11 @@ async function getCodexStatus(loginProcess: ProviderLoginProcess | null): Promis
       }
     )
     const output = `${authResult.stdout}\n${authResult.stderr}`.trim()
-    const connected = authResult.code === 0 && /logged in/i.test(output)
+    // Defensive: a future codex version could exit 0 while saying
+    // "Not logged in". Require the affirmative line and exclude any line
+    // that says we aren't logged in.
+    const connected =
+      authResult.code === 0 && /\blogged in\b/i.test(output) && !/\bnot logged in\b/i.test(output)
 
     return ProviderStatusSchema.parse({
       ...base,
@@ -525,7 +529,9 @@ function getCodexEnvironment(): NodeJS.ProcessEnv {
 }
 
 function findCodexExecutable(): Promise<CliExecutable | null> {
-  return findCliExecutable('codex', 'CODEX_BIN')
+  return findCliExecutable('codex', 'CODEX_BIN', {
+    prefixBinDir: getSystemPaths().cliBin
+  })
 }
 
 function startCodexLogin(

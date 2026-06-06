@@ -106,7 +106,10 @@ import type {
   WorkspaceConfig,
   WorkspaceSaveConfigInput,
   WorkspaceUpdateSystemDefaultInput,
-  WorkspaceSelectFolderResult
+  WorkspaceSelectFolderResult,
+  OnboardingStatus,
+  OnboardingInstallEventEnvelope,
+  ProviderId
 } from '@shared/contracts'
 import { ipcChannels } from '@shared/ipc'
 
@@ -349,6 +352,38 @@ const ordinus = {
         callback(payload)
       ipcRenderer.on(ipcChannels.schedulesChanged, listener)
       return () => ipcRenderer.removeListener(ipcChannels.schedulesChanged, listener)
+    }
+  },
+  onboarding: {
+    getStatus: async (): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingGetStatus),
+    advanceFromWelcome: async (): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingAdvanceFromWelcome),
+    selectProviders: async (input: { providerIds: ProviderId[] }): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingSelectProviders, input),
+    confirmWorkspace: async (input: {
+      workspaceRoot: string
+      workspaceName: string
+    }): Promise<{ status: OnboardingStatus; workspace: WorkspaceConfig }> =>
+      ipcRenderer.invoke(ipcChannels.onboardingConfirmWorkspace, input),
+    installProvider: async (input: { providerId: ProviderId }): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingInstallProvider, input),
+    markProviderAuthed: async (input: {
+      providerId: ProviderId
+      authed: boolean
+    }): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingMarkProviderAuthed, input),
+    resetProviders: async (): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingResetProviders),
+    complete: async (input: { agentId: string }): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingComplete, input),
+    onInstallEvent: (
+      callback: (envelope: OnboardingInstallEventEnvelope) => void
+    ): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload: OnboardingInstallEventEnvelope): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.onboardingInstallEvent, listener)
+      return () => ipcRenderer.removeListener(ipcChannels.onboardingInstallEvent, listener)
     }
   }
 }

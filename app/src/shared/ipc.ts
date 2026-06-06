@@ -91,5 +91,14 @@ export const ipcChannels = {
   schedulesDelete: 'schedules:delete',
   schedulesSetEnabled: 'schedules:set-enabled',
   schedulesFireNow: 'schedules:fire-now',
-  schedulesChanged: 'schedules:changed'
+  schedulesChanged: 'schedules:changed',
+  onboardingGetStatus: 'onboarding:get-status',
+  onboardingAdvanceFromWelcome: 'onboarding:advance-from-welcome',
+  onboardingSelectProviders: 'onboarding:select-providers',
+  onboardingConfirmWorkspace: 'onboarding:confirm-workspace',
+  onboardingInstallProvider: 'onboarding:install-provider',
+  onboardingInstallEvent: 'onboarding:install-event',
+  onboardingResetProviders: 'onboarding:reset-providers',
+  onboardingMarkProviderAuthed: 'onboarding:mark-provider-authed',
+  onboardingComplete: 'onboarding:complete'
 } as const

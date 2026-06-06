@@ -13,6 +13,11 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  # npm spawns subprocesses and reads scripts from disk, which cannot be
+  # served from inside an asar archive. ADR-028's managed install service
+  # runs `npm install` via this dependency, so it must live unpacked on
+  # the real filesystem.
+  - node_modules/npm/**
 extraResources:
   - from: resources/db/migrations
     to: db/migrations

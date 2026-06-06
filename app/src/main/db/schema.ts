@@ -3,6 +3,14 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 export const appMeta = sqliteTable('app_meta', {
   id: integer('id').primaryKey(),
   schemaVersion: integer('schema_version').notNull(),
+  // ISO timestamp set the moment the user successfully completes onboarding.
+  // App.tsx gates the legacy setup screen on this — null means "still
+  // onboarding". See ADR-028.
+  onboardedAt: text('onboarded_at'),
+  // Resumable onboarding state machine snapshot, JSON-encoded
+  // OnboardingState (see contracts.ts). Null until the user starts the
+  // flow; cleared once onboardedAt is set.
+  onboardingState: text('onboarding_state'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })

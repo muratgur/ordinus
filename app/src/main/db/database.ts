@@ -50,6 +50,10 @@ import {
   WorkspaceConfigSchema,
   WorkspaceSaveConfigInputSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
+  OnboardingStateSchema,
+  OnboardingStatusSchema,
+  type OnboardingState,
+  type OnboardingStatus,
   PendingPlanCreateInputSchema,
   PendingPlanSchema,
   type PendingPlan,
@@ -461,6 +465,60 @@ export class OrdinusDatabase {
     }
 
     return saved
+  }
+
+  /**
+   * Onboarding state machine snapshot, persisted on `app_meta`. See ADR-028.
+   * `onboardedAt` is the gate App.tsx watches; while it's null the renderer
+   * stays in the onboarding flow and resumes from `state.stage` on relaunch.
+   */
+  getOnboardingStatus(): OnboardingStatus {
+    const meta = this.db.select().from(appMeta).where(eq(appMeta.id, 1)).get()
+    const rawState = meta?.onboardingState ? safeParseJson(meta.onboardingState) : null
+    const state = rawState ? OnboardingStateSchema.safeParse(rawState) : { success: false as const }
+
+    return OnboardingStatusSchema.parse({
+      onboardedAt: meta?.onboardedAt ?? null,
+      state: state.success ? state.data : createInitialOnboardingState()
+    })
+  }
+
+  saveOnboardingState(next: OnboardingState): OnboardingStatus {
+    const parsed = OnboardingStateSchema.parse(next)
+    const now = new Date().toISOString()
+    this.db
+      .update(appMeta)
+      .set({
+        onboardingState: JSON.stringify(parsed),
+        updatedAt: now
+      })
+      .where(eq(appMeta.id, 1))
+      .run()
+    return this.getOnboardingStatus()
+  }
+
+  /**
+   * Atomic onboarding-complete: persist the final state AND set `onboardedAt`
+   * in a single update. Splitting these into two writes leaves a one-frame
+   * window where stage is `done` but the gate hasn't flipped — the renderer
+   * had to paper over it with a stage fallback. This keeps state and gate
+   * in lock-step.
+   */
+  markOnboardingComplete(finalState: OnboardingState): OnboardingStatus {
+    const parsed = OnboardingStateSchema.parse(finalState)
+    const now = new Date().toISOString()
+    this.db
+      .update(appMeta)
+      .set({
+        onboardedAt: now,
+        // Keep the final state so a fresh launch can still tell which providers
+        // were chosen at onboarding time. We clear it only on explicit reset.
+        onboardingState: JSON.stringify(parsed),
+        updatedAt: now
+      })
+      .where(eq(appMeta.id, 1))
+      .run()
+    return this.getOnboardingStatus()
   }
 
   listAgents(): Agent[] {
@@ -4869,6 +4927,27 @@ function parseJsonObjectSafe(value: string): Record<string, unknown> {
     return parseJsonObject(value)
   } catch {
     return {}
+  }
+}
+
+function safeParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+export function createInitialOnboardingState(): OnboardingState {
+  return {
+    stage: 'welcome',
+    selectedProviders: [],
+    workspace: null,
+    installResults: {},
+    installPhases: {},
+    installErrors: {},
+    firstAgentId: null,
+    stageHistory: [{ stage: 'welcome', at: new Date().toISOString() }]
   }
 }
 

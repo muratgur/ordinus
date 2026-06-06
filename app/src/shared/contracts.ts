@@ -14,8 +14,164 @@ export const SystemPathsSchema = z.object({
   userData: z.string(),
   database: z.string(),
   runtime: z.string(),
-  logs: z.string()
+  logs: z.string(),
+  // Ordinus-scoped npm prefix. The managed-install service writes provider
+  // CLIs here so they cannot collide with any user-level install. See ADR-028.
+  cliPrefix: z.string(),
+  cliBin: z.string()
 })
+
+// Declared up here (not next to its historical neighbors) so the install /
+// onboarding schemas below can reference it. Re-exported under the same name
+// so existing imports keep working.
+export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
+
+export const ProviderInstallEventSchema = z.discriminatedUnion('phase', [
+  z.object({
+    phase: z.literal('start'),
+    providerId: ProviderIdSchema,
+    packageName: z.string(),
+    packageVersion: z.string()
+  }),
+  z.object({
+    phase: z.literal('download'),
+    providerId: ProviderIdSchema,
+    message: z.string()
+  }),
+  z.object({
+    phase: z.literal('verify'),
+    providerId: ProviderIdSchema,
+    version: z.string()
+  }),
+  z.object({
+    phase: z.literal('done'),
+    providerId: ProviderIdSchema,
+    binPath: z.string()
+  }),
+  z.object({
+    phase: z.literal('error'),
+    providerId: ProviderIdSchema,
+    message: z.string(),
+    stderrTail: z.string().optional()
+  })
+])
+
+export type ProviderInstallEvent = z.infer<typeof ProviderInstallEventSchema>
+
+// --- Onboarding state machine (ADR-028) -------------------------------------
+
+export const OnboardingStageSchema = z.enum([
+  'welcome',
+  'providers',
+  'workspace',
+  'install',
+  'colleague',
+  'done'
+])
+
+export const OnboardingProviderStatusSchema = z.enum([
+  'pending',
+  'installing',
+  'installed',
+  'authed',
+  'failed'
+])
+
+// Last phase observed for an in-flight install. Renderer uses this to drive
+// the progress bar (shimmer during 'download', determinate during 'verify').
+export const OnboardingInstallPhaseSchema = z.enum([
+  'idle',
+  'start',
+  'download',
+  'verify',
+  'done',
+  'error'
+])
+
+export const OnboardingStateSchema = z.object({
+  stage: OnboardingStageSchema,
+  selectedProviders: z.array(ProviderIdSchema),
+  workspace: z
+    .object({
+      workspaceRoot: z.string(),
+      workspaceName: z.string()
+    })
+    .nullable(),
+  // Zod v4 makes `z.record(EnumSchema, V)` strict — every enum key must be
+  // present. We need a partial map (only the providers the user has
+  // selected/installed appear), so we type the key as plain string and
+  // narrow at the type level via the Partial<Record<...>> transform output.
+  installResults: z
+    .record(z.string(), OnboardingProviderStatusSchema)
+    .transform(
+      (value) =>
+        value as Partial<
+          Record<z.infer<typeof ProviderIdSchema>, z.infer<typeof OnboardingProviderStatusSchema>>
+        >
+    ),
+  installPhases: z
+    .record(z.string(), OnboardingInstallPhaseSchema)
+    .optional()
+    .transform(
+      (value) =>
+        (value ?? {}) as Partial<
+          Record<z.infer<typeof ProviderIdSchema>, z.infer<typeof OnboardingInstallPhaseSchema>>
+        >
+    ),
+  installErrors: z
+    .record(z.string(), z.string())
+    .transform((value) => value as Partial<Record<z.infer<typeof ProviderIdSchema>, string>>),
+  firstAgentId: z.string().nullable(),
+  // Lightweight stage transition log for future telemetry. Kept in state so it
+  // survives restart and is observable for debugging onboarding drop-off.
+  stageHistory: z.array(
+    z.object({
+      stage: OnboardingStageSchema,
+      at: z.string()
+    })
+  )
+})
+
+export type OnboardingStage = z.infer<typeof OnboardingStageSchema>
+export type OnboardingProviderStatus = z.infer<typeof OnboardingProviderStatusSchema>
+export type OnboardingInstallPhase = z.infer<typeof OnboardingInstallPhaseSchema>
+export type OnboardingState = z.infer<typeof OnboardingStateSchema>
+
+export const OnboardingStatusSchema = z.object({
+  onboardedAt: z.string().nullable(),
+  state: OnboardingStateSchema
+})
+
+export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>
+
+export const OnboardingSelectProvidersInputSchema = z.object({
+  providerIds: z.array(ProviderIdSchema).min(1)
+})
+
+export const OnboardingConfirmWorkspaceInputSchema = z.object({
+  workspaceRoot: z.string().trim().min(1),
+  workspaceName: z.string().trim().min(1).max(80)
+})
+
+export const OnboardingInstallProviderInputSchema = z.object({
+  providerId: ProviderIdSchema
+})
+
+export const OnboardingMarkProviderAuthedInputSchema = z.object({
+  providerId: ProviderIdSchema,
+  authed: z.boolean()
+})
+
+export const OnboardingCompleteInputSchema = z.object({
+  agentId: z.string().min(1)
+})
+
+export const OnboardingInstallEventEnvelopeSchema = z.object({
+  event: ProviderInstallEventSchema,
+  state: OnboardingStateSchema
+})
+
+export type OnboardingInstallEventEnvelope = z.infer<typeof OnboardingInstallEventEnvelopeSchema>
 
 export const DbStatusSchema = z.object({
   databasePath: z.string(),
@@ -25,8 +181,6 @@ export const DbStatusSchema = z.object({
   createdAt: z.string().nullable(),
   updatedAt: z.string().nullable()
 })
-
-export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
 
 export const WorkspaceConfigSchema = z.object({
   workspaceRoot: z.string(),
