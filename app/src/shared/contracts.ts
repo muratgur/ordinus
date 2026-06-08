@@ -182,6 +182,198 @@ export const DbStatusSchema = z.object({
   updatedAt: z.string().nullable()
 })
 
+// ADR-029 M5: side-effect events that Ordinus action tools broadcast to the
+// renderer after they succeed. The renderer subscribes once and routes:
+//   - workboard_plan_ready → fill workboardDraftReview state, navigate to /workboard
+//   - schedule_created     → toast + (optionally) navigate to /schedules
+//   - workflow_created     → toast + (optionally) navigate to /workflows
+//
+// Events carry minimal context. Heavy payloads (full plan, schedule, workflow)
+// are included so the renderer doesn't need an extra IPC round-trip.
+// ADR-029 M6 — Pending-confirmation payload shared between the MCP layer and
+// the renderer panel. Stable shape across IPC events and list queries.
+export const OrdinusPendingConfirmationSchema = z.object({
+  pendingId: z.string(),
+  toolName: z.string(),
+  /** Human-readable label for the panel ("Cancel Work Run"). */
+  toolLabel: z.string(),
+  reversibility: z.enum(['reversible', 'soft-delete', 'irreversible']),
+  affectedRecords: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      status: z.string().optional()
+    })
+  ),
+  /** Raw JSON-ish args, shown in the disclosure. */
+  args: z.unknown(),
+  why: z.string().optional(),
+  createdAt: z.string()
+})
+
+export const OrdinusConfirmationDecisionSchema = z.enum(['approved', 'cancelled'])
+
+export const OrdinusResolveConfirmationInputSchema = z.object({
+  pendingId: z.string().min(1),
+  decision: OrdinusConfirmationDecisionSchema
+})
+
+export const OrdinusActionEventSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('workboard_plan_ready'),
+    request: z.string(),
+    // Typed as WorkboardDraftPlan downstream; widened here to avoid forward-
+    // reference TDZ issues (WorkboardDraftPlanSchema is defined later in the
+    // file). The renderer narrows via WorkboardDraftPlanSchema.parse.
+    plan: z.unknown()
+  }),
+  z.object({
+    kind: z.literal('schedule_created'),
+    scheduleId: z.string(),
+    scheduleName: z.string()
+  }),
+  z.object({
+    kind: z.literal('workflow_created'),
+    workflowId: z.string(),
+    workflowName: z.string()
+  }),
+  // ADR-029 M6: confirmation lifecycle events.
+  // `requested` — show the panel.
+  // `resolved`  — remove the panel (covers the case where the same panel was
+  //               approved/cancelled in another window, or by us programmatically).
+  z.object({
+    kind: z.literal('confirmation_requested'),
+    pending: OrdinusPendingConfirmationSchema
+  }),
+  z.object({
+    kind: z.literal('confirmation_resolved'),
+    pendingId: z.string(),
+    decision: OrdinusConfirmationDecisionSchema
+  })
+])
+
+// ADR-029 M8: Ordinus memory CRUD shapes for the renderer-side memory
+// panel. The same `ordinus_memory` table is also exposed to the LLM via
+// memory_search / memory_write MCP tools; both paths share the same
+// upsert-by-(type,name) semantics.
+export const OrdinusMemoryEntrySchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  name: z.string(),
+  body: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const OrdinusWriteMemoryInputSchema = z.object({
+  type: z.string().trim().min(1).max(40),
+  name: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(2000)
+})
+
+export const OrdinusDeleteMemoryInputSchema = z.object({
+  id: z.string().min(1)
+})
+
+// ADR-029 M7: Ordinus persona + provider/model singleton — the editable
+// row behind Settings → Ordinus. Provider changes go through a separate
+// confirmation flow in the renderer (provider-change dialog) before this
+// schema is invoked.
+export const OrdinusSingletonSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string(),
+  displayName: z.string(),
+  avatarRef: z.string().nullable(),
+  extraInstructions: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const OrdinusUpdateSingletonInputSchema = z.object({
+  providerId: ProviderIdSchema.optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  displayName: z.string().trim().min(1).max(80).optional(),
+  // Nullable-but-present: client passes `null` to clear, omits to leave
+  // unchanged. We discriminate undefined vs null at the DB layer.
+  avatarRef: z.string().trim().max(200).nullable().optional(),
+  extraInstructions: z.string().trim().max(8_000).nullable().optional()
+})
+
+export const OrdinusArchiveConversationInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+export const OrdinusUnarchiveConversationInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+export const OrdinusDeleteConversationInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+export const OrdinusUpdateConversationTitleInputSchema = z.object({
+  conversationId: z.string().min(1),
+  title: z.string().trim().min(1).max(120)
+})
+
+export const OrdinusSetConversationPinnedInputSchema = z.object({
+  conversationId: z.string().min(1),
+  pinned: z.boolean()
+})
+
+// ADR-029 M4.5: persisted transcript turn shape.
+export const OrdinusConversationTurnKindSchema = z.enum(['user', 'assistant', 'error'])
+
+export const OrdinusConversationTurnSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  kind: OrdinusConversationTurnKindSchema,
+  content: z.string(),
+  turnId: z.string().nullable(),
+  createdAt: z.string()
+})
+
+export const OrdinusListTurnsInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+// ADR-029 M3: Ordinus conversation surface contracts.
+export const OrdinusConversationSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  providerId: z.string(),
+  model: z.string(),
+  providerSessionRef: z.string().nullable(),
+  archivedAt: z.string().nullable(),
+  pinnedAt: z.string().nullable(),
+  frozenReason: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const OrdinusCreateConversationInputSchema = z.object({
+  title: z.string().trim().min(1).max(120).optional()
+})
+
+export const OrdinusSendTurnInputSchema = z.object({
+  conversationId: z.string().min(1),
+  message: z.string().trim().min(1).max(16_000),
+  /**
+   * ADR-029 M5: optional override for what gets stored as the user-visible
+   * transcript line. When a slash command is used, the renderer sends the
+   * EXPANDED prompt as `message` (the LLM sees rich instructions) but the
+   * UNEXPANDED `/cmd <args>` as `displayMessage` so the transcript stays
+   * clean for human reading. Defaults to `message` when omitted (M3
+   * behavior preserved).
+   */
+  displayMessage: z.string().trim().min(1).max(16_000).optional()
+})
+
+// OrdinusTurnOutcomeSchema is defined after AgentTurnOutcomeSchema below
+// (it embeds that schema). The forward declaration would TDZ-throw at module
+// load if we placed it here; the type alias still lives in the Ordinus types
+// block below.
+
 export const WorkspaceConfigSchema = z.object({
   workspaceRoot: z.string(),
   workspaceName: z.string(),
@@ -665,6 +857,17 @@ export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
     questions: z.array(InteractionQuestionSchema).min(1).max(3)
   })
 ])
+
+// ADR-029 M3: Ordinus turn result envelope. Embeds AgentTurnOutcomeSchema (defined
+// just above) so renderer code receives the same discriminated union the existing
+// conversation runtime returns — Ordinus rides the same pipeline.
+export const OrdinusTurnOutcomeSchema = z.object({
+  conversationId: z.string(),
+  turnId: z.string(),
+  providerSessionRef: z.string(),
+  outcome: AgentTurnOutcomeSchema,
+  sessionReset: z.boolean()
+})
 
 export const ConversationInputRequestStatusSchema = z.enum(['pending', 'resolved', 'cancelled'])
 
@@ -1548,6 +1751,33 @@ export type AgentScheduleFireNowInput = z.infer<typeof AgentScheduleFireNowInput
 export type AppInfo = z.infer<typeof AppInfoSchema>
 export type SystemPaths = z.infer<typeof SystemPathsSchema>
 export type DbStatus = z.infer<typeof DbStatusSchema>
+export type OrdinusConversationSummary = z.infer<typeof OrdinusConversationSummarySchema>
+export type OrdinusCreateConversationInput = z.infer<typeof OrdinusCreateConversationInputSchema>
+export type OrdinusSendTurnInput = z.infer<typeof OrdinusSendTurnInputSchema>
+export type OrdinusTurnOutcome = z.infer<typeof OrdinusTurnOutcomeSchema>
+export type OrdinusConversationTurnKind = z.infer<typeof OrdinusConversationTurnKindSchema>
+export type OrdinusConversationTurn = z.infer<typeof OrdinusConversationTurnSchema>
+export type OrdinusListTurnsInput = z.infer<typeof OrdinusListTurnsInputSchema>
+export type OrdinusActionEvent = z.infer<typeof OrdinusActionEventSchema>
+export type OrdinusPendingConfirmation = z.infer<typeof OrdinusPendingConfirmationSchema>
+export type OrdinusConfirmationDecision = z.infer<typeof OrdinusConfirmationDecisionSchema>
+export type OrdinusResolveConfirmationInput = z.infer<typeof OrdinusResolveConfirmationInputSchema>
+export type OrdinusSingleton = z.infer<typeof OrdinusSingletonSchema>
+export type OrdinusUpdateSingletonInput = z.infer<typeof OrdinusUpdateSingletonInputSchema>
+export type OrdinusArchiveConversationInput = z.infer<typeof OrdinusArchiveConversationInputSchema>
+export type OrdinusUnarchiveConversationInput = z.infer<
+  typeof OrdinusUnarchiveConversationInputSchema
+>
+export type OrdinusDeleteConversationInput = z.infer<typeof OrdinusDeleteConversationInputSchema>
+export type OrdinusUpdateConversationTitleInput = z.infer<
+  typeof OrdinusUpdateConversationTitleInputSchema
+>
+export type OrdinusSetConversationPinnedInput = z.infer<
+  typeof OrdinusSetConversationPinnedInputSchema
+>
+export type OrdinusMemoryEntry = z.infer<typeof OrdinusMemoryEntrySchema>
+export type OrdinusWriteMemoryInput = z.infer<typeof OrdinusWriteMemoryInputSchema>
+export type OrdinusDeleteMemoryInput = z.infer<typeof OrdinusDeleteMemoryInputSchema>
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
 export type WorkspaceSaveConfigInput = z.infer<typeof WorkspaceSaveConfigInputSchema>
 export type WorkspaceSelectFolderResult = z.infer<typeof WorkspaceSelectFolderResultSchema>

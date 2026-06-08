@@ -165,6 +165,10 @@ import {
   conversationTurns,
   observedRunEvents,
   observedRuns,
+  ordinusConversations,
+  ordinusConversationTurns,
+  ordinusMemory,
+  ordinusSingleton,
   pendingPlans,
   workRequestAgentSessions,
   workRequests,
@@ -316,6 +320,10 @@ export class OrdinusDatabase {
         conversationTurns,
         observedRunEvents,
         observedRuns,
+        ordinusConversations,
+        ordinusConversationTurns,
+        ordinusMemory,
+        ordinusSingleton,
         workRequestAgentSessions,
         workRequests,
         workRunContextReferences,
@@ -374,6 +382,426 @@ export class OrdinusDatabase {
       createdAt: meta?.createdAt ?? null,
       updatedAt: meta?.updatedAt ?? null
     })
+  }
+
+  // ADR-029 M1: Ordinus persona + provider/model config singleton. Lazy-seeded on
+  // first read so existing workspaces (post-migration) and freshly-onboarded
+  // workspaces converge on the same path: read returns a row, or creates one
+  // from the active workspace's defaults. Returns null only when no workspace
+  // exists yet (pre-onboarding) — Ordinus can't have a provider without one.
+  getOrdinusSingleton(): {
+    providerId: string
+    model: string
+    displayName: string
+    avatarRef: string | null
+    extraInstructions: string | null
+    createdAt: string
+    updatedAt: string
+  } | null {
+    const existing = this.db.select().from(ordinusSingleton).where(eq(ordinusSingleton.id, 1)).get()
+    if (existing) {
+      return {
+        providerId: existing.providerId,
+        model: existing.model,
+        displayName: existing.displayName,
+        avatarRef: existing.avatarRef,
+        extraInstructions: existing.extraInstructions,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt
+      }
+    }
+
+    const workspace = this.getWorkspaceConfig()
+    if (!workspace) {
+      // No workspace yet → no provider to inherit. Caller should treat this as
+      // "Ordinus not yet provisioned" and avoid seeding until onboarding completes.
+      return null
+    }
+
+    const now = new Date().toISOString()
+    this.db
+      .insert(ordinusSingleton)
+      .values({
+        id: 1,
+        providerId: workspace.defaultProviderId,
+        model: workspace.defaultModel,
+        displayName: 'Ordinus',
+        avatarRef: null,
+        extraInstructions: null,
+        createdAt: now,
+        updatedAt: now
+      })
+      .run()
+
+    return {
+      providerId: workspace.defaultProviderId,
+      model: workspace.defaultModel,
+      displayName: 'Ordinus',
+      avatarRef: null,
+      extraInstructions: null,
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  // ADR-029 §2 — Ordinus conversation metadata. Provider transcripts live in
+  // each CLI's resumable session (ADR-003 pattern); we only persist what's
+  // needed to list, resume, archive, and detect provider drift. See
+  // ordinus/session.ts for how providerSessionRef is updated after each turn.
+
+  listOrdinusConversations(): Array<{
+    id: string
+    title: string
+    providerId: string
+    model: string
+    providerSessionRef: string | null
+    archivedAt: string | null
+    pinnedAt: string | null
+    frozenReason: string | null
+    createdAt: string
+    updatedAt: string
+  }> {
+    const rows = this.db
+      .select()
+      .from(ordinusConversations)
+      .orderBy(desc(ordinusConversations.updatedAt))
+      .all()
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      providerId: row.providerId,
+      model: row.model,
+      providerSessionRef: row.providerSessionRef,
+      archivedAt: row.archivedAt,
+      pinnedAt: row.pinnedAt,
+      frozenReason: row.frozenReason,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    }))
+  }
+
+  createOrdinusConversation(input: { title: string; providerId: string; model: string }): {
+    id: string
+    title: string
+    providerId: string
+    model: string
+    providerSessionRef: string | null
+    archivedAt: string | null
+    pinnedAt: string | null
+    frozenReason: string | null
+    createdAt: string
+    updatedAt: string
+  } {
+    const id = `oc-${randomUUID()}`
+    const now = new Date().toISOString()
+    this.db
+      .insert(ordinusConversations)
+      .values({
+        id,
+        title: input.title,
+        providerId: input.providerId,
+        model: input.model,
+        providerSessionRef: null,
+        archivedAt: null,
+        pinnedAt: null,
+        frozenReason: null,
+        createdAt: now,
+        updatedAt: now
+      })
+      .run()
+    return {
+      id,
+      title: input.title,
+      providerId: input.providerId,
+      model: input.model,
+      providerSessionRef: null,
+      archivedAt: null,
+      pinnedAt: null,
+      frozenReason: null,
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  updateOrdinusConversationSessionRef(input: { id: string; providerSessionRef: string }): void {
+    const now = new Date().toISOString()
+    this.requireOrdinusConversation(input.id)
+    this.db
+      .update(ordinusConversations)
+      .set({ providerSessionRef: input.providerSessionRef, updatedAt: now })
+      .where(eq(ordinusConversations.id, input.id))
+      .run()
+  }
+
+  updateOrdinusConversationTitle(input: { id: string; title: string }): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(ordinusConversations)
+      .set({ title: input.title, updatedAt: now })
+      .where(eq(ordinusConversations.id, input.id))
+      .run()
+  }
+
+  setOrdinusConversationPinned(input: { id: string; pinned: boolean }): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(ordinusConversations)
+      .set({ pinnedAt: input.pinned ? now : null, updatedAt: now })
+      .where(eq(ordinusConversations.id, input.id))
+      .run()
+  }
+
+  // ADR-029 M7 — Ordinus persona + provider/model edits. The session module
+  // re-reads the singleton at every new conversation, so changes here flow
+  // to subsequent conversations automatically. Existing conversations keep
+  // their original providerId (their CLI session is locked to it via
+  // --resume); switching the singleton does NOT migrate them.
+  updateOrdinusSingleton(input: {
+    providerId?: string
+    model?: string
+    displayName?: string
+    avatarRef?: string | null
+    extraInstructions?: string | null
+  }): void {
+    // Make sure the row exists first (lazy-create path in getOrdinusSingleton).
+    const current = this.getOrdinusSingleton()
+    if (!current) {
+      throw new Error('Ordinus is not provisioned yet — finish onboarding first.')
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(ordinusSingleton)
+      .set({
+        providerId: input.providerId ?? current.providerId,
+        model: input.model ?? current.model,
+        displayName: input.displayName ?? current.displayName,
+        avatarRef: input.avatarRef === undefined ? current.avatarRef : input.avatarRef,
+        extraInstructions:
+          input.extraInstructions === undefined
+            ? current.extraInstructions
+            : input.extraInstructions,
+        updatedAt: now
+      })
+      .where(eq(ordinusSingleton.id, 1))
+      .run()
+  }
+
+  // ADR-029 M7 — Archive an existing Ordinus conversation. Used by the
+  // provider-change dialog when the user opts to clean-slate after switching
+  // provider, and by the frozen banner's "Start fresh" path.
+  archiveOrdinusConversation(id: string): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(ordinusConversations)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(ordinusConversations.id, id))
+      .run()
+  }
+
+  // ADR-029 M7 — Mark a conversation as frozen with a reason. Renderer
+  // surfaces a banner instead of the input. Used when the conversation's
+  // original provider becomes unavailable mid-life.
+  freezeOrdinusConversation(input: { id: string; reason: string }): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(ordinusConversations)
+      .set({ frozenReason: input.reason, updatedAt: now })
+      .where(eq(ordinusConversations.id, input.id))
+      .run()
+  }
+
+  // ADR-029 M4.5 — Per-turn transcript persistence. Append-only; the renderer
+  // reconstructs the message stream by listing in createdAt order. The CLI
+  // session (ADR-003 pattern) remains the source of truth for the LLM's
+  // working context via --resume; this table is purely the UI display copy
+  // that survives renderer remount and app restart.
+
+  listOrdinusTurns(conversationId: string): Array<{
+    id: string
+    conversationId: string
+    kind: string
+    content: string
+    turnId: string | null
+    createdAt: string
+  }> {
+    const rows = this.db
+      .select()
+      .from(ordinusConversationTurns)
+      .where(eq(ordinusConversationTurns.conversationId, conversationId))
+      .orderBy(asc(ordinusConversationTurns.createdAt))
+      .all()
+    return rows.map((row) => ({
+      id: row.id,
+      conversationId: row.conversationId,
+      kind: row.kind,
+      content: row.content,
+      turnId: row.turnId,
+      createdAt: row.createdAt
+    }))
+  }
+
+  appendOrdinusTurn(input: {
+    conversationId: string
+    kind: 'user' | 'assistant' | 'error'
+    content: string
+    turnId?: string | null
+  }): {
+    id: string
+    conversationId: string
+    kind: string
+    content: string
+    turnId: string | null
+    createdAt: string
+  } {
+    const id = `oturn-${randomUUID()}`
+    const now = new Date().toISOString()
+    this.db.transaction((tx) => {
+      const conversation = tx
+        .select({ id: ordinusConversations.id })
+        .from(ordinusConversations)
+        .where(eq(ordinusConversations.id, input.conversationId))
+        .get()
+      if (!conversation) {
+        throw new Error(`Ordinus conversation ${input.conversationId} not found.`)
+      }
+      tx.insert(ordinusConversationTurns)
+        .values({
+          id,
+          conversationId: input.conversationId,
+          kind: input.kind,
+          content: input.content,
+          turnId: input.turnId ?? null,
+          createdAt: now
+        })
+        .run()
+      // Touch the parent conversation's updatedAt so list ordering reflects
+      // recent activity.
+      tx.update(ordinusConversations)
+        .set({ updatedAt: now })
+        .where(eq(ordinusConversations.id, input.conversationId))
+        .run()
+    })
+    return {
+      id,
+      conversationId: input.conversationId,
+      kind: input.kind,
+      content: input.content,
+      turnId: input.turnId ?? null,
+      createdAt: now
+    }
+  }
+
+  unarchiveOrdinusConversation(id: string): void {
+    const now = new Date().toISOString()
+    this.db
+      .update(ordinusConversations)
+      .set({ archivedAt: null, updatedAt: now })
+      .where(eq(ordinusConversations.id, id))
+      .run()
+  }
+
+  deleteOrdinusConversation(id: string): void {
+    this.db.transaction((tx) => {
+      tx.delete(ordinusConversationTurns)
+        .where(eq(ordinusConversationTurns.conversationId, id))
+        .run()
+      tx.delete(ordinusConversations).where(eq(ordinusConversations.id, id)).run()
+    })
+  }
+
+  private requireOrdinusConversation(id: string): void {
+    const conversation = this.db
+      .select({ id: ordinusConversations.id })
+      .from(ordinusConversations)
+      .where(eq(ordinusConversations.id, id))
+      .get()
+    if (!conversation) {
+      throw new Error(`Ordinus conversation ${id} not found.`)
+    }
+  }
+
+  // ADR-029 §6 — Ordinus cross-conversation memory. Surfaced to the LLM via
+  // memory_search / memory_write tools (M3). The body column has no length
+  // cap at the schema level, but callers should keep entries terse —
+  // every entry rides in the session-init system prompt for every new
+  // conversation, so memory size translates directly into prompt tokens.
+
+  listOrdinusMemory(): Array<{
+    id: string
+    type: string
+    name: string
+    body: string
+    createdAt: string
+    updatedAt: string
+  }> {
+    const rows = this.db.select().from(ordinusMemory).orderBy(ordinusMemory.updatedAt).all()
+    return rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      name: row.name,
+      body: row.body,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    }))
+  }
+
+  writeOrdinusMemory(input: { type: string; name: string; body: string }): {
+    id: string
+    type: string
+    name: string
+    body: string
+    createdAt: string
+    updatedAt: string
+  } {
+    const now = new Date().toISOString()
+    // Upsert by (type, name): re-writing the same named fact updates it
+    // rather than accumulating duplicates. Matches how the user thinks
+    // about memory ("remember X about Y" → one entry for that fact).
+    const existing = this.db
+      .select()
+      .from(ordinusMemory)
+      .where(and(eq(ordinusMemory.type, input.type), eq(ordinusMemory.name, input.name)))
+      .get()
+    if (existing) {
+      this.db
+        .update(ordinusMemory)
+        .set({ body: input.body, updatedAt: now })
+        .where(eq(ordinusMemory.id, existing.id))
+        .run()
+      return {
+        id: existing.id,
+        type: input.type,
+        name: input.name,
+        body: input.body,
+        createdAt: existing.createdAt,
+        updatedAt: now
+      }
+    }
+    const id = `omem-${randomUUID()}`
+    this.db
+      .insert(ordinusMemory)
+      .values({
+        id,
+        type: input.type,
+        name: input.name,
+        body: input.body,
+        createdAt: now,
+        updatedAt: now
+      })
+      .run()
+    return {
+      id,
+      type: input.type,
+      name: input.name,
+      body: input.body,
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  deleteOrdinusMemory(id: string): { deletedId: string | null } {
+    const result = this.db.delete(ordinusMemory).where(eq(ordinusMemory.id, id)).run()
+    return { deletedId: result.changes > 0 ? id : null }
   }
 
   getWorkspaceConfig(): WorkspaceConfig | null {

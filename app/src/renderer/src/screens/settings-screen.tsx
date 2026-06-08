@@ -13,6 +13,7 @@ import {
   Plug,
   PlugZap,
   RefreshCcw,
+  Sparkles,
   Terminal,
   Unplug,
   ShieldCheck
@@ -51,6 +52,7 @@ import {
 import { Input } from '@renderer/components/ui/input'
 import { formatDate } from '@renderer/lib/format'
 import { cn } from '@renderer/lib/utils'
+import { OrdinusSettingsSection } from './settings/ordinus-settings-section'
 
 type SettingsScreenProps = {
   appInfo: AppInfo | null
@@ -67,7 +69,7 @@ type SettingsScreenProps = {
   onUpdateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
 }
 
-type SettingsSectionId = 'workspace' | 'providers' | 'connections' | 'local-state'
+type SettingsSectionId = 'workspace' | 'providers' | 'ordinus' | 'connections' | 'local-state'
 
 const settingsSections = [
   {
@@ -81,6 +83,12 @@ const settingsSections = [
     label: 'Providers',
     description: 'Codex, Claude, and future CLIs',
     icon: PlugZap
+  },
+  {
+    id: 'ordinus',
+    label: 'Ordinus',
+    description: 'Persona, provider, and model for the in-app assistant',
+    icon: Sparkles
   },
   {
     id: 'connections',
@@ -181,6 +189,8 @@ export function SettingsScreen({
               onUpdateSystemDefault={onUpdateSystemDefault}
             />
           ) : null}
+
+          {activeSection === 'ordinus' ? <OrdinusSettingsSection /> : null}
 
           {activeSection === 'connections' ? <ConnectionsSettingsSection /> : null}
 

@@ -1,0 +1,1 @@
+ALTER TABLE `app_meta` DROP COLUMN `ordinus_v1`;

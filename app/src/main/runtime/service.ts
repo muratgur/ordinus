@@ -78,6 +78,53 @@ export function createRuntimeService(): RuntimeService {
     conversationProcesses: new Map()
   }
 
+  // ADR-029 follow-up — Provider statuses are expensive: each adapter's
+  // `getStatus()` spawns two CLI subprocesses (`--version` + `login status`),
+  // so the three-provider parallel fan-out costs ~300–500ms wall time. Every
+  // caller used to pay that price every time, including App.tsx's boot
+  // loadStatus, every Settings → Providers open, every plan-generation
+  // gate, every schedule fire, and (after M7) the Ordinus surfaces.
+  //
+  // The values are stable across short windows — CLI installs and login
+  // state change infrequently — so we memoize the entire ProviderStatus[]
+  // with a short TTL plus in-flight coalescing. Concurrent callers share
+  // a single spawn batch; everything within the TTL hits memory.
+  //
+  // Lifecycle:
+  //   - Boot pre-warm fires from main/index.ts (background, no await).
+  //     By the time App.tsx's Phase 2 setupGetStatus reaches us, the call
+  //     is in-flight (await same promise) or already cached.
+  //   - Any user-driven mutation (connect, disconnect, refreshProvider)
+  //     invalidates the cache so the next read picks up the new state.
+  //   - In-memory only; an app restart re-warms from scratch.
+  //
+  // Stale-state risk: if the user externally logs the CLI out, we keep
+  // reporting `connected: true` for up to 30 s. The next real CLI call
+  // (turn / plan) surfaces the auth error then. Acceptable trade-off for
+  // the latency win.
+  const PROVIDER_STATUS_TTL_MS = 30_000
+  let providerStatusCache: { value: ProviderStatus[]; fetchedAt: number } | null = null
+  let providerStatusInFlight: Promise<ProviderStatus[]> | null = null
+
+  function invalidateProviderStatusCache(): void {
+    providerStatusCache = null
+  }
+
+  async function fetchAllProviderStatuses(): Promise<ProviderStatus[]> {
+    if (providerStatusInFlight) return providerStatusInFlight
+    providerStatusInFlight = Promise.all(
+      listProviderAdapters().map((adapter) => adapter.getStatus(context))
+    )
+      .then((value) => {
+        providerStatusCache = { value, fetchedAt: Date.now() }
+        return value
+      })
+      .finally(() => {
+        providerStatusInFlight = null
+      })
+    return providerStatusInFlight
+  }
+
   return {
     ready: true,
     getProviderCapabilities() {
@@ -89,15 +136,24 @@ export function createRuntimeService(): RuntimeService {
       }))
     },
     async getProviderStatuses() {
-      return Promise.all(listProviderAdapters().map((adapter) => adapter.getStatus(context)))
+      const now = Date.now()
+      if (providerStatusCache && now - providerStatusCache.fetchedAt < PROVIDER_STATUS_TTL_MS) {
+        return providerStatusCache.value
+      }
+      return fetchAllProviderStatuses()
     },
     async refreshProvider(input) {
       const parsed = ProviderActionInputSchema.parse(input)
       const adapter = getProviderAdapter(parsed.providerId)
 
-      return adapter.refreshProvider
+      const result = await (adapter.refreshProvider
         ? adapter.refreshProvider(parsed, context)
-        : adapter.getStatus(context)
+        : adapter.getStatus(context))
+      // Refresh is the user-driven "give me the truth right now" action.
+      // Drop the cache so the next bulk read picks up fresh state for
+      // every provider (cheap — they re-spawn in parallel).
+      invalidateProviderStatusCache()
+      return result
     },
     async connectProvider(input) {
       const parsed = ProviderConnectInputSchema.parse(input)
@@ -108,7 +164,9 @@ export function createRuntimeService(): RuntimeService {
         return { status, authUrl: '' }
       }
 
-      return adapter.connectProvider(parsed, context)
+      const result = await adapter.connectProvider(parsed, context)
+      invalidateProviderStatusCache()
+      return result
     },
     async disconnectProvider(input) {
       const parsed = ProviderActionInputSchema.parse(input)
@@ -118,7 +176,9 @@ export function createRuntimeService(): RuntimeService {
         throw new Error(`Disconnect is not available for ${adapter.label} yet.`)
       }
 
-      return adapter.disconnectProvider(parsed, context)
+      const result = await adapter.disconnectProvider(parsed, context)
+      invalidateProviderStatusCache()
+      return result
     },
     async generateAgentDraft(input) {
       const parsed = RuntimeAgentDraftInputSchema.parse(input)

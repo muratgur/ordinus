@@ -1,0 +1,236 @@
+<!doctype html>
+<!--
+  Ordinus mark concepts — throwaway preview for design direction (P1).
+  Open in a browser. Four directions, each shown at hero + strip size,
+  in idle (calm breathing) and thinking (livelier) states.
+  Not production code; once a direction is chosen we rebuild it as
+  app/src/renderer/src/screens/home/ordinus-mark.tsx.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ordinus mark concepts</title>
+<style>
+  :root {
+    --bg: #141414;
+    --panel: #1c1c1c;
+    --line: #2a2a2a;
+    --ink: #e8e8e8;
+    --muted: #8a8a8a;
+    --tint: #f2620a;        /* warm orange signature tint (from app title bar) */
+    --tint-soft: #f2620a55;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: 40px;
+  }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 32px; max-width: 640px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; max-width: 980px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+  .card h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .card p { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
+  .row { display: flex; align-items: center; gap: 28px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .cell .lbl { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .strip-row { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); }
+  .strip-row .name { font-weight: 600; font-size: 13px; }
+  .strip-row .title { color: var(--muted); font-size: 12px; }
+  svg { display: block; }
+
+  /* ---------- shared animation primitives ---------- */
+  @keyframes breathe { 0%,100% { transform: scale(1); opacity: .92; } 50% { transform: scale(1.06); opacity: 1; } }
+  @keyframes spin    { to { transform: rotate(360deg); } }
+  @keyframes spinR   { to { transform: rotate(-360deg); } }
+  @keyframes orbit   { to { transform: rotate(360deg); } }
+  @keyframes pulse   { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
+  @keyframes dash    { to { stroke-dashoffset: -100; } }
+
+  .spin-slow  { transform-box: fill-box; transform-origin: center; animation: spin 14s linear infinite; }
+  .spin-fast  { transform-box: fill-box; transform-origin: center; animation: spin 3.2s linear infinite; }
+  .spinR-slow { transform-box: fill-box; transform-origin: center; animation: spinR 18s linear infinite; }
+  .spinR-fast { transform-box: fill-box; transform-origin: center; animation: spinR 4s linear infinite; }
+  .breathe-slow { transform-box: fill-box; transform-origin: center; animation: breathe 4.5s ease-in-out infinite; }
+  .breathe-fast { transform-box: fill-box; transform-origin: center; animation: breathe 1.6s ease-in-out infinite; }
+  .orbit-slow { transform-box: fill-box; transform-origin: center; animation: orbit 6s linear infinite; }
+  .orbit-fast { transform-box: fill-box; transform-origin: center; animation: orbit 1.8s linear infinite; }
+  .pulse-slow { animation: pulse 4s ease-in-out infinite; }
+  .pulse-fast { animation: pulse 1.4s ease-in-out infinite; }
+  .dash-slow  { animation: dash 9s linear infinite; }
+  .dash-fast  { animation: dash 2.4s linear infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <h1>Ordinus mark — 4 directions</h1>
+  <p class="sub">
+    Each card: hero size (welcoming stage) + thinking variant, then a mock top-strip at
+    small size. Calm orange signature tint on the app's dark surface. Idle = slow breathing;
+    thinking = livelier. Reduced-motion freezes everything. Pick a direction (or say
+    "closer to X") and we lock the final art.
+  </p>
+
+  <div class="grid">
+
+    <!-- ============ A — Concentric ring "O" ============ -->
+    <div class="card">
+      <h2>A · Concentric ring</h2>
+      <p>An open ring orbiting a calm core — a quiet "O". Architectural, precise.</p>
+      <div class="row">
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="34" fill="none" stroke="var(--line)" stroke-width="2"/>
+            <circle class="spin-slow" cx="50" cy="50" r="34" fill="none" stroke="var(--tint)"
+                    stroke-width="3" stroke-linecap="round" stroke-dasharray="120 94"/>
+            <circle class="breathe-slow" cx="50" cy="50" r="11" fill="var(--tint)"/>
+          </svg>
+          <span class="lbl">idle</span>
+        </div>
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="34" fill="none" stroke="var(--line)" stroke-width="2"/>
+            <circle class="spin-fast" cx="50" cy="50" r="34" fill="none" stroke="var(--tint)"
+                    stroke-width="3" stroke-linecap="round" stroke-dasharray="120 94"/>
+            <circle class="breathe-fast" cx="50" cy="50" r="11" fill="var(--tint)"/>
+          </svg>
+          <span class="lbl">thinking</span>
+        </div>
+      </div>
+      <div class="strip-row">
+        <svg width="22" height="22" viewBox="0 0 100 100">
+          <circle class="spin-slow" cx="50" cy="50" r="36" fill="none" stroke="var(--tint)"
+                  stroke-width="6" stroke-linecap="round" stroke-dasharray="130 96"/>
+          <circle cx="50" cy="50" r="13" fill="var(--tint)"/>
+        </svg>
+        <span class="name">Ordinus</span><span class="title">· New conversation</span>
+      </div>
+    </div>
+
+    <!-- ============ B — Orbital node ============ -->
+    <div class="card">
+      <h2>B · Orbital node</h2>
+      <p>A solid core with one satellite tracing it — "someone is here, alive". Friendly.</p>
+      <div class="row">
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <ellipse cx="50" cy="50" rx="34" ry="20" fill="none" stroke="var(--line)" stroke-width="1.5"
+                     transform="rotate(-20 50 50)"/>
+            <circle class="breathe-slow" cx="50" cy="50" r="13" fill="var(--tint)"/>
+            <g class="orbit-slow">
+              <circle cx="84" cy="50" r="5" fill="var(--tint)"/>
+            </g>
+          </svg>
+          <span class="lbl">idle</span>
+        </div>
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <ellipse cx="50" cy="50" rx="34" ry="20" fill="none" stroke="var(--line)" stroke-width="1.5"
+                     transform="rotate(-20 50 50)"/>
+            <circle class="breathe-fast" cx="50" cy="50" r="13" fill="var(--tint)"/>
+            <g class="orbit-fast">
+              <circle cx="84" cy="50" r="5" fill="var(--tint)"/>
+              <circle cx="84" cy="50" r="5" fill="var(--tint-soft)" opacity=".6" transform="rotate(-18 50 50)"/>
+            </g>
+          </svg>
+          <span class="lbl">thinking</span>
+        </div>
+      </div>
+      <div class="strip-row">
+        <svg width="22" height="22" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="15" fill="var(--tint)"/>
+          <g class="orbit-slow"><circle cx="82" cy="50" r="7" fill="var(--tint)"/></g>
+        </svg>
+        <span class="name">Ordinus</span><span class="title">· New conversation</span>
+      </div>
+    </div>
+
+    <!-- ============ C — Converging arcs ============ -->
+    <div class="card">
+      <h2>C · Converging arcs</h2>
+      <p>Three arcs rotating into an implied "O" — abstract, distinctive, no AI cliché.</p>
+      <div class="row">
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <g class="spinR-slow">
+              <path d="M50 16 A34 34 0 0 1 79 33" fill="none" stroke="var(--tint)" stroke-width="5" stroke-linecap="round"/>
+              <path d="M84 50 A34 34 0 0 1 55 83" fill="none" stroke="var(--tint)" stroke-width="5" stroke-linecap="round" opacity=".7"/>
+              <path d="M45 83 A34 34 0 0 1 16 50" fill="none" stroke="var(--tint)" stroke-width="5" stroke-linecap="round" opacity=".45"/>
+            </g>
+            <circle class="breathe-slow" cx="50" cy="50" r="8" fill="var(--tint)"/>
+          </svg>
+          <span class="lbl">idle</span>
+        </div>
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <g class="spinR-fast">
+              <path d="M50 16 A34 34 0 0 1 79 33" fill="none" stroke="var(--tint)" stroke-width="5" stroke-linecap="round"/>
+              <path d="M84 50 A34 34 0 0 1 55 83" fill="none" stroke="var(--tint)" stroke-width="5" stroke-linecap="round" opacity=".7"/>
+              <path d="M45 83 A34 34 0 0 1 16 50" fill="none" stroke="var(--tint)" stroke-width="5" stroke-linecap="round" opacity=".45"/>
+            </g>
+            <circle class="breathe-fast" cx="50" cy="50" r="8" fill="var(--tint)"/>
+          </svg>
+          <span class="lbl">thinking</span>
+        </div>
+      </div>
+      <div class="strip-row">
+        <svg width="22" height="22" viewBox="0 0 100 100">
+          <g class="spinR-slow">
+            <path d="M50 12 A38 38 0 0 1 82 31" fill="none" stroke="var(--tint)" stroke-width="9" stroke-linecap="round"/>
+            <path d="M88 50 A38 38 0 0 1 55 87" fill="none" stroke="var(--tint)" stroke-width="9" stroke-linecap="round" opacity=".6"/>
+          </g>
+        </svg>
+        <span class="name">Ordinus</span><span class="title">· New conversation</span>
+      </div>
+    </div>
+
+    <!-- ============ D — Refined glyph (brand-kin ⊕) ============ -->
+    <div class="card">
+      <h2>D · Refined glyph</h2>
+      <p>Kin to the title-bar ⊕ mark, but quieter — a breathing core with a soft halo.</p>
+      <div class="row">
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <circle class="pulse-slow" cx="50" cy="50" r="40" fill="none" stroke="var(--tint)" stroke-width="1.5"/>
+            <circle class="breathe-slow" cx="50" cy="50" r="24" fill="none" stroke="var(--tint)" stroke-width="4"/>
+            <g class="breathe-slow" stroke="var(--tint)" stroke-width="4" stroke-linecap="round">
+              <line x1="50" y1="38" x2="50" y2="62"/>
+              <line x1="38" y1="50" x2="62" y2="50"/>
+            </g>
+          </svg>
+          <span class="lbl">idle</span>
+        </div>
+        <div class="cell">
+          <svg width="84" height="84" viewBox="0 0 100 100">
+            <circle class="pulse-fast" cx="50" cy="50" r="40" fill="none" stroke="var(--tint)" stroke-width="1.5"/>
+            <g class="spin-fast">
+              <circle cx="50" cy="50" r="24" fill="none" stroke="var(--tint)" stroke-width="4" stroke-dasharray="38 113"/>
+            </g>
+            <g stroke="var(--tint)" stroke-width="4" stroke-linecap="round">
+              <line x1="50" y1="38" x2="50" y2="62"/>
+              <line x1="38" y1="50" x2="62" y2="50"/>
+            </g>
+          </svg>
+          <span class="lbl">thinking</span>
+        </div>
+      </div>
+      <div class="strip-row">
+        <svg width="22" height="22" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="30" fill="none" stroke="var(--tint)" stroke-width="8"/>
+          <g stroke="var(--tint)" stroke-width="8" stroke-linecap="round">
+            <line x1="50" y1="35" x2="50" y2="65"/>
+            <line x1="35" y1="50" x2="65" y2="50"/>
+          </g>
+        </svg>
+        <span class="name">Ordinus</span><span class="title">· New conversation</span>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

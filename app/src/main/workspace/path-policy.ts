@@ -4,7 +4,11 @@ import { isAbsolute, relative, resolve } from 'node:path'
 export const workspaceModuleFolders = {
   conversations: 'conversations',
   workboard: 'workboard',
-  schedules: 'schedules'
+  schedules: 'schedules',
+  // ADR-029: Ordinus assistant turns are scoped to their own folder so they
+  // don't collide with agent conversations and so future workspace cleanups
+  // can target them as a unit.
+  ordinus: 'ordinus'
 } as const
 
 export type WorkspaceModule = keyof typeof workspaceModuleFolders
@@ -29,6 +33,10 @@ export function createWorkboardWorkingRoot(title: string, requestId: string): st
 
 export function createScheduleWorkingRoot(title: string, scheduledJobId: string): string {
   return createModuleWorkingRoot('schedules', title || 'scheduled-job', scheduledJobId)
+}
+
+export function createOrdinusWorkingRoot(title: string, conversationId: string): string {
+  return createModuleWorkingRoot('ordinus', title || 'conversation', conversationId)
 }
 
 export function createModuleWorkingRoot(

@@ -166,6 +166,55 @@ a {
     }
   }
 
+  /* ADR-029 §1 / P1 — the Ordinus mark ("concentric ring"). The arc rotates
+     slowly around the core; the core breathes. `data-state="thinking"` speeds
+     both up so the same mark doubles as the working indicator. Reduced-motion
+     freezes them into a static ring + core. */
+  @keyframes ordinus-mark-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes ordinus-mark-breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.9;
+    }
+    50% {
+      transform: scale(1.06);
+      opacity: 1;
+    }
+  }
+
+  .ordinus-mark-arc {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ordinus-mark-spin 14s linear infinite;
+  }
+
+  .ordinus-mark-arc[data-state='thinking'] {
+    animation-duration: 3.2s;
+  }
+
+  .ordinus-mark-core {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ordinus-mark-breathe 4.5s ease-in-out infinite;
+  }
+
+  .ordinus-mark-core[data-state='thinking'] {
+    animation-duration: 1.8s;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ordinus-mark-arc,
+    .ordinus-mark-core {
+      animation: none;
+    }
+  }
+
   .ordinus-scrollbar {
     scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
     scrollbar-width: auto;

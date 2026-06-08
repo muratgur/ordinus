@@ -75,6 +75,18 @@ import {
   WorkboardGeneratePlanInputSchema,
   PendingPlanCreateInputSchema,
   PendingPlanSchema,
+  OrdinusArchiveConversationInputSchema,
+  OrdinusCreateConversationInputSchema,
+  OrdinusDeleteConversationInputSchema,
+  OrdinusDeleteMemoryInputSchema,
+  OrdinusListTurnsInputSchema,
+  OrdinusResolveConfirmationInputSchema,
+  OrdinusSendTurnInputSchema,
+  OrdinusSetConversationPinnedInputSchema,
+  OrdinusUnarchiveConversationInputSchema,
+  OrdinusUpdateConversationTitleInputSchema,
+  OrdinusUpdateSingletonInputSchema,
+  OrdinusWriteMemoryInputSchema,
   WorkboardGenerateRequestPlanInputSchema,
   WorkboardRevealPathInputSchema,
   WorkboardCheckPathsInputSchema,
@@ -127,7 +139,7 @@ import {
   OnboardingMarkProviderAuthedInputSchema,
   OnboardingCompleteInputSchema
 } from '@shared/contracts'
-import type { SchedulerEvent } from '@shared/contracts'
+import type { OrdinusActionEvent, SchedulerEvent } from '@shared/contracts'
 import {
   createAgentSkill,
   deleteAgentHome,
@@ -146,6 +158,8 @@ import {
 } from '../agents/profiles'
 import { compileWorkflowDesign } from '../workboard/compile-design'
 import { composeInstructionsWithMemory } from '../agents/memory-render'
+import { createOrdinusSessionService } from '../ordinus/session'
+import { listPendingConfirmations, resolvePendingConfirmation } from '../ordinus/confirmation'
 import { connectConnector, disconnectConnector, listConnectors } from '../integrations/service'
 import {
   ensureWorkspaceRelativeDirectory,
@@ -209,6 +223,122 @@ export function registerIpcHandlers(
 
   ipcMain.handle(ipcChannels.systemGetPaths, () => getSystemPaths())
   ipcMain.handle(ipcChannels.dbGetStatus, () => database.getStatus())
+
+  // ADR-029 M3: Ordinus conversation surface. Renderer (M4) will consume these.
+  // Today they're callable from the dev console as a debug entrypoint:
+  //   await window.ordinus.ordinus.createConversation({})
+  //   await window.ordinus.ordinus.sendTurn({ conversationId, message })
+  //
+  // ADR-029 M5: action events flow main → renderer via webContents broadcast.
+  // Mirrors the `schedulesChanged` pattern above so there's only one event
+  // delivery mechanism in the app.
+  const ordinusEvents = {
+    publish(event: OrdinusActionEvent): void {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(ipcChannels.ordinusActionEvent, event)
+      }
+    }
+  }
+  const ordinusSession = createOrdinusSessionService({
+    database,
+    observability,
+    runtime,
+    events: ordinusEvents
+  })
+  ipcMain.handle(ipcChannels.ordinusListConversations, () => ordinusSession.listConversations())
+  ipcMain.handle(ipcChannels.ordinusCreateConversation, (_event, payload: unknown) => {
+    const parsed = OrdinusCreateConversationInputSchema.parse(payload ?? {})
+    return ordinusSession.createConversation(parsed)
+  })
+  ipcMain.handle(ipcChannels.ordinusSendTurn, async (_event, payload: unknown) => {
+    const parsed = OrdinusSendTurnInputSchema.parse(payload)
+    return ordinusSession.sendTurn(parsed)
+  })
+  ipcMain.handle(ipcChannels.ordinusListTurns, (_event, payload: unknown) => {
+    const parsed = OrdinusListTurnsInputSchema.parse(payload)
+    return database.listOrdinusTurns(parsed.conversationId)
+  })
+
+  // ADR-029 M6 — destructive-tool confirmation gate.
+  ipcMain.handle(ipcChannels.ordinusListPendingConfirmations, () => listPendingConfirmations())
+  ipcMain.handle(ipcChannels.ordinusResolveConfirmation, (_event, payload: unknown) => {
+    const parsed = OrdinusResolveConfirmationInputSchema.parse(payload)
+    const resolved = resolvePendingConfirmation(parsed.pendingId, parsed.decision)
+    if (!resolved) {
+      // Pending id was unknown or already resolved. We treat the call as a
+      // benign no-op rather than throwing — protects the renderer if it
+      // double-clicks Approve or if the MCP layer already timed out.
+      return { resolved: false as const }
+    }
+    // The MCP layer also publishes a `confirmation_resolved` event once it
+    // wakes from the Promise; this duplicate emit from the IPC layer ensures
+    // the renderer reacts even if the MCP server is in the middle of running
+    // the approved tool (which can take a while).
+    ordinusEvents.publish({
+      kind: 'confirmation_resolved',
+      pendingId: parsed.pendingId,
+      decision: parsed.decision
+    })
+    return { resolved: true as const }
+  })
+
+  // ADR-029 M7 — Ordinus persona + provider/model editing.
+  ipcMain.handle(ipcChannels.ordinusGetSingleton, () => database.getOrdinusSingleton())
+  ipcMain.handle(ipcChannels.ordinusUpdateSingleton, (_event, payload: unknown) => {
+    const parsed = OrdinusUpdateSingletonInputSchema.parse(payload)
+    database.updateOrdinusSingleton(parsed)
+    return database.getOrdinusSingleton()
+  })
+  ipcMain.handle(ipcChannels.ordinusArchiveConversation, (_event, payload: unknown) => {
+    const parsed = OrdinusArchiveConversationInputSchema.parse(payload)
+    if (ordinusSession.isTurnRunning(parsed.conversationId)) {
+      throw new Error('Wait for Ordinus to finish before archiving this conversation.')
+    }
+    database.archiveOrdinusConversation(parsed.conversationId)
+    return { archived: true as const }
+  })
+  ipcMain.handle(ipcChannels.ordinusUnarchiveConversation, (_event, payload: unknown) => {
+    const parsed = OrdinusUnarchiveConversationInputSchema.parse(payload)
+    database.unarchiveOrdinusConversation(parsed.conversationId)
+    return { restored: true as const }
+  })
+  ipcMain.handle(ipcChannels.ordinusDeleteConversation, (_event, payload: unknown) => {
+    const parsed = OrdinusDeleteConversationInputSchema.parse(payload)
+    if (ordinusSession.isTurnRunning(parsed.conversationId)) {
+      throw new Error('Wait for Ordinus to finish before deleting this conversation.')
+    }
+    database.deleteOrdinusConversation(parsed.conversationId)
+    return { deleted: true as const }
+  })
+  ipcMain.handle(ipcChannels.ordinusUpdateConversationTitle, (_event, payload: unknown) => {
+    const parsed = OrdinusUpdateConversationTitleInputSchema.parse(payload)
+    database.updateOrdinusConversationTitle({
+      id: parsed.conversationId,
+      title: parsed.title
+    })
+    return { updated: true as const }
+  })
+  ipcMain.handle(ipcChannels.ordinusSetConversationPinned, (_event, payload: unknown) => {
+    const parsed = OrdinusSetConversationPinnedInputSchema.parse(payload)
+    database.setOrdinusConversationPinned({
+      id: parsed.conversationId,
+      pinned: parsed.pinned
+    })
+    return { pinned: parsed.pinned }
+  })
+  // ADR-029 M8 — Ordinus memory CRUD for the renderer-side panel. Identical
+  // semantics to the memory_write / memory_search MCP tools the LLM uses;
+  // this is just the human-facing entry point so users can audit and curate
+  // what Ordinus remembers about them.
+  ipcMain.handle(ipcChannels.ordinusListMemory, () => database.listOrdinusMemory())
+  ipcMain.handle(ipcChannels.ordinusWriteMemory, (_event, payload: unknown) => {
+    const parsed = OrdinusWriteMemoryInputSchema.parse(payload)
+    return database.writeOrdinusMemory(parsed)
+  })
+  ipcMain.handle(ipcChannels.ordinusDeleteMemory, (_event, payload: unknown) => {
+    const parsed = OrdinusDeleteMemoryInputSchema.parse(payload)
+    return database.deleteOrdinusMemory(parsed.id)
+  })
   ipcMain.handle(ipcChannels.setupGetStatus, async () => {
     const workspace = database.getWorkspaceConfig()
     const providers = await runtime.getProviderStatuses()

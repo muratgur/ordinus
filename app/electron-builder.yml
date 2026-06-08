@@ -23,6 +23,8 @@ extraResources:
     to: db/migrations
   - from: resources/profiles
     to: profiles
+  - from: resources/ordinus-knowledge
+    to: ordinus-knowledge
 win:
   executableName: ordinus
   icon: build/icon.ico

@@ -159,7 +159,11 @@ async function sendClaudeConversationTurn(
     throw new Error('Claude needs login before this conversation can run.')
   }
 
-  const materialized = await materializeConnectors(input.connectors, input.agentHomePath)
+  const materialized = await materializeConnectors(
+    input.connectors,
+    input.agentHomePath,
+    input.additionalMcpServers
+  )
 
   try {
     const args = buildClaudeConversationArgs(

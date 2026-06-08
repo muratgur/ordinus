@@ -1,6 +1,15 @@
-import { Bot, CalendarClock, Columns3, MessageSquareText, Settings, Workflow } from 'lucide-react'
+import {
+  Bot,
+  CalendarClock,
+  Columns3,
+  MessageSquareText,
+  Settings,
+  Sparkles,
+  Workflow
+} from 'lucide-react'
 
 export const appRoutePaths = {
+  home: '/home',
   agents: '/agents',
   workboard: '/workboard',
   workflows: '/workflows',
@@ -11,7 +20,19 @@ export const appRoutePaths = {
 
 export type AppRouteId = keyof typeof appRoutePaths
 
-export const defaultAppRoute = appRoutePaths.workboard
+// Default landing route. After the ADR-029 kill switch was retired (M8 ship),
+// Home is the unconditional front door; Workboard stays a sibling nav entry.
+export const defaultAppRoute = appRoutePaths.home
+
+// ADR-029 M4: Home appears at the top of the nav when the Ordinus v1 flag is on.
+// The shell filters this entry out when the flag is off (see app-shell.tsx) so
+// nothing changes for users on the legacy default landing.
+export const ordinusHomeNavItem = {
+  id: 'home' as const,
+  label: 'Home',
+  path: appRoutePaths.home,
+  icon: Sparkles
+}
 
 export const appNavigation = [
   {

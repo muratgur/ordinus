@@ -64,6 +64,25 @@ import type {
   ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
+  OrdinusActionEvent,
+  OrdinusArchiveConversationInput,
+  OrdinusConversationSummary,
+  OrdinusConversationTurn,
+  OrdinusCreateConversationInput,
+  OrdinusDeleteConversationInput,
+  OrdinusDeleteMemoryInput,
+  OrdinusListTurnsInput,
+  OrdinusMemoryEntry,
+  OrdinusPendingConfirmation,
+  OrdinusResolveConfirmationInput,
+  OrdinusSendTurnInput,
+  OrdinusSetConversationPinnedInput,
+  OrdinusSingleton,
+  OrdinusTurnOutcome,
+  OrdinusUnarchiveConversationInput,
+  OrdinusUpdateConversationTitleInput,
+  OrdinusUpdateSingletonInput,
+  OrdinusWriteMemoryInput,
   FileContent,
   FileReadInput,
   FileWriteInput,
@@ -122,6 +141,68 @@ const ordinus = {
   },
   db: {
     getStatus: async (): Promise<DbStatus> => ipcRenderer.invoke(ipcChannels.dbGetStatus)
+  },
+  // ADR-029: Ordinus surface. The kill-switch flag was retired after M8;
+  // Home is unconditionally enabled now.
+  ordinus: {
+    listConversations: async (): Promise<OrdinusConversationSummary[]> =>
+      ipcRenderer.invoke(ipcChannels.ordinusListConversations),
+    createConversation: async (
+      input?: OrdinusCreateConversationInput
+    ): Promise<OrdinusConversationSummary> =>
+      ipcRenderer.invoke(ipcChannels.ordinusCreateConversation, input ?? {}),
+    sendTurn: async (input: OrdinusSendTurnInput): Promise<OrdinusTurnOutcome> =>
+      ipcRenderer.invoke(ipcChannels.ordinusSendTurn, input),
+    listTurns: async (input: OrdinusListTurnsInput): Promise<OrdinusConversationTurn[]> =>
+      ipcRenderer.invoke(ipcChannels.ordinusListTurns, input),
+    // ADR-029 M5: subscribe to Ordinus action events (workboard plan ready,
+    // schedule/workflow created, confirmation requested/resolved). Returns
+    // an unsubscribe function.
+    onActionEvent: (callback: (event: OrdinusActionEvent) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload: OrdinusActionEvent): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.ordinusActionEvent, listener)
+      return () => ipcRenderer.removeListener(ipcChannels.ordinusActionEvent, listener)
+    },
+    // ADR-029 M6: confirmation gate IPC.
+    listPendingConfirmations: async (): Promise<OrdinusPendingConfirmation[]> =>
+      ipcRenderer.invoke(ipcChannels.ordinusListPendingConfirmations),
+    resolveConfirmation: async (
+      input: OrdinusResolveConfirmationInput
+    ): Promise<{ resolved: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusResolveConfirmation, input),
+    // ADR-029 M7: persona + provider/model editing.
+    getSingleton: async (): Promise<OrdinusSingleton | null> =>
+      ipcRenderer.invoke(ipcChannels.ordinusGetSingleton),
+    updateSingleton: async (input: OrdinusUpdateSingletonInput): Promise<OrdinusSingleton> =>
+      ipcRenderer.invoke(ipcChannels.ordinusUpdateSingleton, input),
+    archiveConversation: async (
+      input: OrdinusArchiveConversationInput
+    ): Promise<{ archived: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusArchiveConversation, input),
+    unarchiveConversation: async (
+      input: OrdinusUnarchiveConversationInput
+    ): Promise<{ restored: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusUnarchiveConversation, input),
+    deleteConversation: async (
+      input: OrdinusDeleteConversationInput
+    ): Promise<{ deleted: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusDeleteConversation, input),
+    updateConversationTitle: async (
+      input: OrdinusUpdateConversationTitleInput
+    ): Promise<{ updated: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusUpdateConversationTitle, input),
+    setConversationPinned: async (
+      input: OrdinusSetConversationPinnedInput
+    ): Promise<{ pinned: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusSetConversationPinned, input),
+    // ADR-029 M8: memory panel CRUD.
+    listMemory: async (): Promise<OrdinusMemoryEntry[]> =>
+      ipcRenderer.invoke(ipcChannels.ordinusListMemory),
+    writeMemory: async (input: OrdinusWriteMemoryInput): Promise<OrdinusMemoryEntry> =>
+      ipcRenderer.invoke(ipcChannels.ordinusWriteMemory, input),
+    deleteMemory: async (input: OrdinusDeleteMemoryInput): Promise<{ deletedId: string | null }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusDeleteMemory, input)
   },
   setup: {
     getStatus: async (): Promise<SetupStatus> => ipcRenderer.invoke(ipcChannels.setupGetStatus)

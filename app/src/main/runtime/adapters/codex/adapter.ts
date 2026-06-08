@@ -130,7 +130,7 @@ async function sendCodexConversationTurn(
     throw new Error('Codex CLI was not found.')
   }
 
-  const connectors = await materializeCodexConnectors(input.connectors)
+  const connectors = await materializeCodexConnectors(input.connectors, input.additionalMcpServers)
   const args = buildCodexConversationArgs(input)
   if (connectors.configArgs.length > 0) {
     args.splice(1, 0, ...connectors.configArgs)
@@ -188,12 +188,34 @@ function buildCodexExtraWritableRootsArgs(extraDirectories: string[]): string[] 
   return ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(extraDirectories)}`]
 }
 
+// ADR-029 — Codex gates MCP tool calls behind an approval prompt routed to the
+// user (approval_policy default). In `codex exec` there is no interactive user,
+// so every MCP tool call resolves as "user cancelled MCP tool call" and fails
+// (observed: list_agents → status:failed). Gemini avoids this via per-server
+// `trust: true`; Codex's equivalent is to drop the approval prompt for the turn.
+//
+// We scope this to turns that inject our own loopback MCP server (Ordinus). It
+// is safe because:
+//   - `never` removes the approval *prompt* only; the sandbox still applies
+//     (this is NOT --dangerously-bypass-approvals-and-sandbox).
+//   - Destructive Ordinus tools are still gated by our OWN confirmation panel,
+//     implemented in ordinus-mcp/server.ts independently of Codex — the tool
+//     simply blocks on the MCP response until the user approves. Codex's
+//     approval layer is redundant for our tools.
+function buildCodexOrdinusApprovalArgs(input: RuntimeConversationTurnInput): string[] {
+  if (!input.additionalMcpServers || input.additionalMcpServers.length === 0) {
+    return []
+  }
+  return ['-c', `approval_policy=${JSON.stringify('never')}`]
+}
+
 function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string[] {
   if (input.providerSessionRef) {
     const args = [
       'exec',
       '--sandbox',
       input.sandbox,
+      ...buildCodexOrdinusApprovalArgs(input),
       '-C',
       input.workspaceRoot,
       '--add-dir',
@@ -222,6 +244,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     '--skip-git-repo-check',
     '--sandbox',
     input.sandbox,
+    ...buildCodexOrdinusApprovalArgs(input),
     '-C',
     input.workspaceRoot,
     '--add-dir',

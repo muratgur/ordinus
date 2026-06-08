@@ -62,6 +62,25 @@ import type {
   ConversationUpdateTitleInput,
   ConversationUpdateRoutingModeInput,
   DbStatus,
+  OrdinusActionEvent,
+  OrdinusArchiveConversationInput,
+  OrdinusConversationSummary,
+  OrdinusConversationTurn,
+  OrdinusCreateConversationInput,
+  OrdinusDeleteConversationInput,
+  OrdinusDeleteMemoryInput,
+  OrdinusListTurnsInput,
+  OrdinusMemoryEntry,
+  OrdinusPendingConfirmation,
+  OrdinusResolveConfirmationInput,
+  OrdinusSendTurnInput,
+  OrdinusSetConversationPinnedInput,
+  OrdinusSingleton,
+  OrdinusTurnOutcome,
+  OrdinusUnarchiveConversationInput,
+  OrdinusUpdateConversationTitleInput,
+  OrdinusUpdateSingletonInput,
+  OrdinusWriteMemoryInput,
   FileContent,
   FileReadInput,
   FileWriteInput,
@@ -119,6 +138,33 @@ export type OrdinusApi = {
   }
   db: {
     getStatus: () => Promise<DbStatus>
+  }
+  ordinus: {
+    listConversations: () => Promise<OrdinusConversationSummary[]>
+    createConversation: (
+      input?: OrdinusCreateConversationInput
+    ) => Promise<OrdinusConversationSummary>
+    sendTurn: (input: OrdinusSendTurnInput) => Promise<OrdinusTurnOutcome>
+    listTurns: (input: OrdinusListTurnsInput) => Promise<OrdinusConversationTurn[]>
+    onActionEvent: (callback: (event: OrdinusActionEvent) => void) => () => void
+    listPendingConfirmations: () => Promise<OrdinusPendingConfirmation[]>
+    resolveConfirmation: (input: OrdinusResolveConfirmationInput) => Promise<{ resolved: boolean }>
+    getSingleton: () => Promise<OrdinusSingleton | null>
+    updateSingleton: (input: OrdinusUpdateSingletonInput) => Promise<OrdinusSingleton>
+    archiveConversation: (input: OrdinusArchiveConversationInput) => Promise<{ archived: boolean }>
+    unarchiveConversation: (
+      input: OrdinusUnarchiveConversationInput
+    ) => Promise<{ restored: boolean }>
+    deleteConversation: (input: OrdinusDeleteConversationInput) => Promise<{ deleted: boolean }>
+    updateConversationTitle: (
+      input: OrdinusUpdateConversationTitleInput
+    ) => Promise<{ updated: boolean }>
+    setConversationPinned: (
+      input: OrdinusSetConversationPinnedInput
+    ) => Promise<{ pinned: boolean }>
+    listMemory: () => Promise<OrdinusMemoryEntry[]>
+    writeMemory: (input: OrdinusWriteMemoryInput) => Promise<OrdinusMemoryEntry>
+    deleteMemory: (input: OrdinusDeleteMemoryInput) => Promise<{ deletedId: string | null }>
   }
   setup: {
     getStatus: () => Promise<SetupStatus>

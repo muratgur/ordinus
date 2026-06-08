@@ -1,0 +1,1 @@
+ALTER TABLE `app_meta` ADD `ordinus_v1` integer DEFAULT true NOT NULL;

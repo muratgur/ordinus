@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Moon, RefreshCcw, Settings, Sun } from 'lucide-react'
 import type { DbStatus, SetupStatus } from '@shared/contracts'
-import { appNavigation } from './routes'
+import { appNavigation, ordinusHomeNavItem } from './routes'
 import { appRoutePaths } from './routes'
 import { Toaster } from '@renderer/components/ui/sonner'
 import { cn } from '@renderer/lib/utils'
@@ -25,6 +25,9 @@ export function AppShell({
   planQueue,
   onRefreshStatus
 }: AppShellProps): React.JSX.Element {
+  // ADR-029: Home leads the nav. The kill-switch flag was retired after M8
+  // ship — Ordinus is unconditionally enabled.
+  const navItems = [ordinusHomeNavItem, ...appNavigation]
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme())
   const navigate = useNavigate()
 
@@ -111,7 +114,7 @@ export function AppShell({
 
           {/* Modül linkleri */}
           <nav className="flex flex-1 items-stretch gap-0 overflow-x-auto" aria-label="Primary">
-            {appNavigation.map((item) => (
+            {navItems.map((item) => (
               <NavLink
                 key={item.id}
                 to={item.path}

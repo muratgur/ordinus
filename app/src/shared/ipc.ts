@@ -2,6 +2,35 @@ export const ipcChannels = {
   appGetInfo: 'app:get-info',
   systemGetPaths: 'system:get-paths',
   dbGetStatus: 'db:get-status',
+  // ADR-029 M3: Ordinus conversation surface. Renderer (M4) consumes these.
+  ordinusListConversations: 'ordinus:list-conversations',
+  ordinusCreateConversation: 'ordinus:create-conversation',
+  ordinusSendTurn: 'ordinus:send-turn',
+  // ADR-029 M4.5: persisted transcript so the renderer can rehydrate after nav.
+  ordinusListTurns: 'ordinus:list-turns',
+  // ADR-029 M5: broadcast from main to renderer when an Ordinus action tool
+  // completes (workboard plan ready, schedule created, workflow created).
+  // One channel, discriminated payload — see OrdinusActionEventSchema.
+  ordinusActionEvent: 'ordinus:action-event',
+  // ADR-029 M6: confirmation gate. Renderer can list any pending entries on
+  // mount (to rehydrate the panel after navigation) and submit a decision.
+  ordinusListPendingConfirmations: 'ordinus:list-pending-confirmations',
+  ordinusResolveConfirmation: 'ordinus:resolve-confirmation',
+  // ADR-029 M7: persona + provider/model editing, plus the lifecycle hooks
+  // (archive / freeze) the provider-change dialog and the frozen banner
+  // rely on.
+  ordinusGetSingleton: 'ordinus:get-singleton',
+  ordinusUpdateSingleton: 'ordinus:update-singleton',
+  ordinusArchiveConversation: 'ordinus:archive-conversation',
+  ordinusUnarchiveConversation: 'ordinus:unarchive-conversation',
+  ordinusDeleteConversation: 'ordinus:delete-conversation',
+  ordinusUpdateConversationTitle: 'ordinus:update-conversation-title',
+  ordinusSetConversationPinned: 'ordinus:set-conversation-pinned',
+  // ADR-029 M8: memory panel CRUD. Shares the ordinus_memory table with the
+  // memory_search / memory_write MCP tools.
+  ordinusListMemory: 'ordinus:list-memory',
+  ordinusWriteMemory: 'ordinus:write-memory',
+  ordinusDeleteMemory: 'ordinus:delete-memory',
   setupGetStatus: 'setup:get-status',
   workspaceSelectFolder: 'workspace:select-folder',
   workspaceSaveConfig: 'workspace:save-config',

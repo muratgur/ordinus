@@ -21,6 +21,21 @@ export type UsableConnector = {
   accessToken: string
 }
 
+// ADR-029: process-local (loopback) MCP servers contributed alongside the
+// vault-backed connector list. Used today by the Ordinus assistant to expose
+// its internal tool server. No bearer token — these are reached over
+// 127.0.0.1 by child processes spawned by the same app instance, so the
+// localhost boundary is the security guarantee.
+export type AdditionalMcpServer = {
+  id: string
+  url: string
+  /**
+   * Codex exec has a separate MCP tool approval gate from the top-level
+   * approval_policy. Use this only for process-local servers we own.
+   */
+  codexDefaultToolsApprovalMode?: 'auto' | 'prompt' | 'approve'
+}
+
 /**
  * Resolves the connectors that are actually usable this turn: known, mcp-http,
  * connected, with a valid (refreshed if needed) token. An agent's connector
@@ -57,7 +72,10 @@ const envVarName = (connectorId: string): string =>
  * and a bearer token read from an environment variable (keeps the token out of
  * argv). No temp file, so cleanup is a no-op.
  */
-export async function materializeCodexConnectors(connectorIds: string[]): Promise<{
+export async function materializeCodexConnectors(
+  connectorIds: string[],
+  additionalServers: ReadonlyArray<AdditionalMcpServer> = []
+): Promise<{
   configArgs: string[]
   env: Record<string, string>
 }> {
@@ -74,6 +92,19 @@ export async function materializeCodexConnectors(connectorIds: string[]): Promis
       `mcp_servers.${connector.id}.bearer_token_env_var=${JSON.stringify(tokenEnv)}`
     )
   }
+  // ADR-029: append additional (loopback, no-auth) servers. They get the same
+  // `mcp_servers.<id>` namespace but no bearer_token_env_var.
+  for (const extra of additionalServers) {
+    configArgs.push('-c', `mcp_servers.${extra.id}.url=${JSON.stringify(extra.url)}`)
+    if (extra.codexDefaultToolsApprovalMode) {
+      configArgs.push(
+        '-c',
+        `mcp_servers.${extra.id}.default_tools_approval_mode=${JSON.stringify(
+          extra.codexDefaultToolsApprovalMode
+        )}`
+      )
+    }
+  }
   return { configArgs, env }
 }
 
@@ -86,10 +117,11 @@ export async function materializeCodexConnectors(connectorIds: string[]): Promis
 export async function materializeGeminiConnectors(
   connectorIds: string[],
   sourceConfigDir: string,
-  destHomeDir: string
+  destHomeDir: string,
+  additionalServers: ReadonlyArray<AdditionalMcpServer> = []
 ): Promise<{ home: string | null; cleanup: () => void }> {
   const usable = await collectUsableConnectors(connectorIds)
-  if (usable.length === 0) {
+  if (usable.length === 0 && additionalServers.length === 0) {
     return { home: null, cleanup: () => {} }
   }
 
@@ -133,12 +165,31 @@ export async function materializeGeminiConnectors(
       trust: true
     }
   }
+  // ADR-029: loopback servers — no auth header, but `trust: true` so the CLI
+  // does not surface a non-interactive permission prompt for our own tools.
+  for (const extra of additionalServers) {
+    mcpServers[extra.id] = {
+      httpUrl: extra.url,
+      trust: true
+    }
+  }
 
-  writeFileSync(
-    join(destConfigDir, 'settings.json'),
-    JSON.stringify({ ...baseSettings, mcpServers }),
-    { encoding: 'utf8', mode: 0o600 }
-  )
+  const finalSettings = { ...baseSettings, mcpServers }
+  writeFileSync(join(destConfigDir, 'settings.json'), JSON.stringify(finalSettings), {
+    encoding: 'utf8',
+    mode: 0o600
+  })
+
+  // ADR-029 M4.5 debug: mirror the final settings.json to a stable path so we
+  // can inspect what was handed to Gemini after the per-turn cleanup wipes the
+  // ephemeral home. Best-effort — failures are silent (debugging is opt-in).
+  if (additionalServers.length > 0) {
+    try {
+      console.log('[gemini-materialize] settings:', JSON.stringify(finalSettings))
+    } catch {
+      // ignore
+    }
+  }
 
   return {
     home: destHomeDir,
@@ -170,10 +221,11 @@ async function resolveAccessToken(connectorId: string): Promise<string> {
  */
 export async function materializeConnectors(
   connectorIds: string[],
-  agentHomePath: string
+  agentHomePath: string,
+  additionalServers: ReadonlyArray<AdditionalMcpServer> = []
 ): Promise<MaterializedConnectors> {
   const usable = await collectUsableConnectors(connectorIds)
-  if (usable.length === 0) {
+  if (usable.length === 0 && additionalServers.length === 0) {
     return { mcpConfigPath: null, allowedTools: [], cleanup: () => {} }
   }
 
@@ -188,6 +240,14 @@ export async function materializeConnectors(
     // Allow every tool exposed by this MCP server so the non-interactive CLI
     // does not deny connector tool calls it cannot prompt for.
     allowedTools.push(`mcp__${connector.id}`)
+  }
+  // ADR-029: loopback servers — no auth header.
+  for (const extra of additionalServers) {
+    mcpServers[extra.id] = {
+      type: 'http',
+      url: extra.url
+    }
+    allowedTools.push(`mcp__${extra.id}`)
   }
 
   const dir = join(agentHomePath, '.ordinus-connectors')

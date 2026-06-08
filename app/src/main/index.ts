@@ -7,6 +7,7 @@ import { registerIpcHandlers } from './ipc/register'
 import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
 import { SchedulerService } from './scheduler/service'
+import { shutdownOrdinusMcpServer } from './ordinus-mcp/lifecycle'
 
 app.setName('Ordinus')
 
@@ -134,6 +135,16 @@ app.whenReady().then(() => {
   scheduler = registerIpcHandlers(database, runtime, observability)
   scheduler.start()
 
+  // ADR-029 follow-up — Pre-warm the provider-status cache so the renderer's
+  // first call (App.tsx Phase 2 setupGetStatus → runtime.getProviderStatuses)
+  // either hits a fresh cache or awaits this already-in-flight promise
+  // instead of triggering its own slow CLI spawn batch (~300–500ms across
+  // three providers). Fire-and-forget; the cache layer in runtime/service.ts
+  // handles concurrent callers and failures.
+  void runtime.getProviderStatuses().catch((err: unknown) => {
+    console.error('[main] provider-status pre-warm failed:', err)
+  })
+
   createWindow()
 
   app.on('activate', function () {
@@ -147,7 +158,14 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   scheduler?.stop()
-  database.close()
+  // ADR-029 M3: tear down the Ordinus internal MCP server if it was started.
+  // We defer the quit until shutdown resolves so the OS-level port release
+  // happens before the app process exits — best-effort, but cheap.
+  event.preventDefault()
+  void shutdownOrdinusMcpServer().finally(() => {
+    database.close()
+    app.exit(0)
+  })
 })

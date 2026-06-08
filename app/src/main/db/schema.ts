@@ -11,6 +11,9 @@ export const appMeta = sqliteTable('app_meta', {
   // OnboardingState (see contracts.ts). Null until the user starts the
   // flow; cleared once onboardedAt is set.
   onboardingState: text('onboarding_state'),
+  // The ADR-029 `ordinus_v1` kill switch was retired once M0–M8 shipped —
+  // Ordinus is unconditionally on. The drop is handled by migration
+  // 0035_drop_ordinus_v1.sql so existing DBs lose the column too.
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
@@ -367,6 +370,105 @@ export const observedRunEvents = sqliteTable(
     runSequenceIdx: index('observed_run_events_run_sequence_idx').on(
       table.observedRunId,
       table.sequence
+    )
+  })
+)
+
+// --- ADR-029: Ordinus assistant ---------------------------------------------
+// Single-row table holding the Ordinus persona + provider/model config. Following
+// the workspace_config pattern, the row is keyed at `id = 1` and lazily seeded
+// on first read using the active workspace's default provider/model.
+export const ordinusSingleton = sqliteTable('ordinus_singleton', {
+  id: integer('id').primaryKey(),
+  providerId: text('provider_id').notNull(),
+  model: text('model').notNull().default('default'),
+  displayName: text('display_name').notNull().default('Ordinus'),
+  // Optional avatar identifier (URL, asset key, or built-in name). Resolution
+  // policy lives in the renderer; the DB just stores the string.
+  avatarRef: text('avatar_ref'),
+  // Free-form text appended to the system prompt at session init. Lets the user
+  // shape Ordinus's tone or add personal context without editing the knowledge
+  // pack. Null until the user opens the persona editor.
+  extraInstructions: text('extra_instructions'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
+// Per-conversation metadata. Transcripts live in the provider CLI's resumable
+// session (ADR-003 pattern reused); we only persist what's needed to list,
+// resume, archive, and detect provider drift.
+//   - providerId/model: the provider this conversation was opened against.
+//     Stays fixed for the conversation's lifetime; new conversations pick up
+//     the current singleton provider.
+//   - providerSessionRef: the CLI's session id, used with `--resume`. Null
+//     before the first turn returns; cleared if ADR-013 fresh-start fallback
+//     fires and the runtime decides to abandon the old session.
+//   - archivedAt / frozenReason: soft state. Frozen happens when the original
+//     provider becomes unavailable (ADR-029 §7); the banner UI keys off this.
+export const ordinusConversations = sqliteTable('ordinus_conversations', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  providerId: text('provider_id').notNull(),
+  model: text('model').notNull(),
+  providerSessionRef: text('provider_session_ref'),
+  archivedAt: text('archived_at'),
+  pinnedAt: text('pinned_at'),
+  frozenReason: text('frozen_reason'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
+// Cross-conversation persistent memory (ADR-029 §6). Surfaced to Ordinus through
+// memory_search / memory_write tools (added in M3). Type taxonomy starts loose
+// and is allowed to evolve — kept as a text column rather than an enum so the
+// LLM can introduce new types without a migration.
+export const ordinusMemory = sqliteTable('ordinus_memory', {
+  id: text('id').primaryKey(),
+  type: text('type').notNull(),
+  name: text('name').notNull(),
+  body: text('body').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
+// ADR-029 M4.5 — Per-turn transcript persistence for Ordinus conversations.
+//
+// We initially relied on the provider CLI's own resumable session to hold the
+// transcript (ADR-003 pattern, which is correct for agent conversations) and
+// only kept the rendered messages in renderer React state. That broke when the
+// user navigated away from Home and back — the React state unmounted and the
+// transcript "vanished" even though the CLI session was still alive.
+//
+// Adding our own copy of the rendered turns gives the UI a durable source of
+// truth across renderer remounts (and app restarts). The CLI continues to be
+// the source of truth for the LLM's working context via --resume; this table
+// is purely a UI/display copy.
+//
+// Kind taxonomy:
+//   - 'user'      — what the user typed (always paired with a downstream
+//                   assistant or error turn from the same sendTurn call)
+//   - 'assistant' — Ordinus's final_response content
+//   - 'error'     — failure surfacing (runtime error, MCP failure, etc.)
+// Status indicators ("Ordinus is thinking…") are transient and intentionally
+// NOT persisted — they belong to the in-flight UI moment, not the record.
+export const ordinusConversationTurns = sqliteTable(
+  'ordinus_conversation_turns',
+  {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id').notNull(),
+    kind: text('kind').notNull(),
+    content: text('content').notNull(),
+    // The runtime turnId (`ot-...`) when the turn was the assistant's reply or
+    // an error within a sendTurn cycle. Null for the user-message turn that
+    // initiated the cycle, since the runtime turnId is only minted in the
+    // backend after the user message is recorded.
+    turnId: text('turn_id'),
+    createdAt: text('created_at').notNull()
+  },
+  (table) => ({
+    conversationCreatedIdx: index('ordinus_conversation_turns_conversation_created_idx').on(
+      table.conversationId,
+      table.createdAt
     )
   })
 )

@@ -143,7 +143,8 @@ async function sendGeminiConversationTurn(
   const connectors = await materializeGeminiConnectors(
     input.connectors,
     getGeminiConfigDir(),
-    join(input.agentHomePath, '.ordinus-gemini', input.turnId)
+    join(input.agentHomePath, '.ordinus-gemini', input.turnId),
+    input.additionalMcpServers
   )
 
   try {

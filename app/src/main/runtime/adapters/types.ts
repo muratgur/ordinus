@@ -63,6 +63,16 @@ export type RuntimeConversationTurnInput = {
   eventLogPath: string
   lastMessagePath: string
   observability?: RuntimeObservationSink
+  // ADR-029: extra MCP servers to merge alongside `connectors` when materializing
+  // the CLI's MCP config. Used by the Ordinus assistant runtime to inject its
+  // internal tool server (ordinus-mcp/server.ts). No vault auth — these are
+  // process-local servers reached over loopback. Adapters that ignore this
+  // field stay backward-compatible; the existing connector path is unchanged.
+  additionalMcpServers?: ReadonlyArray<{
+    id: string
+    url: string
+    codexDefaultToolsApprovalMode?: 'auto' | 'prompt' | 'approve'
+  }>
 }
 
 export type RuntimeConversationTurnResult = {

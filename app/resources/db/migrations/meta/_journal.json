@@ -225,6 +225,41 @@
       "when": 1780781670706,
       "tag": "0031_brief_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1780830407478,
+      "tag": "0032_rich_whizzer",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1780830694563,
+      "tag": "0033_abandoned_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1780837596457,
+      "tag": "0034_futuristic_randall_flagg",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1780899503020,
+      "tag": "0035_wooden_emma_frost",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1780902600000,
+      "tag": "0036_ordinus_conversation_pins",
+      "breakpoints": true
     }
   ]
 }
