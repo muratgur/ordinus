@@ -300,20 +300,27 @@ screen.
   *Create an agent · Define work on the Workboard · Build a workflow · Add a schedule* —
   ordered so **agent creation comes first** (it is the prerequisite for everything else).
   These are **permanent**, not first-run-only: they sit under the input on every zero-message
-  state so the user always has a first sentence to reach for. Under the hood, workboard /
-  schedule / workflow buttons reuse the existing slash-command `expandPrompt`s; the `/`
-  autocomplete is **unchanged** for power users. `/help` stays in autocomplete only, off the
-  visible row (the row is action-first).
-- **Agent starter = a discovery conversation, not a panel-open.** `/agent` is read-only and
-  cannot create agents, so the agent button uses a **new `/new-agent` intent**. It does
-  **not** deterministically open the New Agent screen; it starts a short **coaching
-  conversation** where Ordinus helps the user discover *what kind* of agent they need. The
-  coaching logic lives in a **new `recipes.md` first-agent recipe** (per §6 — short visible
-  prompt, behavior in the knowledge pack), not baked into a long synthetic chip prompt.
-- **The reactive model is preserved.** Every starter is, mechanically, a **user-sent
-  message** (a chip click sends a prompt). Ordinus never auto-greets or posts unprompted —
-  it only ever responds. The static welcome copy lives in the panel and empty state, never in
-  an Ordinus-authored auto-message.
+  state so the user always has a first sentence to reach for. `/help` is off the visible row
+  (the row is action-first).
+- **A starter PREFILLS the input — it does not send.** Clicking a starter drops a natural,
+  first-person half-sentence into the input box and focuses it (caret at the end); the user
+  completes the thought and presses Enter. This was a deliberate correction: the original
+  design had the buttons auto-send the matching slash command's `expandPrompt`, but those
+  prompts assume an **existing conversation to act on** ("turn *this* into a Work Request"),
+  so a cold click from the empty state produced a confused, context-less Ordinus reply. The
+  transcript also showed a cryptic `/cmd` instead of a human sentence. Prefilling fixes the
+  cold-context problem, keeps the user in control, and reads naturally. The `/` autocomplete
+  and the slash commands themselves are **unchanged** and remain the power-user path.
+- **No dedicated agent command.** Because starters prefill plain text rather than dispatch a
+  command, the agent starter needs **no `/new-agent` (or `create_agent`) command** — it
+  simply prefills *"I want to create an agent. Help me figure out what kind I need — "*.
+  `/agent` stays read-only and untouched. Ordinus coaches the resulting natural-language
+  request via a **`recipes.md` first-agent recipe** (per §6 — coaching behavior lives in the
+  knowledge pack, always in the system prompt, not in any chip/command).
+- **The reactive model is preserved.** A starter only *prefills*; nothing is sent until the
+  user presses Enter, so every Ordinus turn is still a genuine user-sent message. Ordinus
+  never auto-greets or posts unprompted. The static welcome copy lives in the panel and empty
+  state, never in an Ordinus-authored auto-message.
 - **Explicitly out of scope (separate, later work):** a `create_agent` tool (Ordinus
   building the agent itself), any soft hand-off / navigation action at the end of agent
   coaching, and anything about the user's *own agents'* internal behavior. Onboarding's job

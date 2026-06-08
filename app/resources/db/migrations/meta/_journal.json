@@ -260,6 +260,13 @@
       "when": 1780902600000,
       "tag": "0036_ordinus_conversation_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1780928253822,
+      "tag": "0037_curly_silver_samurai",
+      "breakpoints": true
     }
   ]
 }

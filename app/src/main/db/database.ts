@@ -116,6 +116,7 @@ import {
   type DbStatus,
   type InteractionAnswer,
   type InteractionQuestion,
+  type OrdinusPendingInputRequest,
   type OrchestrationAssignment,
   type ObservedRunEvent,
   type ObservedRunEventConfidence,
@@ -167,6 +168,7 @@ import {
   observedRuns,
   ordinusConversations,
   ordinusConversationTurns,
+  ordinusInputRequests,
   ordinusMemory,
   ordinusSingleton,
   pendingPlans,
@@ -691,6 +693,112 @@ export class OrdinusDatabase {
     }
   }
 
+  // --- Ordinus needs_input requests (ADR-029 question panel) --------------
+
+  createOrdinusInputRequest(input: {
+    conversationId: string
+    turnId: string
+    title: string
+    detail?: string
+    questions: InteractionQuestion[]
+  }): OrdinusPendingInputRequest {
+    this.requireOrdinusConversation(input.conversationId)
+    const id = `oir-${randomUUID()}`
+    const now = new Date().toISOString()
+    const detail = input.detail ?? ''
+    this.db
+      .insert(ordinusInputRequests)
+      .values({
+        id,
+        conversationId: input.conversationId,
+        turnId: input.turnId,
+        status: 'pending',
+        title: input.title,
+        detail,
+        questions: JSON.stringify(input.questions),
+        answers: null,
+        createdAt: now,
+        updatedAt: now
+      })
+      .run()
+    return {
+      requestId: id,
+      conversationId: input.conversationId,
+      turnId: input.turnId,
+      title: input.title,
+      detail,
+      questions: input.questions,
+      createdAt: now
+    }
+  }
+
+  listPendingOrdinusInputRequests(): OrdinusPendingInputRequest[] {
+    return this.db
+      .select()
+      .from(ordinusInputRequests)
+      .where(eq(ordinusInputRequests.status, 'pending'))
+      .orderBy(asc(ordinusInputRequests.createdAt))
+      .all()
+      .map(mapOrdinusInputRequestRow)
+  }
+
+  /**
+   * Validate the answers, mark the request answered, and return the message to
+   * resume the conversation with. The caller (session service) records the
+   * answer summary as a user turn and dispatches `continuationMessage` as the
+   * next turn so the CLI resumes against the same session.
+   */
+  answerOrdinusInputRequest(input: { requestId: string; answers: InteractionAnswer[] }): {
+    conversationId: string
+    answerSummary: string
+    continuationMessage: string
+  } {
+    const now = new Date().toISOString()
+    return this.db.transaction((tx) => {
+      const row = tx
+        .select()
+        .from(ordinusInputRequests)
+        .where(eq(ordinusInputRequests.id, input.requestId))
+        .get()
+      if (!row) {
+        throw new Error('This input request no longer exists.')
+      }
+      if (row.status !== 'pending') {
+        throw new Error('This input request was already resolved.')
+      }
+      const questions = JSON.parse(row.questions) as InteractionQuestion[]
+      const validated = validateInputRequestAnswers(questions, input.answers)
+      tx.update(ordinusInputRequests)
+        .set({ status: 'answered', answers: JSON.stringify(validated), updatedAt: now })
+        .where(eq(ordinusInputRequests.id, input.requestId))
+        .run()
+      const answerSummary = buildInputRequestAnswerSummary(questions, validated)
+      const continuationMessage = [
+        answerSummary,
+        '',
+        'Continue the task using these answers. If more information is required, ask another explicit input request.'
+      ].join('\n')
+      return { conversationId: row.conversationId, answerSummary, continuationMessage }
+    })
+  }
+
+  cancelOrdinusInputRequest(input: { requestId: string }): { conversationId: string } | null {
+    const row = this.db
+      .select()
+      .from(ordinusInputRequests)
+      .where(eq(ordinusInputRequests.id, input.requestId))
+      .get()
+    if (!row || row.status !== 'pending') {
+      return null
+    }
+    this.db
+      .update(ordinusInputRequests)
+      .set({ status: 'cancelled', updatedAt: new Date().toISOString() })
+      .where(eq(ordinusInputRequests.id, input.requestId))
+      .run()
+    return { conversationId: row.conversationId }
+  }
+
   unarchiveOrdinusConversation(id: string): void {
     const now = new Date().toISOString()
     this.db
@@ -702,6 +810,7 @@ export class OrdinusDatabase {
 
   deleteOrdinusConversation(id: string): void {
     this.db.transaction((tx) => {
+      tx.delete(ordinusInputRequests).where(eq(ordinusInputRequests.conversationId, id)).run()
       tx.delete(ordinusConversationTurns)
         .where(eq(ordinusConversationTurns.conversationId, id))
         .run()
@@ -5376,6 +5485,26 @@ export function createInitialOnboardingState(): OnboardingState {
     installErrors: {},
     firstAgentId: null,
     stageHistory: [{ stage: 'welcome', at: new Date().toISOString() }]
+  }
+}
+
+function mapOrdinusInputRequestRow(row: {
+  id: string
+  conversationId: string
+  turnId: string
+  title: string
+  detail: string
+  questions: string
+  createdAt: string
+}): OrdinusPendingInputRequest {
+  return {
+    requestId: row.id,
+    conversationId: row.conversationId,
+    turnId: row.turnId,
+    title: row.title,
+    detail: row.detail,
+    questions: JSON.parse(row.questions) as InteractionQuestion[],
+    createdAt: row.createdAt
   }
 }
 

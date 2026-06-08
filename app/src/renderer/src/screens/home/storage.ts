@@ -28,3 +28,28 @@ export function writeHomeSidebarDocked(docked: boolean): void {
     /* localStorage unavailable */
   }
 }
+
+// ADR-029 §10 — First-run welcome panel "seen" flag. Pure UI nicety (no DB
+// migration): the welcome overlay shows once, the first time a freshly
+// onboarded user lands on Home, then never auto-opens again. The user can
+// still re-open it manually from the Home header affordance — that does NOT
+// clear this flag.
+const homeWelcomeSeenStorageKey = 'ordinus.home.welcome-seen'
+
+export function readHomeWelcomeSeen(): boolean {
+  try {
+    return window.localStorage.getItem(homeWelcomeSeenStorageKey) === 'true'
+  } catch {
+    // On storage failure, treat as "seen" so we never trap the user behind an
+    // overlay that can't record its own dismissal.
+    return true
+  }
+}
+
+export function writeHomeWelcomeSeen(seen: boolean): void {
+  try {
+    window.localStorage.setItem(homeWelcomeSeenStorageKey, String(seen))
+  } catch {
+    /* localStorage unavailable */
+  }
+}

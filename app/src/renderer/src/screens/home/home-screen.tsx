@@ -14,16 +14,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Brain, PanelLeft } from 'lucide-react'
+import { Brain, HelpCircle, PanelLeft } from 'lucide-react'
 import type {
+  InteractionAnswer,
   OrdinusActionEvent,
   OrdinusConfirmationDecision,
   OrdinusConversationSummary,
   OrdinusConversationTurn,
   OrdinusPendingConfirmation,
+  OrdinusPendingInputRequest,
   ProviderId,
   ProviderStatus
 } from '@shared/contracts'
+import { OrdinusPendingInputRequestSchema } from '@shared/contracts'
 import { createOrdinusConversationTitleFromMessage } from '@shared/ordinus-title'
 import {
   AlertDialog,
@@ -48,6 +51,7 @@ import { Input } from '@renderer/components/ui/input'
 import { cn } from '@renderer/lib/utils'
 import { notify } from '@renderer/lib/notifications'
 import { HomeConfirmationPanel } from './home-confirmation-panel'
+import { HomeQuestionPanel } from './home-question-panel'
 import { HomeConversationList } from './home-conversation-list'
 import { HomeTranscript } from './home-transcript'
 import { HomeTopStrip } from './home-top-strip'
@@ -55,8 +59,14 @@ import { HomeInput } from './home-input'
 import { HomeEmptyState } from './home-empty-state'
 import { HomeFrozenBanner } from './home-frozen-banner'
 import { HomeMemoryPanel } from './home-memory-panel'
+import { HomeWelcomePanel } from './home-welcome-panel'
 import { parseSlashCommand } from './slash-commands'
-import { readHomeSidebarDocked, writeHomeSidebarDocked } from './storage'
+import {
+  readHomeSidebarDocked,
+  readHomeWelcomeSeen,
+  writeHomeSidebarDocked,
+  writeHomeWelcomeSeen
+} from './storage'
 import type { HomeMessage } from './types'
 
 type MessageMap = Record<string, HomeMessage[]>
@@ -133,6 +143,15 @@ export function HomeScreen(): React.JSX.Element {
   // transcript context.
   const [memoryOpen, setMemoryOpen] = useState(false)
 
+  // ADR-029 §10 — first-run welcome panel. Auto-opens once (the first time a
+  // freshly-onboarded user reaches Home), tracked in localStorage. Manual
+  // re-open from the header `?` does not clear the seen flag.
+  const [welcomeOpen, setWelcomeOpen] = useState<boolean>(() => !readHomeWelcomeSeen())
+  const handleDismissWelcome = useCallback(() => {
+    setWelcomeOpen(false)
+    writeHomeWelcomeSeen(true)
+  }, [])
+
   // ADR-029 M6 — pending destructive-tool confirmations. The store on the
   // main side may already hold entries by the time HomeScreen mounts (user
   // navigated away with a panel open), so we fetch once and then subscribe
@@ -158,6 +177,39 @@ export function HomeScreen(): React.JSX.Element {
         )
       } else if (event.kind === 'confirmation_resolved') {
         setPendingConfirmations((prev) => prev.filter((p) => p.pendingId !== event.pendingId))
+      }
+    })
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [])
+
+  // ADR-029 — pending needs_input requests. Same rehydrate-on-mount +
+  // subscribe pattern as confirmations, but persisted in the DB so a request
+  // outlives an app restart. Scoped per conversation (each carries its
+  // conversationId); the panel only paints for the active conversation.
+  const [inputRequests, setInputRequests] = useState<OrdinusPendingInputRequest[]>([])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const initial = await window.ordinus.ordinus.listPendingInputRequests()
+        if (!cancelled) setInputRequests(initial)
+      } catch {
+        // Non-fatal — empty initial list is the right default.
+      }
+    })()
+    const off = window.ordinus.ordinus.onActionEvent((event: OrdinusActionEvent) => {
+      if (event.kind === 'input_request_requested') {
+        const parsed = OrdinusPendingInputRequestSchema.safeParse(event.request)
+        if (!parsed.success) return
+        const request = parsed.data
+        setInputRequests((prev) =>
+          prev.some((r) => r.requestId === request.requestId) ? prev : [...prev, request]
+        )
+      } else if (event.kind === 'input_request_resolved') {
+        setInputRequests((prev) => prev.filter((r) => r.requestId !== event.requestId))
       }
     })
     return () => {
@@ -500,6 +552,59 @@ export function HomeScreen(): React.JSX.Element {
     ]
   )
 
+  const handleAnswerInputRequest = useCallback(
+    async (requestId: string, answers: InteractionAnswer[]) => {
+      const request = inputRequests.find((r) => r.requestId === requestId)
+      if (!request) return
+      const conversationId = request.conversationId
+      // Optimistically close the panel; the resolved event also fires.
+      setInputRequests((prev) => prev.filter((r) => r.requestId !== requestId))
+      setPendingTurnLabelsByConversation((prev) => ({
+        ...prev,
+        [conversationId]: THINKING_LABEL
+      }))
+      replaceStatus(conversationId, {
+        kind: 'status',
+        id: newId('s'),
+        label: THINKING_LABEL,
+        at: nowIso()
+      })
+      try {
+        await window.ordinus.ordinus.answerInputRequest({ requestId, answers })
+      } catch (err) {
+        replaceStatus(conversationId, null)
+        appendMessage(conversationId, {
+          kind: 'error',
+          id: newId('e'),
+          message: err instanceof Error ? err.message : String(err),
+          at: nowIso()
+        })
+      } finally {
+        setPendingTurnLabelsByConversation((prev) => {
+          const next = { ...prev }
+          delete next[conversationId]
+          return next
+        })
+        try {
+          await reloadConversation(conversationId)
+        } catch {
+          // Non-fatal; the transcript will catch up on next load.
+        }
+      }
+    },
+    [appendMessage, inputRequests, reloadConversation, replaceStatus]
+  )
+
+  const handleCancelInputRequest = useCallback(async (requestId: string) => {
+    setInputRequests((prev) => prev.filter((r) => r.requestId !== requestId))
+    try {
+      await window.ordinus.ordinus.cancelInputRequest({ requestId })
+    } catch {
+      // Non-fatal — the panel is already gone; a stale request stays
+      // 'pending' in the DB and simply won't reappear this session.
+    }
+  }, [])
+
   const openRenameDialog = useCallback((conversation: OrdinusConversationSummary) => {
     setRenameTarget(conversation)
     setRenameTitle(conversation.title)
@@ -710,15 +815,29 @@ export function HomeScreen(): React.JSX.Element {
         {/* ADR-029 §6 / M8 — Memory panel toggle. Lives in the section's
             top-right so it's always reachable without competing with the
             sidebar toggle on the left. */}
-        <button
-          type="button"
-          title="Open Ordinus memory"
-          aria-label="Open Ordinus memory"
-          className="absolute right-3 top-3 z-20 rounded-md border bg-card p-1.5 text-muted-foreground shadow-sm transition-opacity duration-200 hover:text-foreground"
-          onClick={() => setMemoryOpen(true)}
-        >
-          <Brain className="size-4" />
-        </button>
+        <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
+          {/* ADR-029 §10 — unobtrusive re-open for the first-run welcome tour.
+              Reachable in both empty and active states; does not reset the
+              "seen" flag. */}
+          <button
+            type="button"
+            title="Show welcome tour"
+            aria-label="Show welcome tour"
+            className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-sm transition-opacity duration-200 hover:text-foreground"
+            onClick={() => setWelcomeOpen(true)}
+          >
+            <HelpCircle className="size-4" />
+          </button>
+          <button
+            type="button"
+            title="Open Ordinus memory"
+            aria-label="Open Ordinus memory"
+            className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-sm transition-opacity duration-200 hover:text-foreground"
+            onClick={() => setMemoryOpen(true)}
+          >
+            <Brain className="size-4" />
+          </button>
+        </div>
 
         {!showWelcoming && activeConversation ? (
           <>
@@ -761,6 +880,17 @@ export function HomeScreen(): React.JSX.Element {
                   busy={confirmationBusy}
                   onResolve={handleResolveConfirmation}
                 />
+                {/* ADR-029 — needs_input questions surface here as a panel
+                    (NOT inline in the transcript). Scoped to the active
+                    conversation; rehydrated from the DB after a restart. */}
+                <HomeQuestionPanel
+                  request={
+                    inputRequests.find((request) => request.conversationId === activeId) ?? null
+                  }
+                  busy={activeTurnBusy}
+                  onAnswer={handleAnswerInputRequest}
+                  onCancel={handleCancelInputRequest}
+                />
                 <HomeInput
                   onSend={handleSend}
                   busy={activeTurnBusy}
@@ -772,6 +902,12 @@ export function HomeScreen(): React.JSX.Element {
         ) : (
           <HomeEmptyState onSend={handleSend} busy={activeTurnBusy} />
         )}
+
+        {/* ADR-029 §10 — first-run welcome tour. Overlays the section card so
+            it sits OVER the empty state (which stays mounted behind it and is
+            revealed on dismiss). Mounted only while open so each open starts a
+            fresh tour from step 1. */}
+        {welcomeOpen ? <HomeWelcomePanel onDismiss={handleDismissWelcome} /> : null}
       </section>
 
       {/* ADR-029 §6 / M8 — Memory panel. Rendered at the screen root (not

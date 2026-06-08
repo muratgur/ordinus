@@ -249,6 +249,19 @@ export const OrdinusActionEventSchema = z.discriminatedUnion('kind', [
     kind: z.literal('confirmation_resolved'),
     pendingId: z.string(),
     decision: OrdinusConfirmationDecisionSchema
+  }),
+  // needs_input lifecycle. The renderer surfaces these as the question panel
+  // (NOT inline in the transcript). `request` is typed as OrdinusPendingInputRequest
+  // downstream; widened to z.unknown() here to avoid a forward reference to
+  // InteractionQuestionSchema (defined later in this file). The renderer
+  // narrows via OrdinusPendingInputRequestSchema.parse.
+  z.object({
+    kind: z.literal('input_request_requested'),
+    request: z.unknown()
+  }),
+  z.object({
+    kind: z.literal('input_request_resolved'),
+    requestId: z.string()
   })
 ])
 
@@ -867,6 +880,29 @@ export const OrdinusTurnOutcomeSchema = z.object({
   providerSessionRef: z.string(),
   outcome: AgentTurnOutcomeSchema,
   sessionReset: z.boolean()
+})
+
+// ADR-029 — Ordinus needs_input request surfaced as the input-area panel.
+// Defined here (after InteractionQuestionSchema) so the questions array is
+// strongly typed; the OrdinusActionEvent above carries it as z.unknown() to
+// dodge the forward reference.
+export const OrdinusPendingInputRequestSchema = z.object({
+  requestId: z.string(),
+  conversationId: z.string(),
+  turnId: z.string(),
+  title: z.string(),
+  detail: z.string(),
+  questions: z.array(InteractionQuestionSchema).min(1).max(3),
+  createdAt: z.string()
+})
+
+export const OrdinusAnswerInputRequestInputSchema = z.object({
+  requestId: z.string().min(1),
+  answers: z.array(InteractionAnswerSchema).max(3)
+})
+
+export const OrdinusCancelInputRequestInputSchema = z.object({
+  requestId: z.string().min(1)
 })
 
 export const ConversationInputRequestStatusSchema = z.enum(['pending', 'resolved', 'cancelled'])
@@ -1762,6 +1798,9 @@ export type OrdinusActionEvent = z.infer<typeof OrdinusActionEventSchema>
 export type OrdinusPendingConfirmation = z.infer<typeof OrdinusPendingConfirmationSchema>
 export type OrdinusConfirmationDecision = z.infer<typeof OrdinusConfirmationDecisionSchema>
 export type OrdinusResolveConfirmationInput = z.infer<typeof OrdinusResolveConfirmationInputSchema>
+export type OrdinusPendingInputRequest = z.infer<typeof OrdinusPendingInputRequestSchema>
+export type OrdinusAnswerInputRequestInput = z.infer<typeof OrdinusAnswerInputRequestInputSchema>
+export type OrdinusCancelInputRequestInput = z.infer<typeof OrdinusCancelInputRequestInputSchema>
 export type OrdinusSingleton = z.infer<typeof OrdinusSingletonSchema>
 export type OrdinusUpdateSingletonInput = z.infer<typeof OrdinusUpdateSingletonInputSchema>
 export type OrdinusArchiveConversationInput = z.infer<typeof OrdinusArchiveConversationInputSchema>

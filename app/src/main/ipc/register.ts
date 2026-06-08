@@ -77,6 +77,8 @@ import {
   PendingPlanSchema,
   OrdinusArchiveConversationInputSchema,
   OrdinusCreateConversationInputSchema,
+  OrdinusAnswerInputRequestInputSchema,
+  OrdinusCancelInputRequestInputSchema,
   OrdinusDeleteConversationInputSchema,
   OrdinusDeleteMemoryInputSchema,
   OrdinusListTurnsInputSchema,
@@ -280,6 +282,24 @@ export function registerIpcHandlers(
       decision: parsed.decision
     })
     return { resolved: true as const }
+  })
+
+  // ADR-029 — needs_input question panel.
+  ipcMain.handle(ipcChannels.ordinusListPendingInputRequests, () =>
+    database.listPendingOrdinusInputRequests()
+  )
+  ipcMain.handle(ipcChannels.ordinusAnswerInputRequest, async (_event, payload: unknown) => {
+    const parsed = OrdinusAnswerInputRequestInputSchema.parse(payload)
+    return ordinusSession.answerInputRequest(parsed)
+  })
+  ipcMain.handle(ipcChannels.ordinusCancelInputRequest, (_event, payload: unknown) => {
+    const parsed = OrdinusCancelInputRequestInputSchema.parse(payload)
+    const cancelled = database.cancelOrdinusInputRequest(parsed)
+    if (!cancelled) {
+      return { cancelled: false as const }
+    }
+    ordinusEvents.publish({ kind: 'input_request_resolved', requestId: parsed.requestId })
+    return { cancelled: true as const }
   })
 
   // ADR-029 M7 — Ordinus persona + provider/model editing.

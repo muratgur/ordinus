@@ -9,9 +9,9 @@
 // branch and the input naturally docks at the bottom of the section. The
 // empty state is purely the "nothing yet" landing.
 
-import { HomeInput, type HomeInputProps } from './home-input'
+import { useRef } from 'react'
+import { HomeInput, type HomeInputHandle, type HomeInputProps } from './home-input'
 import { OrdinusMark } from './ordinus-mark'
-import { slashCommands } from './slash-commands'
 
 export type HomeEmptyStateProps = {
   onSend: HomeInputProps['onSend']
@@ -19,7 +19,35 @@ export type HomeEmptyStateProps = {
   disabled?: boolean
 }
 
+// ADR-029 §10 — human-phrased starter buttons replace the old bare slash-chip
+// row. The new user lands here not knowing what to type; these hand them a
+// first sentence. Ordered agent-first because an agent is the prerequisite for
+// Workboard / Workflows.
+//
+// IMPORTANT: a starter does NOT send anything. It *prefills the input* with a
+// natural, first-person opener and focuses the box; the user completes the
+// sentence and presses Enter. This avoids the cold-context problem of the old
+// slash-command auto-send (e.g. `/workboard` with no prior conversation made
+// Ordinus respond confused), keeps the user in control, and shows a real
+// human sentence in the transcript instead of a cryptic `/cmd`. The `/`
+// autocomplete + slash commands remain as the power-user path, untouched.
+// Prefills are deliberately HALF-templates — they end where the user's own
+// specifics begin.
+const STARTERS: ReadonlyArray<{ label: string; prefill: string }> = [
+  {
+    label: 'Create an agent',
+    prefill: 'I want to create an agent. Help me figure out what kind I need — '
+  },
+  {
+    label: 'Define work on the Workboard',
+    prefill: 'I want to turn something into a work request: '
+  },
+  { label: 'Build a workflow', prefill: 'I want to build a workflow that ' },
+  { label: 'Add a schedule', prefill: 'I want to schedule something to run regularly: ' }
+]
+
 export function HomeEmptyState(props: HomeEmptyStateProps): React.JSX.Element {
+  const inputRef = useRef<HomeInputHandle | null>(null)
   return (
     <div className="ordinus-scrollbar flex h-full flex-col items-center justify-center overflow-y-auto px-6 py-12">
       {/* Optically balanced — the hero stack sits slightly ABOVE true vertical
@@ -43,6 +71,7 @@ export function HomeEmptyState(props: HomeEmptyStateProps): React.JSX.Element {
             user sends, the screen switches to the active-conversation
             layout where the input docks at the bottom of the section. */}
         <HomeInput
+          ref={inputRef}
           onSend={props.onSend}
           busy={props.busy}
           disabled={props.disabled}
@@ -50,21 +79,21 @@ export function HomeEmptyState(props: HomeEmptyStateProps): React.JSX.Element {
           variant="hero"
         />
 
-        {/* Slash-command chips — kept deliberately secondary (ADR-029 §8): no
-            border, no fill, faint by default; they only surface on hover so the
-            input stays the focal point and the stage reads calm. Clicking one
-            sends the bare /cmd so Ordinus opens with its default flow. */}
-        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
-          {slashCommands.map((cmd) => (
+        {/* Starter buttons (ADR-029 §10). Secondary to the input but more
+            present than the old faint slash chips — they're the answer to "what
+            do I even type?". Clicking one PREFILLS the input (it does not send),
+            then the user completes the sentence and hits Enter. Agent-first
+            ordering. */}
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {STARTERS.map((starter) => (
             <button
-              key={cmd.name}
+              key={starter.label}
               type="button"
               disabled={props.busy || props.disabled}
-              onClick={() => props.onSend(`/${cmd.name}`)}
-              className="rounded-md px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-              title={cmd.hint}
+              onClick={() => inputRef.current?.prefill(starter.prefill)}
+              className="rounded-full border border-border/70 bg-background/40 px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {cmd.label}
+              {starter.label}
             </button>
           ))}
         </div>

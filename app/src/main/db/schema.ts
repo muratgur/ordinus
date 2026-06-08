@@ -472,3 +472,32 @@ export const ordinusConversationTurns = sqliteTable(
     )
   })
 )
+
+// Ordinus needs_input requests. Unlike agent conversations, Ordinus does NOT
+// render questions inline in the transcript — they surface as a panel that
+// emerges from the input area (project_ordinus_home_design). Persisting them
+// here (rather than the in-memory confirmation store) lets the panel rehydrate
+// after an app restart while a question is still pending.
+//   - questions: JSON-encoded InteractionQuestion[] (mirrors conversation_input_requests)
+//   - status: 'pending' | 'answered' | 'cancelled'
+export const ordinusInputRequests = sqliteTable(
+  'ordinus_input_requests',
+  {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id').notNull(),
+    turnId: text('turn_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    title: text('title').notNull(),
+    detail: text('detail').notNull().default(''),
+    questions: text('questions').notNull(),
+    answers: text('answers'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull()
+  },
+  (table) => ({
+    conversationStatusIdx: index('ordinus_input_requests_conversation_status_idx').on(
+      table.conversationId,
+      table.status
+    )
+  })
+)

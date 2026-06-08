@@ -21,6 +21,7 @@ import {
   type AgentSkillUpdateInput
 } from '@shared/contracts'
 import { getSystemPaths } from '../paths'
+import { slugifyPathSegment } from '../workspace/path-policy'
 
 const skillFileName = 'SKILL.md'
 
@@ -324,9 +325,5 @@ function assertSafeSegment(value: string, label: string): string {
 }
 
 function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+  return slugifyPathSegment(value.trim())
 }

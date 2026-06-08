@@ -16,6 +16,11 @@ export const ipcChannels = {
   // mount (to rehydrate the panel after navigation) and submit a decision.
   ordinusListPendingConfirmations: 'ordinus:list-pending-confirmations',
   ordinusResolveConfirmation: 'ordinus:resolve-confirmation',
+  // ADR-029: needs_input question panel. Renderer lists pending requests on
+  // mount (rehydrate after restart), submits answers, or cancels.
+  ordinusListPendingInputRequests: 'ordinus:list-pending-input-requests',
+  ordinusAnswerInputRequest: 'ordinus:answer-input-request',
+  ordinusCancelInputRequest: 'ordinus:cancel-input-request',
   // ADR-029 M7: persona + provider/model editing, plus the lifecycle hooks
   // (archive / freeze) the provider-change dialog and the frozen banner
   // rely on.

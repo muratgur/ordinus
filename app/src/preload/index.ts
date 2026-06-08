@@ -67,6 +67,8 @@ import type {
   OrdinusActionEvent,
   OrdinusArchiveConversationInput,
   OrdinusConversationSummary,
+  OrdinusAnswerInputRequestInput,
+  OrdinusCancelInputRequestInput,
   OrdinusConversationTurn,
   OrdinusCreateConversationInput,
   OrdinusDeleteConversationInput,
@@ -74,6 +76,7 @@ import type {
   OrdinusListTurnsInput,
   OrdinusMemoryEntry,
   OrdinusPendingConfirmation,
+  OrdinusPendingInputRequest,
   OrdinusResolveConfirmationInput,
   OrdinusSendTurnInput,
   OrdinusSetConversationPinnedInput,
@@ -171,6 +174,17 @@ const ordinus = {
       input: OrdinusResolveConfirmationInput
     ): Promise<{ resolved: boolean }> =>
       ipcRenderer.invoke(ipcChannels.ordinusResolveConfirmation, input),
+    // ADR-029: needs_input question panel.
+    listPendingInputRequests: async (): Promise<OrdinusPendingInputRequest[]> =>
+      ipcRenderer.invoke(ipcChannels.ordinusListPendingInputRequests),
+    answerInputRequest: async (
+      input: OrdinusAnswerInputRequestInput
+    ): Promise<OrdinusTurnOutcome> =>
+      ipcRenderer.invoke(ipcChannels.ordinusAnswerInputRequest, input),
+    cancelInputRequest: async (
+      input: OrdinusCancelInputRequestInput
+    ): Promise<{ cancelled: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusCancelInputRequest, input),
     // ADR-029 M7: persona + provider/model editing.
     getSingleton: async (): Promise<OrdinusSingleton | null> =>
       ipcRenderer.invoke(ipcChannels.ordinusGetSingleton),

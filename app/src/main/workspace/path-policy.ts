@@ -35,8 +35,13 @@ export function createScheduleWorkingRoot(title: string, scheduledJobId: string)
   return createModuleWorkingRoot('schedules', title || 'scheduled-job', scheduledJobId)
 }
 
-export function createOrdinusWorkingRoot(title: string, conversationId: string): string {
-  return createModuleWorkingRoot('ordinus', title || 'conversation', conversationId)
+// Unlike conversations/workboard/schedules, Ordinus turns share ONE working
+// folder for the whole app. Ordinus drives work through MCP tools rather than
+// writing files, so per-conversation subfolders only produced empty scratch
+// dirs. A single `<workspace>/ordinus/` cwd keeps the sandbox isolation (any
+// stray file write still lands in a folder we own) without the clutter.
+export function getOrdinusWorkingRoot(): string {
+  return workspaceModuleFolders.ordinus
 }
 
 export function createModuleWorkingRoot(
@@ -103,8 +108,29 @@ export function resolveReportedWorkspaceFileRefs(
   }
 }
 
+// Turkish-specific folds applied BEFORE NFKD. Most accented Latin letters
+// decompose to ASCII + a combining mark that we strip, but Turkish dotless
+// '\u0131' has no decomposition \u2014 so without this map it survives NFKD and then
+// gets dropped entirely by the [^a-z0-9] filter (while dotted '\u0130' folds to
+// 'i'), producing the asymmetric character loss we saw in folder names.
+const turkishCharFolds: Record<string, string> = {
+  \u0131: 'i',
+  \u0130: 'i',
+  \u015f: 's',
+  \u015e: 's',
+  \u011f: 'g',
+  \u011e: 'g',
+  \u00e7: 'c',
+  \u00c7: 'c',
+  \u00f6: 'o',
+  \u00d6: 'o',
+  \u00fc: 'u',
+  \u00dc: 'u'
+}
+
 export function slugifyPathSegment(value: string): string {
   return value
+    .replace(/[\u0131\u0130\u015f\u015e\u011f\u011e\u00e7\u00c7\u00f6\u00d6\u00fc\u00dc]/g, (char) => turkishCharFolds[char] ?? char)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()

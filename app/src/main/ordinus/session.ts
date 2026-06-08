@@ -21,7 +21,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import type { OrdinusActionEvent } from '@shared/contracts'
+import type { InteractionAnswer, OrdinusActionEvent } from '@shared/contracts'
 import { getDefaultOrdinusConversationTitle } from '@shared/ordinus-title'
 import type { OrdinusDatabase } from '../db/database'
 import type { ObservabilityService } from '../observability/service'
@@ -33,10 +33,7 @@ import type {
 import { ensureOrdinusMcpServer } from '../ordinus-mcp/lifecycle'
 import { ORDINUS_MCP_SERVER_ID } from '../ordinus-mcp/materialize'
 import { buildKnowledgePrompt } from '../ordinus-knowledge'
-import {
-  createOrdinusWorkingRoot,
-  ensureWorkspaceRelativeDirectory
-} from '../workspace/path-policy'
+import { ensureWorkspaceRelativeDirectory, getOrdinusWorkingRoot } from '../workspace/path-policy'
 import { buildOrdinusTurnLogDir, buildOrdinusTurnLogRef, getOrdinusHomePath } from './paths'
 
 export type OrdinusSessionDeps = {
@@ -87,6 +84,15 @@ export type OrdinusSessionService = {
     conversationId: string
     message: string
     displayMessage?: string
+  }): Promise<OrdinusTurnOutcome>
+  /**
+   * Resolve a pending needs_input request: validate the answers, record them
+   * as a user transcript turn, and resume the conversation with a continuation
+   * message so the CLI picks up where it asked.
+   */
+  answerInputRequest(input: {
+    requestId: string
+    answers: InteractionAnswer[]
   }): Promise<OrdinusTurnOutcome>
   isTurnRunning(conversationId: string): boolean
 }
@@ -198,14 +204,12 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         const instructions = isFirstTurn ? assembleSystemPrompt() : ''
 
         // workingRoot must be a workspace-RELATIVE path (validated by
-        // WorkspaceRelativePathSchema in the runtime layer). We give each
-        // Ordinus conversation its own subfolder under `<workspace>/ordinus/`
-        // — mirrors how regular conversations and Workboard work requests get
-        // scoped folders — and make sure it exists on disk before the CLI
-        // runs (the CLI's --add-dir flag against agentHomePath does the
-        // equivalent for the agent home; the working folder it expects to
-        // exist).
-        const workingRoot = createOrdinusWorkingRoot(conversation.title, conversation.id)
+        // WorkspaceRelativePathSchema in the runtime layer). All Ordinus
+        // conversations share a single `<workspace>/ordinus/` working folder
+        // — Ordinus drives work through MCP tools rather than writing files,
+        // so per-conversation subfolders only left empty scratch dirs behind.
+        // We still ensure it exists on disk before the CLI runs.
+        const workingRoot = getOrdinusWorkingRoot()
         ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
         const runtimeInput: RuntimeConversationTurnInput = {
@@ -219,8 +223,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           // tool catalog from MCP, then refused to invoke any of it). The
           // sandbox enum doesn't have a "MCP yes, file edits no" value, so
           // we use 'workspace-write' and rely on:
-          //   1. Ordinus's workingRoot being an isolated subfolder under
-          //      `<workspace>/ordinus/<slug>-<id>` (see createOrdinusWorkingRoot)
+          //   1. Ordinus's workingRoot being an isolated folder under
+          //      `<workspace>/ordinus/` (see getOrdinusWorkingRoot)
           //   2. The system prompt instructing Ordinus to drive work through
           //      MCP tools, not by writing files directly
           // Net effect: Ordinus can call our MCP tools, and the worst-case
@@ -276,24 +280,28 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           providerSessionRef: result.providerSessionRef
         })
 
-        // ADR-029 M4.5 — Persist the assistant reply for transcript replay.
-        // We collapse needs_input outcomes to a markdown rendering matching
-        // what the renderer does today; if/when M6+ adds a real input-request
-        // UI for Ordinus, we'll add a richer turn kind for it.
-        const assistantContent =
-          result.outcome.outcome === 'final_response'
-            ? result.outcome.content
-            : `**${result.outcome.title}**\n\n${
-                result.outcome.detail ??
-                result.outcome.questions[0]?.label ??
-                'Ordinus is waiting for more info.'
-              }`
-        database.appendOrdinusTurn({
-          conversationId: conversation.id,
-          kind: 'assistant',
-          content: assistantContent,
-          turnId
-        })
+        // ADR-029 — final_response is persisted into the transcript for replay.
+        // needs_input is NOT inline: Ordinus surfaces questions as the panel
+        // that emerges from the input area (project_ordinus_home_design). We
+        // persist the request so the panel rehydrates after an app restart,
+        // then publish an event so any open window paints it immediately.
+        if (result.outcome.outcome === 'final_response') {
+          database.appendOrdinusTurn({
+            conversationId: conversation.id,
+            kind: 'assistant',
+            content: result.outcome.content,
+            turnId
+          })
+        } else {
+          const request = database.createOrdinusInputRequest({
+            conversationId: conversation.id,
+            turnId,
+            title: result.outcome.title,
+            detail: result.outcome.detail,
+            questions: result.outcome.questions
+          })
+          deps.events.publish({ kind: 'input_request_requested', request })
+        }
 
         return {
           conversationId: conversation.id,
@@ -305,6 +313,23 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
       } finally {
         runningConversationIds.delete(conversation.id)
       }
+    },
+
+    async answerInputRequest(input) {
+      // Validate + mark answered (throws if already resolved). Returns the
+      // human-readable summary (for the transcript) and the continuation
+      // message (for the CLI).
+      const { conversationId, answerSummary, continuationMessage } =
+        database.answerOrdinusInputRequest(input)
+      // Close the panel everywhere before the (possibly long) resume turn.
+      deps.events.publish({ kind: 'input_request_resolved', requestId: input.requestId })
+      // Reuse the normal turn pipeline: the answer summary becomes the user
+      // transcript entry; the continuation message is what the CLI receives.
+      return this.sendTurn({
+        conversationId,
+        message: continuationMessage,
+        displayMessage: answerSummary
+      })
     }
   }
 }

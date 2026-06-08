@@ -65,6 +65,8 @@ import type {
   OrdinusActionEvent,
   OrdinusArchiveConversationInput,
   OrdinusConversationSummary,
+  OrdinusAnswerInputRequestInput,
+  OrdinusCancelInputRequestInput,
   OrdinusConversationTurn,
   OrdinusCreateConversationInput,
   OrdinusDeleteConversationInput,
@@ -72,6 +74,7 @@ import type {
   OrdinusListTurnsInput,
   OrdinusMemoryEntry,
   OrdinusPendingConfirmation,
+  OrdinusPendingInputRequest,
   OrdinusResolveConfirmationInput,
   OrdinusSendTurnInput,
   OrdinusSetConversationPinnedInput,
@@ -149,6 +152,9 @@ export type OrdinusApi = {
     onActionEvent: (callback: (event: OrdinusActionEvent) => void) => () => void
     listPendingConfirmations: () => Promise<OrdinusPendingConfirmation[]>
     resolveConfirmation: (input: OrdinusResolveConfirmationInput) => Promise<{ resolved: boolean }>
+    listPendingInputRequests: () => Promise<OrdinusPendingInputRequest[]>
+    answerInputRequest: (input: OrdinusAnswerInputRequestInput) => Promise<OrdinusTurnOutcome>
+    cancelInputRequest: (input: OrdinusCancelInputRequestInput) => Promise<{ cancelled: boolean }>
     getSingleton: () => Promise<OrdinusSingleton | null>
     updateSingleton: (input: OrdinusUpdateSingletonInput) => Promise<OrdinusSingleton>
     archiveConversation: (input: OrdinusArchiveConversationInput) => Promise<{ archived: boolean }>
