@@ -11,6 +11,7 @@ export const agentTurnOutcomeJsonSchema = {
   additionalProperties: false,
   properties: {
     outcome: { type: 'string', enum: ['final_response', 'needs_input'] },
+    summary: { type: ['string', 'null'], maxLength: workRunResultSummaryMaxLength },
     content: { type: ['string', 'null'], maxLength: agentTurnOutcomeContentMaxLength },
     artifactRefs: {
       type: ['array', 'null'],
@@ -74,7 +75,16 @@ export const agentTurnOutcomeJsonSchema = {
       }
     }
   },
-  required: ['outcome', 'content', 'artifactRefs', 'changedFiles', 'title', 'detail', 'questions']
+  required: [
+    'outcome',
+    'summary',
+    'content',
+    'artifactRefs',
+    'changedFiles',
+    'title',
+    'detail',
+    'questions'
+  ]
 } as const
 
 export function parseAgentTurnOutcome(value: unknown): AgentTurnOutcome {
@@ -88,13 +98,17 @@ function normalizeAgentTurnOutcome(value: unknown): unknown {
   }
 
   if (value.outcome === 'final_response') {
+    const rawSummary = typeof value.summary === 'string' ? value.summary : ''
     const rawContent = typeof value.content === 'string' ? value.content : ''
     const artifacts = splitWorkspaceAndExternalPaths(normalizeStringArray(value.artifactRefs))
     const changes = splitWorkspaceAndExternalPaths(normalizeStringArray(value.changedFiles))
     const externalPaths = Array.from(new Set([...artifacts.external, ...changes.external]))
+    // ADR-030: the external-writes notice is a user-facing addendum, so it is
+    // appended to the summary (always shown) rather than the optional body.
     return {
       outcome: 'final_response',
-      content: appendExternalWritesNotice(rawContent, externalPaths),
+      summary: appendExternalWritesNotice(rawSummary, externalPaths),
+      content: rawContent,
       artifactRefs: artifacts.workspaceRelative,
       changedFiles: changes.workspaceRelative
     }
@@ -221,9 +235,10 @@ Your response must match exactly one of these shapes:
 For a normal answer:
 {
   "outcome": "final_response",
-  "content": "Concise GitHub-flavored Markdown summary of the completed work.",
-  "artifactRefs": ["workspace-relative/path/to/user-facing-output.md"],
-  "changedFiles": ["workspace-relative/path/to/created-or-modified-file.md"]
+  "summary": "Concise GitHub-flavored Markdown describing what you did.",
+  "content": "Optional full textual body (the produced report or analysis). Empty when the deliverable is a file.",
+  "artifactRefs": ["workspace-relative/path/to/user-facing-output.pdf"],
+  "changedFiles": ["workspace-relative/path/to/created-or-modified-file.ts"]
 }
 
 If you cannot continue without user input:
@@ -258,14 +273,13 @@ Input request rules:
 - Ask only for information that is necessary to continue.
 
 Final response rules:
-- Keep content as a concise result summary, not a full copied report when files were created.
-- Keep content under ${workRunResultSummaryMaxLength} characters. If the useful result is longer, write it to a workspace file and summarize that file.
-- Format content as GitHub-flavored Markdown.
-- Use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose when presenting multiple points.
-- Use fenced code blocks for code, commands, diffs, logs, or structured snippets.
-- Do not use raw HTML in content.
-- Use artifactRefs for user-facing deliverables such as reports, PDFs, spreadsheets, images, or final documents.
-- Newly created user-facing Markdown artifacts should follow the workspace Markdown frontmatter and References policy.
+- "summary" is required: a concise GitHub-flavored Markdown description of what you did. It is always shown to the user and passed to any dependent work. Keep it under ${workRunResultSummaryMaxLength} characters.
+- "content" is optional: the full textual body you produced (a report, an analysis, a written document) as GitHub-flavored Markdown. Put long produced text here; it lives in the app and is shown on demand. Leave it empty ("") when the result is just the summary or when the deliverable is a file.
+- Do NOT write your textual result to a workspace file to get around any length limit. Long text belongs in "content", not in an extra file.
+- Only write a workspace file when the output is inherently a file: an edit to an existing project file, source code, HTML, JavaScript, a PDF, a spreadsheet, an image, or another binary/format-bearing deliverable; or when the user explicitly asked for a file. Reports, analyses, plans, and summaries are not files by default.
+- In "summary" and "content": use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose; use fenced code blocks for code, commands, diffs, logs, or snippets; do not use raw HTML.
+- Use artifactRefs for genuine user-facing file deliverables (PDFs, spreadsheets, images, exported documents).
+- Newly created user-facing Markdown files should follow the workspace Markdown frontmatter and References policy.
 - Use changedFiles for every file you created or modified, including artifacts.
 - All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..".
 - Do not include a file path unless you actually created or modified that file in the workspace.`

@@ -855,11 +855,17 @@ export const WorkspaceRelativePathSchema = z
 
 export const workRunResultSummaryMaxLength = 16_000
 export const agentTurnOutcomeContentMaxLength = 256_000
+// ADR-030: full result body cap for database-backed result content.
+export const workRunResultContentMaxLength = agentTurnOutcomeContentMaxLength
 
 export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({
     outcome: z.literal('final_response'),
-    content: z.string().trim().min(1).max(agentTurnOutcomeContentMaxLength),
+    // ADR-030: `summary` is the always-present short narrative shown to the user
+    // and passed inline in handoffs. `content` is the optional full textual body
+    // (the produced report/analysis); it is empty when the deliverable is a file.
+    summary: z.string().trim().min(1).max(workRunResultSummaryMaxLength),
+    content: z.string().trim().max(agentTurnOutcomeContentMaxLength).default(''),
     artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
     changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([])
   }),
@@ -1147,6 +1153,7 @@ export const WorkRunSchema = z.object({
   sandbox: AgentSandboxSchema,
   expectedOutput: z.string(),
   resultSummary: z.string(),
+  resultContent: z.string(),
   resultArtifactRef: z.string(),
   artifactRefs: z.array(WorkspaceRelativePathSchema),
   changedFiles: z.array(WorkspaceRelativePathSchema),
@@ -1205,6 +1212,7 @@ export const WorkRunInputSummarySchema = z.object({
   agentName: z.string().min(1),
   agentRole: z.string().min(1),
   resultSummary: z.string().min(1),
+  resultContent: z.string().default(''),
   artifactRefs: z.array(WorkspaceRelativePathSchema),
   changedFiles: z.array(WorkspaceRelativePathSchema)
 })
@@ -1245,6 +1253,7 @@ export const WorkRunCompleteInputSchema = WorkRunActionInputSchema.extend({
     .trim()
     .min(1, 'Result summary is required.')
     .max(workRunResultSummaryMaxLength),
+  resultContent: z.string().trim().max(workRunResultContentMaxLength).default(''),
   artifactRef: z.string().trim().max(500).optional(),
   artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
   changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([]),
@@ -1619,16 +1628,12 @@ export const FileContentSchema = z.object({
   revision: z.string().min(1)
 })
 
-export const FileWriteInputSchema = z.object({
-  path: MarkdownRelativePathSchema,
-  content: z.string().max(5_000_000),
-  expectedRevision: z.string().min(1)
+// ADR-030: "Save as" materializes a work run's database-backed result content
+// into a new Markdown file under the run's module working folder, reported as a
+// workspace artifact so it appears in the file provenance panel.
+export const WorkboardSaveRunResultResultSchema = z.object({
+  path: MarkdownRelativePathSchema
 })
-
-export const FileWriteResultSchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('saved'), revision: z.string().min(1) }),
-  z.object({ status: z.literal('conflict'), revision: z.string().min(1) })
-])
 
 export type WorkboardDraftDependencyItem = {
   tempId: string
@@ -1983,7 +1988,6 @@ export type WorkboardUnarchiveRequestInput = z.infer<typeof WorkboardUnarchiveRe
 export type WorkboardPathStatus = z.infer<typeof WorkboardPathStatusSchema>
 export type FileReadInput = z.infer<typeof FileReadInputSchema>
 export type FileContent = z.infer<typeof FileContentSchema>
-export type FileWriteInput = z.infer<typeof FileWriteInputSchema>
-export type FileWriteResult = z.infer<typeof FileWriteResultSchema>
+export type WorkboardSaveRunResultResult = z.infer<typeof WorkboardSaveRunResultResultSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, posix as pathPosix, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import {
   AgentArchiveInputSchema,
   AgentDeleteInputSchema,
@@ -45,8 +45,7 @@ import {
   ConversationCancelTurnInputSchema,
   FileReadInputSchema,
   FileContentSchema,
-  FileWriteInputSchema,
-  FileWriteResultSchema,
+  WorkboardSaveRunResultResultSchema,
   ConversationAnswerInputRequestInputSchema,
   ConversationCancelInputRequestInputSchema,
   ConversationCreateDirectInputSchema,
@@ -106,7 +105,6 @@ import {
   WorkspaceSaveConfigInputSchema,
   WorkspaceSelectFolderResultSchema,
   WorkspaceUpdateSystemDefaultInputSchema,
-  workRunResultSummaryMaxLength,
   validateWorkboardDraftPlanDependencies,
   type Agent,
   type AgentTurnOutcome,
@@ -180,19 +178,6 @@ const workRequestConcurrencyLimit = 3
 let activeScheduler: SchedulerService | null = null
 
 type ReportedWorkspaceFileRefs = WorkspaceWorkingFolderContext & {
-  artifactRefs: string[]
-  changedFiles: string[]
-}
-
-type WorkRunCompletionOutputInput = WorkspaceWorkingFolderContext & {
-  runId: string
-  content: string
-  artifactRefs: string[]
-  changedFiles: string[]
-}
-
-type WorkRunCompletionOutput = {
-  resultSummary: string
   artifactRefs: string[]
   changedFiles: string[]
 }
@@ -937,19 +922,22 @@ export function registerIpcHandlers(
       revision: String(stats.mtimeMs)
     })
   })
-  ipcMain.handle(ipcChannels.filesWrite, (_event, payload) => {
-    const input = FileWriteInputSchema.parse(payload)
-    const absolutePath = requireWorkspaceMarkdownFile(database, input.path)
-    const currentRevision = String(statSync(absolutePath).mtimeMs)
-    if (currentRevision !== input.expectedRevision) {
-      return FileWriteResultSchema.parse({ status: 'conflict', revision: currentRevision })
+  ipcMain.handle(ipcChannels.workboardSaveRunResult, (_event, payload) => {
+    const input = WorkRunActionInputSchema.parse(payload)
+    const run = database.getWorkRun(input.runId)
+    const content = run.resultContent.trim()
+    if (!content) {
+      throw new Error('This Work Item has no full result to save.')
     }
 
-    writeFileSync(absolutePath, input.content, 'utf8')
-    return FileWriteResultSchema.parse({
-      status: 'saved',
-      revision: String(statSync(absolutePath).mtimeMs)
-    })
+    const context = getWorkRunWorkspaceContext(database, run)
+    const relativePath = buildSavedResultRelativePath(context.workingRoot, run.id)
+    const absolutePath = resolveWorkspaceRelativePath(context.workspaceRoot, relativePath)
+    mkdirSync(dirname(absolutePath), { recursive: true })
+    writeFileSync(absolutePath, createSavedResultDocument(run, content), 'utf8')
+    database.attachWorkRunArtifactRef(run.id, relativePath)
+
+    return WorkboardSaveRunResultResultSchema.parse({ path: relativePath })
   })
 
   ipcMain.handle(ipcChannels.schedulesList, (_event, payload) => {
@@ -1589,22 +1577,17 @@ function startPreparedWorkRun(
           changedFiles: result.outcome.changedFiles
         })
         assertReportedFileRefsExist(fileRefs.missingRefs)
-        const completionOutput = prepareWorkRunCompletionOutput({
-          workspaceRoot: workspaceContext.workspaceRoot,
-          workingRoot: workspaceContext.workingRoot,
+        // ADR-030: textual output is database-backed; the summary and the full
+        // body are persisted directly with no spill-to-file.
+        database.completeWorkRun({
           runId: prepared.run.id,
-          content: result.outcome.content,
+          resultSummary: result.outcome.summary,
+          resultContent: result.outcome.content,
+          providerSessionRef: result.providerSessionRef,
           artifactRefs: fileRefs.artifactRefs,
           changedFiles: fileRefs.changedFiles
         })
-        database.completeWorkRun({
-          runId: prepared.run.id,
-          resultSummary: completionOutput.resultSummary,
-          providerSessionRef: result.providerSessionRef,
-          artifactRefs: completionOutput.artifactRefs,
-          changedFiles: completionOutput.changedFiles
-        })
-        observability.markWorkboardCompleted(prepared.run.id, completionOutput.resultSummary)
+        observability.markWorkboardCompleted(prepared.run.id, result.outcome.summary)
         activeScheduler?.notifyRunTerminal(prepared.run.id, true)
       } catch (error) {
         saveWorkRunFailure(database, prepared.run.id, error)
@@ -1761,85 +1744,34 @@ function resolveReportedFileRefs(input: ReportedWorkspaceFileRefs): {
   }
 }
 
-function prepareWorkRunCompletionOutput(
-  input: WorkRunCompletionOutputInput
-): WorkRunCompletionOutput {
-  const content = input.content.trim()
-
-  if (content.length <= workRunResultSummaryMaxLength) {
-    return {
-      resultSummary: content,
-      artifactRefs: input.artifactRefs,
-      changedFiles: input.changedFiles
-    }
-  }
-
-  const fullResultRef = writeAutomaticFullResultArtifact(input)
-
-  return {
-    resultSummary: createBoundedLongResultSummary(content, fullResultRef),
-    artifactRefs: prependBoundedUniqueRef(input.artifactRefs, fullResultRef, 64),
-    changedFiles: prependBoundedUniqueRef(input.changedFiles, fullResultRef, 128)
-  }
+// ADR-030: filename for a result document materialized via "Save as".
+function buildSavedResultRelativePath(workingRoot: string, runId: string): string {
+  const suffix =
+    runId
+      .replace(/[^a-zA-Z0-9-]/g, '')
+      .slice(-12)
+      .toLowerCase() || 'result'
+  const folder = workingRoot.replace(/\/+$/, '')
+  const fileName = `result-${suffix}.md`
+  return folder ? `${folder}/${fileName}` : fileName
 }
 
-function writeAutomaticFullResultArtifact(input: WorkRunCompletionOutputInput): string {
-  const fileName = `full-result-${safeFileSuffix(input.runId)}.md`
-  const relativePath = pathPosix.join(input.workingRoot, fileName)
-  const absolutePath = resolveWorkspaceRelativePath(input.workspaceRoot, relativePath)
-  mkdirSync(dirname(absolutePath), { recursive: true })
-  writeFileSync(absolutePath, createAutomaticFullResultDocument(input.content), 'utf8')
-  return relativePath
-}
-
-function createAutomaticFullResultDocument(content: string): string {
+function createSavedResultDocument(run: WorkRun, content: string): string {
+  const title = run.title.trim() || 'Work Item Result'
   return [
     '---',
-    'title: Full Work Item Result',
-    'summary: Full agent response saved automatically because it exceeded the Workboard summary limit.',
-    'created_by: Ordinus',
-    `created_at: ${new Date().toISOString()}`,
+    `title: ${title}`,
+    'summary: Result saved from Ordinus.',
+    `created_by: ${run.assignedAgentName.trim() || 'Ordinus'}`,
+    `created_at: ${new Date().toISOString().slice(0, 10)}`,
     'tags:',
+    '  - ordinus',
     '  - workboard',
-    '  - full-result',
     '---',
-    '',
-    '# Full Work Item Result',
-    '',
-    'The agent returned more text than the Workboard summary can hold. Ordinus saved the full response here and kept a shortened summary on the Workboard.',
-    '',
-    '## Result',
     '',
     content.trim(),
     ''
   ].join('\n')
-}
-
-function createBoundedLongResultSummary(content: string, fullResultRef: string): string {
-  const prefix = [
-    `Full result saved to \`${fullResultRef}\`.`,
-    '',
-    'The Workboard is showing a shortened summary so this Work Item can finish reliably.',
-    ''
-  ].join('\n')
-  const suffix = `\n\n... Full result: \`${fullResultRef}\``
-  const availableLength = Math.max(0, workRunResultSummaryMaxLength - prefix.length - suffix.length)
-  const excerpt = content.slice(0, availableLength).trimEnd()
-
-  return `${prefix}${excerpt}${suffix}`.slice(0, workRunResultSummaryMaxLength)
-}
-
-function prependBoundedUniqueRef(refs: string[], ref: string, maxRefs: number): string[] {
-  return [ref, ...refs.filter((candidate) => candidate !== ref)].slice(0, maxRefs)
-}
-
-function safeFileSuffix(value: string): string {
-  return (
-    value
-      .replace(/[^a-zA-Z0-9-]/g, '')
-      .slice(-12)
-      .toLowerCase() || 'result'
-  )
 }
 
 function saveWorkRunFailure(database: OrdinusDatabase, runId: string, error: unknown): void {
@@ -2005,7 +1937,7 @@ function saveConversationTurnCompletion(
     if (outcome.outcome === 'needs_input') {
       observability.markConversationWaitingForUser(turnId, outcome.title)
     } else {
-      observability.markConversationCompleted(turnId, outcome.content)
+      observability.markConversationCompleted(turnId, outcome.summary)
     }
   } catch (error) {
     saveConversationTurnFailure(

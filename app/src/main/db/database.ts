@@ -2947,6 +2947,7 @@ export class OrdinusDatabase {
         .set({
           status: 'completed',
           resultSummary: parsed.resultSummary,
+          resultContent: parsed.resultContent,
           resultArtifactRef: parsed.artifactRef ?? run.resultArtifactRef,
           artifactRefs: JSON.stringify(artifactRefs),
           changedFiles: JSON.stringify(changedFiles),
@@ -3024,6 +3025,24 @@ export class OrdinusDatabase {
     })
     this.recordWorkRunProviderSession(run.id, parsed.providerSessionRef ?? run.providerSessionRef)
     this.refreshWorkRequestStatusForRun(run.id)
+
+    return this.getWorkRun(run.id)
+  }
+
+  // ADR-030: record a workspace file materialized from a run's result (Save as)
+  // as a run artifact so it surfaces in the file provenance panel.
+  attachWorkRunArtifactRef(runId: string, relativePath: string): WorkRun {
+    const run = this.getWorkRun(runId)
+    const artifactRefs = uniqueValues([...run.artifactRefs, relativePath]).slice(0, 64)
+
+    this.db
+      .update(workRuns)
+      .set({
+        artifactRefs: JSON.stringify(artifactRefs),
+        updatedAt: new Date().toISOString()
+      })
+      .where(eq(workRuns.id, run.id))
+      .run()
 
     return this.getWorkRun(run.id)
   }
@@ -3270,6 +3289,7 @@ export class OrdinusDatabase {
           agentName: parsedRun.assignedAgentName.trim() || 'Former agent',
           agentRole: parsedRun.assignedAgentRole.trim() || 'Agent',
           resultSummary: parsedRun.resultSummary,
+          resultContent: parsedRun.resultContent,
           artifactRefs: parsedRun.artifactRefs,
           changedFiles: parsedRun.changedFiles
         })
@@ -4074,7 +4094,9 @@ export class OrdinusDatabase {
       return this.getConversation({ conversationId: turn.conversationId })
     }
 
-    const output = createBoundedTurnContent(input.outcome.content)
+    // ADR-030: the conversation message is the always-present summary; the
+    // optional full body lives in outcome.content and is surfaced separately.
+    const output = createBoundedTurnContent(input.outcome.summary)
     const artifactRefs = uniqueValues(input.outcome.artifactRefs)
     const changedFiles = uniqueValues(input.outcome.changedFiles)
 

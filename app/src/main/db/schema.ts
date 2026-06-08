@@ -160,6 +160,7 @@ export const workRuns = sqliteTable('work_runs', {
   sandbox: text('sandbox').notNull(),
   expectedOutput: text('expected_output').notNull().default(''),
   resultSummary: text('result_summary').notNull().default(''),
+  resultContent: text('result_content').notNull().default(''),
   resultArtifactRef: text('result_artifact_ref').notNull().default(''),
   artifactRefs: text('artifact_refs').notNull().default('[]'),
   changedFiles: text('changed_files').notNull().default('[]'),

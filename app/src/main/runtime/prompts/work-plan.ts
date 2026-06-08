@@ -166,12 +166,15 @@ Each instruction must be:
 - Free of planning meta-talk: do not write things like "this is part of a larger task" or "after item-2 finishes".
 
 For references to prior work:
-- If the planning input references prior artifacts or changed files, tell the assigned agent which paths to inspect rather than copying large prior content into the plan.
-- When the referenced paths are Markdown files, tell the assigned agent to inspect frontmatter and headings first before reading the full body.
-- If the work should create a Markdown output based on upstream files, tell the assigned agent to include those sources in a final References section.
-- If the continuation depends on prior text-only output with no file reference, include the relevant available excerpt directly in the instruction. Do not instruct the agent to fetch output that isn't available.
+- Upstream textual results are delivered to the dependent agent inline at execution time (a summary and, when present, the full produced text). Do not instruct the agent to read a workspace file for an upstream textual result.
+- Only tell the agent to inspect a workspace file when the upstream output is a genuine file deliverable (source code, HTML, a PDF, a spreadsheet, an image). When those referenced paths are Markdown files, tell the agent to inspect frontmatter and headings first before reading the full body.
+- If the work should create a Markdown file based on upstream files, tell the assigned agent to include those sources in a final References section.
 
-expectedOutput must describe the concrete artifact or answer the user can inspect (e.g. "A markdown summary of...", "A patch to file X that...", "A list of...").
+Textual results versus files:
+- A textual deliverable (a report, analysis, plan, summary, or written answer) is an in-app result, not a file. Do not instruct the agent to "write a report file" or "save the analysis to a file" unless the user explicitly asked for a file.
+- Only describe a file deliverable when the output is inherently a file: an edit to an existing project file, source code, HTML, JavaScript, a PDF, a spreadsheet, an image, or another binary/format-bearing artifact, or when the user explicitly asked for a file.
+
+expectedOutput must describe the concrete result the user can inspect. For textual work this is an in-app result (e.g. "A summary of...", "A prioritized list of..."); for file work it is the file (e.g. "A patch to file X that...", "An index.html landing page that...").
 
 ============================================================
 DEPENDENCY TEST

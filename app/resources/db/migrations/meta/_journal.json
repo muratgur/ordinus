@@ -267,6 +267,13 @@
       "when": 1780928253822,
       "tag": "0037_curly_silver_samurai",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1780954048640,
+      "tag": "0038_jazzy_mystique",
+      "breakpoints": true
     }
   ]
 }

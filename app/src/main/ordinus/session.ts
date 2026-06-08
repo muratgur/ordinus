@@ -289,7 +289,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           database.appendOrdinusTurn({
             conversationId: conversation.id,
             kind: 'assistant',
-            content: result.outcome.content,
+            // ADR-030: the transcript message is the always-present summary.
+            content: result.outcome.summary,
             turnId
           })
         } else {

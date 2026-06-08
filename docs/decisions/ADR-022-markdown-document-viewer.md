@@ -8,6 +8,14 @@ Builds on ADR-008 (workspace artifacts, Markdown frontmatter standard) and ADR-0
 file provenance panel). Adds a generic `files.*` IPC namespace and a new renderer surface.
 Supersedes no prior decision.
 
+Partially superseded by ADR-030 (database-backed result content and handoffs): the viewer's **edit
+mode** (raw editor, formatting toolbar, `files.write`, and the save-time mtime/hash conflict UI) is
+removed, making the viewer read-only; the viewer is generalized to render **database-backed result
+content** in addition to disk `.md` files; and a **"Save as"** action is added that materializes a
+database result into a new workspace `.md` file — overriding this ADR's rule that the viewer never
+creates files. The read-mode presentation, frontmatter header card, `.md`-on-disk handling, and
+`files.read` channel remain in force.
+
 ## Date
 
 2026-05-22

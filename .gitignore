@@ -38,3 +38,6 @@ Thumbs.db
 # Local agent / tooling state (not part of the project)
 .claude/worktrees/
 .playwright-mcp/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

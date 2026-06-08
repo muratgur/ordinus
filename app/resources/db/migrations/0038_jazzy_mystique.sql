@@ -1,0 +1,1 @@
+ALTER TABLE `work_runs` ADD `result_content` text DEFAULT '' NOT NULL;

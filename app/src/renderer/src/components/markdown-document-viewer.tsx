@@ -1,68 +1,50 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Eye, Loader2, Pencil, Save, X } from 'lucide-react'
+import { Check, Loader2, Save, X } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@renderer/components/ui/dialog'
 import { cn } from '@renderer/lib/utils'
 import { MarkdownDocument } from './markdown-document'
-import { MarkdownEditor } from './markdown-editor'
+
+// ADR-030: the viewer is read-only and renders from two sources — an on-disk
+// `.md` file, or a work run's database-backed result content. The result source
+// can be materialized into a workspace file via "Save as".
+export type MarkdownDocumentSource =
+  | { kind: 'file'; path: string }
+  | { kind: 'result'; runId: string; title: string; content: string }
 
 type LoadStatus = 'loading' | 'ready' | 'error'
-type ViewMode = 'read' | 'edit'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 const closeAnimationMs = 280
 
 export function MarkdownDocumentViewer({
-  path,
+  source,
   onClose
 }: {
-  path: string
+  source: MarkdownDocumentSource
   onClose: () => void
 }): JSX.Element {
   const [visible, setVisible] = useState(false)
-  const [status, setStatus] = useState<LoadStatus>('loading')
+  const [status, setStatus] = useState<LoadStatus>(source.kind === 'result' ? 'ready' : 'loading')
   const [errorMessage, setErrorMessage] = useState('')
-  const [content, setContent] = useState('')
-  const [draft, setDraft] = useState('')
-  const [revision, setRevision] = useState('')
-  const [mode, setMode] = useState<ViewMode>('read')
-  const [saving, setSaving] = useState(false)
-  const [conflictRevision, setConflictRevision] = useState<string | null>(null)
-  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false)
+  const [content, setContent] = useState(source.kind === 'result' ? source.content : '')
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
+  const [savedPath, setSavedPath] = useState('')
   const closeTimer = useRef<number | null>(null)
 
-  const fileName = path.split(/[\\/]/).pop() || path
-  const dirty = status === 'ready' && draft !== content
-
-  const loadFile = useCallback(async (): Promise<void> => {
-    try {
-      const result = await window.ordinus.files.read({ path })
-      setContent(result.content)
-      setDraft(result.content)
-      setRevision(result.revision)
-      setStatus('ready')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'This file could not be opened.')
-      setStatus('error')
-    }
-  }, [path])
+  const title =
+    source.kind === 'file' ? source.path.split(/[\\/]/).pop() || source.path : source.title
 
   useEffect(() => {
+    if (source.kind !== 'file') {
+      return
+    }
     let cancelled = false
     void (async () => {
       try {
-        const result = await window.ordinus.files.read({ path })
+        const result = await window.ordinus.files.read({ path: source.path })
         if (cancelled) return
         setContent(result.content)
-        setDraft(result.content)
-        setRevision(result.revision)
         setStatus('ready')
       } catch (error) {
         if (cancelled) return
@@ -73,7 +55,7 @@ export function MarkdownDocumentViewer({
     return () => {
       cancelled = true
     }
-  }, [path])
+  }, [source])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setVisible(true))
@@ -88,50 +70,26 @@ export function MarkdownDocumentViewer({
     closeTimer.current = window.setTimeout(onClose, closeAnimationMs)
   }, [onClose])
 
-  function requestClose(): void {
-    if (dirty) {
-      setCloseConfirmOpen(true)
-      return
-    }
-    animateClose()
-  }
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') requestClose()
+      if (event.key === 'Escape') animateClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  })
+  }, [animateClose])
 
-  async function persist(expectedRevision: string): Promise<void> {
-    setSaving(true)
+  async function saveAs(): Promise<void> {
+    if (source.kind !== 'result') return
+    setSaveStatus('saving')
     setErrorMessage('')
     try {
-      const result = await window.ordinus.files.write({ path, content: draft, expectedRevision })
-      if (result.status === 'conflict') {
-        setConflictRevision(result.revision)
-        return
-      }
-      setContent(draft)
-      setRevision(result.revision)
-      setConflictRevision(null)
+      const result = await window.ordinus.workboard.saveRunResult({ runId: source.runId })
+      setSavedPath(result.path)
+      setSaveStatus('saved')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'This file could not be saved.')
-    } finally {
-      setSaving(false)
+      setErrorMessage(error instanceof Error ? error.message : 'This result could not be saved.')
+      setSaveStatus('error')
     }
-  }
-
-  async function reloadFromDisk(): Promise<void> {
-    setConflictRevision(null)
-    setStatus('loading')
-    await loadFile()
-  }
-
-  function retryLoad(): void {
-    setStatus('loading')
-    void loadFile()
   }
 
   return (
@@ -139,7 +97,7 @@ export function MarkdownDocumentViewer({
       <button
         type="button"
         aria-label="Close document viewer"
-        onClick={requestClose}
+        onClick={animateClose}
         className={cn(
           'absolute inset-0 bg-background/60 backdrop-blur-[1px] transition-opacity duration-300',
           visible ? 'opacity-100' : 'opacity-0'
@@ -153,48 +111,42 @@ export function MarkdownDocumentViewer({
       >
         <header className="flex shrink-0 items-center gap-3 border-b bg-card px-4 py-2.5">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground" title={path}>
-              {fileName}
-              {dirty ? <span className="ml-2 text-xs text-muted-foreground">• Unsaved</span> : null}
+            <p className="truncate text-sm font-semibold text-foreground" title={title}>
+              {title}
             </p>
+            {saveStatus === 'saved' && savedPath ? (
+              <p className="truncate text-xs text-muted-foreground" title={savedPath}>
+                Saved to {savedPath}
+              </p>
+            ) : null}
           </div>
 
-          {status === 'ready' ? (
-            <div className="flex shrink-0 items-center rounded-md border bg-background p-0.5">
-              <ModeButton
-                active={mode === 'read'}
-                icon={<Eye />}
-                label="Read"
-                onClick={() => setMode('read')}
-              />
-              <ModeButton
-                active={mode === 'edit'}
-                icon={<Pencil />}
-                label="Edit"
-                onClick={() => setMode('edit')}
-              />
-            </div>
-          ) : null}
-
-          {status === 'ready' && mode === 'edit' ? (
+          {source.kind === 'result' ? (
             <Button
               size="sm"
+              variant={saveStatus === 'saved' ? 'outline' : 'default'}
               className="shrink-0"
-              disabled={!dirty || saving}
-              onClick={() => void persist(revision)}
+              disabled={saveStatus === 'saving' || saveStatus === 'saved'}
+              onClick={() => void saveAs()}
             >
-              {saving ? <Loader2 className="animate-spin" /> : <Save />}
-              Save
+              {saveStatus === 'saving' ? (
+                <Loader2 className="animate-spin" />
+              ) : saveStatus === 'saved' ? (
+                <Check />
+              ) : (
+                <Save />
+              )}
+              {saveStatus === 'saved' ? 'Saved' : 'Save as file'}
             </Button>
           ) : null}
 
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={requestClose}>
+          <Button variant="ghost" size="icon" className="shrink-0" onClick={animateClose}>
             <X />
             <span className="sr-only">Close</span>
           </Button>
         </header>
 
-        {errorMessage && status === 'ready' ? (
+        {saveStatus === 'error' ? (
           <p className="shrink-0 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
             {errorMessage}
           </p>
@@ -210,104 +162,16 @@ export function MarkdownDocumentViewer({
           {status === 'error' ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
               <p className="text-sm text-muted-foreground">{errorMessage}</p>
-              <Button variant="outline" size="sm" onClick={retryLoad}>
-                Try again
-              </Button>
             </div>
           ) : null}
 
-          {status === 'ready' && mode === 'read' ? (
+          {status === 'ready' ? (
             <div className="h-full overflow-y-auto bg-muted/30 px-4 py-8 ordinus-scrollbar">
-              <MarkdownDocument content={draft} />
+              <MarkdownDocument content={content} />
             </div>
-          ) : null}
-
-          {status === 'ready' && mode === 'edit' ? (
-            <MarkdownEditor value={draft} onChange={setDraft} />
           ) : null}
         </div>
       </section>
-
-      <Dialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
-        <DialogContent hideClose>
-          <DialogHeader>
-            <DialogTitle>Discard unsaved changes?</DialogTitle>
-            <DialogDescription>
-              This document has changes that have not been saved. Closing now will lose them.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCloseConfirmOpen(false)}>
-              Keep editing
-            </Button>
-            <Button
-              onClick={() => {
-                setCloseConfirmOpen(false)
-                animateClose()
-              }}
-            >
-              Discard and close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={conflictRevision !== null}
-        onOpenChange={(open) => {
-          if (!open) setConflictRevision(null)
-        }}
-      >
-        <DialogContent hideClose>
-          <DialogHeader>
-            <DialogTitle>This file changed on disk</DialogTitle>
-            <DialogDescription>
-              {fileName} was modified while you were editing it. Overwrite it with your version, or
-              reload the version on disk and lose your changes.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => void reloadFromDisk()}>
-              Reload from disk
-            </Button>
-            <Button
-              disabled={saving}
-              onClick={() => {
-                if (conflictRevision) void persist(conflictRevision)
-              }}
-            >
-              {saving ? <Loader2 className="animate-spin" /> : null}
-              Overwrite
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
-  )
-}
-
-function ModeButton({
-  active,
-  icon,
-  label,
-  onClick
-}: {
-  active: boolean
-  icon: JSX.Element
-  label: string
-  onClick: () => void
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors',
-        active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-      )}
-    >
-      <span className="[&_svg]:size-3.5">{icon}</span>
-      {label}
-    </button>
   )
 }

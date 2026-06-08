@@ -86,8 +86,6 @@ import type {
   OrdinusWriteMemoryInput,
   FileContent,
   FileReadInput,
-  FileWriteInput,
-  FileWriteResult,
   ObservedConversationRunsInput,
   ObservedRunDiagnostics,
   ObservedRunDiagnosticsInput,
@@ -114,6 +112,7 @@ import type {
   WorkboardArchiveRequestInput,
   WorkboardUnarchiveRequestInput,
   WorkboardPathStatus,
+  WorkboardSaveRunResultResult,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
@@ -242,6 +241,7 @@ export type OrdinusApi = {
     cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
     answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
     revealPath: (input: WorkboardRevealPathInput) => Promise<void>
+    saveRunResult: (input: WorkRunActionInput) => Promise<WorkboardSaveRunResultResult>
     checkPaths: (input: WorkboardCheckPathsInput) => Promise<WorkboardPathStatus[]>
     archiveRequest: (input: WorkboardArchiveRequestInput) => Promise<WorkboardData>
     unarchiveRequest: (input: WorkboardUnarchiveRequestInput) => Promise<WorkboardData>
@@ -274,7 +274,6 @@ export type OrdinusApi = {
   }
   files: {
     read: (input: FileReadInput) => Promise<FileContent>
-    write: (input: FileWriteInput) => Promise<FileWriteResult>
   }
   schedules: {
     list: (input?: AgentScheduleListInput) => Promise<AgentSchedule[]>

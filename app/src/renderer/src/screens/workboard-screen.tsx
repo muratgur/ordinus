@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import { Link } from 'react-router-dom'
 import {
   Archive,
@@ -58,7 +66,10 @@ import {
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { RequestFileList } from '@renderer/components/file-reference-list'
-import { MarkdownDocumentViewer } from '@renderer/components/markdown-document-viewer'
+import {
+  MarkdownDocumentViewer,
+  type MarkdownDocumentSource
+} from '@renderer/components/markdown-document-viewer'
 import {
   getFileReferences,
   getRequestFileProvenance
@@ -210,7 +221,18 @@ export function WorkboardScreen({
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
   const [watchedOpId, setWatchedOpId] = useState<string | null>(null)
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false)
-  const [openFilePath, setOpenFilePath] = useState<string | null>(null)
+  const [viewerSource, setViewerSource] = useState<MarkdownDocumentSource | null>(null)
+  const openFile = useCallback((path: string) => setViewerSource({ kind: 'file', path }), [])
+  const openResult = useCallback(
+    (run: WorkboardRun) =>
+      setViewerSource({
+        kind: 'result',
+        runId: run.id,
+        title: run.title,
+        content: run.resultContent
+      }),
+    []
+  )
 
   async function loadWorkboard(options: { quiet?: boolean } = {}): Promise<void> {
     if (!options.quiet) setBusy('load')
@@ -751,7 +773,8 @@ export function WorkboardScreen({
         onCancel={(runId) => void handleCancelRun(runId)}
         onContinue={handleContinueRun}
         onSelectRun={openLinkedRunDetail}
-        onOpenFile={setOpenFilePath}
+        onOpenFile={openFile}
+        onOpenResult={openResult}
         onAnswered={(nextData) => setData(nextData)}
         onError={setError}
       />
@@ -766,16 +789,16 @@ export function WorkboardScreen({
             setFilesDrawerOpen(false)
             openRunDetail(runId)
           }}
-          onOpenFile={setOpenFilePath}
+          onOpenFile={openFile}
           onError={setError}
         />
       ) : null}
 
-      {openFilePath ? (
+      {viewerSource ? (
         <MarkdownDocumentViewer
-          key={openFilePath}
-          path={openFilePath}
-          onClose={() => setOpenFilePath(null)}
+          key={viewerSource.kind === 'file' ? viewerSource.path : viewerSource.runId}
+          source={viewerSource}
+          onClose={() => setViewerSource(null)}
         />
       ) : null}
     </div>
@@ -2961,6 +2984,7 @@ function RunDetailDrawer({
   onContinue,
   onSelectRun,
   onOpenFile,
+  onOpenResult,
   onAnswered,
   onError
 }: {
@@ -2977,6 +3001,7 @@ function RunDetailDrawer({
   onContinue: (run: WorkboardRun) => void
   onSelectRun: (runId: string) => void
   onOpenFile: (path: string) => void
+  onOpenResult: (run: WorkboardRun) => void
   onAnswered: (data: WorkboardData) => void
   onError: (message: string) => void
 }): React.JSX.Element | null {
@@ -3062,6 +3087,7 @@ function RunDetailDrawer({
               onAnswerChange={updateAnswer}
               onSubmitAnswers={() => void submitAnswers()}
               onOpenInspect={() => setInspectOpen(true)}
+              onOpenResult={onOpenResult}
             />
           </div>
         </div>
@@ -3422,7 +3448,8 @@ function RunDetailReport({
   answers,
   onAnswerChange,
   onSubmitAnswers,
-  onOpenInspect
+  onOpenInspect,
+  onOpenResult
 }: {
   run: WorkboardRun
   inputRequest?: WorkRunInputRequest
@@ -3430,6 +3457,7 @@ function RunDetailReport({
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
   onOpenInspect: () => void
+  onOpenResult: (run: WorkboardRun) => void
 }): React.JSX.Element {
   return (
     <div className="grid min-w-0 gap-4">
@@ -3439,6 +3467,7 @@ function RunDetailReport({
         answers={answers}
         onAnswerChange={onAnswerChange}
         onSubmitAnswers={onSubmitAnswers}
+        onOpenResult={onOpenResult}
       />
       <div className="border-t pt-3">
         <button
@@ -3528,13 +3557,15 @@ function RunOutputSection({
   inputRequest,
   answers,
   onAnswerChange,
-  onSubmitAnswers
+  onSubmitAnswers,
+  onOpenResult
 }: {
   run: WorkboardRun
   inputRequest?: WorkRunInputRequest
   answers: Record<string, InteractionAnswer>
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
+  onOpenResult: (run: WorkboardRun) => void
 }): React.JSX.Element {
   return (
     <section className="min-w-0 overflow-hidden pb-1">
@@ -3555,6 +3586,15 @@ function RunOutputSection({
             <CopyButton value={run.resultSummary} label="Copy output" />
           </div>
           <MarkdownContent content={run.resultSummary} />
+          {run.resultContent.trim() ? (
+            <button
+              type="button"
+              onClick={() => onOpenResult(run)}
+              className="mt-2 text-xs font-medium text-primary hover:underline"
+            >
+              See full result
+            </button>
+          ) : null}
         </div>
       ) : run.status === 'failed' ? (
         <EmptyDetailState>This agent stopped before it could finish the work.</EmptyDetailState>

@@ -358,7 +358,7 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
     '',
     'Same-agent prior Work Items in this Work Request may already be in this provider session. Treat session memory as orientation only; artifacts and workspace files are authoritative.',
     '',
-    'Read upstream files from the workspace when you need full detail. Do not assume the summary contains everything.',
+    'Upstream textual results are provided inline above (summary and, when present, full result). Read upstream workspace files only for genuine file deliverables (code, HTML, PDFs, spreadsheets, images) that you need in full.',
     ...formatResumeMessage(input.resumeMessage),
     '',
     'When you complete the Work Item, make the final content easy to review in the Workboard drawer.',
@@ -369,23 +369,46 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
   ].join('\n')
 }
 
+// ADR-030: direct-predecessor result content is inlined into the handoff so the
+// dependent agent does not read it from a workspace file. Realistic outputs are
+// small and chains are mostly linear, so this stays cheap. As a safety valve,
+// once the combined inlined content for one run exceeds this budget the overflow
+// degrades to summary-only.
+const requiredInputsContentBudget = 100_000
+
 function formatRequiredInputs(inputs: RuntimeWorkRunInput['requiredInputs']): string {
   if (inputs.length === 0) {
     return 'Upstream work available: none'
   }
 
+  let remainingContentBudget = requiredInputsContentBudget
+
   return [
     'Upstream work available:',
-    ...inputs.map((item, index) =>
-      [
+    ...inputs.map((item, index) => {
+      const lines = [
         `${index + 1}. ${item.title}`,
         `Work Run: ${item.runId}`,
         `Agent: ${item.agentName} (${item.agentRole})`,
-        `Summary: ${item.resultSummary}`,
+        `Summary: ${item.resultSummary}`
+      ]
+
+      const content = item.resultContent.trim()
+      if (content) {
+        if (content.length <= remainingContentBudget) {
+          remainingContentBudget -= content.length
+          lines.push('Full result:', content)
+        } else {
+          lines.push('Full result: omitted here because it is large; rely on the summary above.')
+        }
+      }
+
+      lines.push(
         formatFileList('Artifacts', item.artifactRefs),
         formatFileList('Changed files', item.changedFiles)
-      ].join('\n')
-    )
+      )
+      return lines.join('\n')
+    })
   ].join('\n\n')
 }
 

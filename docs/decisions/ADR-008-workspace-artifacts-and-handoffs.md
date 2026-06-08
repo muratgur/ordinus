@@ -4,6 +4,14 @@
 
 Accepted
 
+Amended and partially superseded by ADR-030 (database-backed result content and handoffs). The
+"Handoffs Between Work Items" model below — compact summary plus workspace file references that the
+dependent agent reads from disk — is replaced for textual output: textual results are database-backed
+and passed inline as result content, and disk reading remains only for genuine typed-file
+deliverables. The runtime rule that spilled long textual output to a workspace file above a size
+threshold is removed. The single-workspace-root, module-working-folder, and Markdown
+frontmatter/`## References` policies for genuine files remain in force.
+
 ## Date
 
 2026-05-12

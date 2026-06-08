@@ -88,8 +88,6 @@ import type {
   OrdinusWriteMemoryInput,
   FileContent,
   FileReadInput,
-  FileWriteInput,
-  FileWriteResult,
   ObservedConversationRunsInput,
   ObservedRunDiagnostics,
   ObservedRunDiagnosticsInput,
@@ -116,6 +114,7 @@ import type {
   WorkboardArchiveRequestInput,
   WorkboardUnarchiveRequestInput,
   WorkboardPathStatus,
+  WorkboardSaveRunResultResult,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
   WorkboardStartRequestInput,
@@ -363,6 +362,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workboardAnswerInputRequest, input),
     revealPath: async (input: WorkboardRevealPathInput): Promise<void> =>
       ipcRenderer.invoke(ipcChannels.workboardRevealPath, input),
+    saveRunResult: async (input: WorkRunActionInput): Promise<WorkboardSaveRunResultResult> =>
+      ipcRenderer.invoke(ipcChannels.workboardSaveRunResult, input),
     checkPaths: async (input: WorkboardCheckPathsInput): Promise<WorkboardPathStatus[]> =>
       ipcRenderer.invoke(ipcChannels.workboardCheckPaths, input),
     archiveRequest: async (input: WorkboardArchiveRequestInput): Promise<WorkboardData> =>
@@ -421,9 +422,7 @@ const ordinus = {
   },
   files: {
     read: async (input: FileReadInput): Promise<FileContent> =>
-      ipcRenderer.invoke(ipcChannels.filesRead, input),
-    write: async (input: FileWriteInput): Promise<FileWriteResult> =>
-      ipcRenderer.invoke(ipcChannels.filesWrite, input)
+      ipcRenderer.invoke(ipcChannels.filesRead, input)
   },
   schedules: {
     list: async (input?: AgentScheduleListInput): Promise<AgentSchedule[]> =>
