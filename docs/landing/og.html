@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ordinus OG card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap" />
+<style>
+  html,body{margin:0;background:#fff;}
+  #card{
+    width:1200px;height:630px;position:relative;overflow:hidden;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    display:flex;align-items:center;
+  }
+  .copy{padding:0 0 0 88px;width:560px;}
+  h1{font-size:96px;line-height:0.95;letter-spacing:-0.04em;font-weight:800;margin:0;color:#111;}
+  .u{position:relative;white-space:nowrap;}
+  .u::after{content:"";position:absolute;left:-1%;right:-1%;bottom:0.05em;height:0.34em;z-index:-1;
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 30' preserveAspectRatio='none'%3E%3Cpath d='M3 20 C 60 8, 110 26, 160 16 S 250 6, 297 18' fill='none' stroke='%23d97757' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat;background-size:100% 100%;}
+  .sub{font-size:27px;color:#555;margin:34px 0 0;max-width:30ch;line-height:1.4;}
+  .mark{position:absolute;left:88px;bottom:54px;font-weight:700;font-size:26px;color:#111;letter-spacing:-0.02em;}
+  .scene{position:absolute;right:24px;top:0;height:630px;width:600px;display:flex;align-items:center;}
+  #ogscene{width:600px;height:auto;overflow:visible;}
+  #ogscene path{fill:none;stroke:#111;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+  #ogscene path.accent{stroke:#d97757;}
+  text{font-family:"Kalam",cursive;font-weight:700;font-size:23px;fill:#111;}
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="copy">
+      <h1>Not an AI.<br /><span class="u">A team.</span></h1>
+      <p class="sub">The AIs you already pay for, working together — on your machine.</p>
+    </div>
+    <div class="scene">
+      <svg id="ogscene" viewBox="0 0 600 430" aria-hidden="true"></svg>
+    </div>
+    <div class="mark">Ordinus</div>
+  </div>
+
+<script src="https://unpkg.com/roughjs@4.6.6/bundled/rough.js"></script>
+<script>
+  const svg = document.getElementById("ogscene");
+  const rc = rough.svg(svg);
+  const O = { roughness: 1.5, bowing: 1.4 };
+  const SEATS = [{x:120,y:200},{x:300,y:158},{x:480,y:200}];
+  const bodyPath=(x,y)=>`M ${x-30} ${y+80} C ${x-30} ${y+48} ${x-14} ${y+41} ${x} ${y+41} C ${x+14} ${y+41} ${x+30} ${y+48} ${x+30} ${y+80}`;
+  const strip = (n,cls)=>{n.querySelectorAll("path").forEach(p=>{p.removeAttribute("stroke");p.removeAttribute("stroke-width");if(cls)p.classList.add(cls);});svg.appendChild(n);return n;};
+  const t=(x,y,s)=>{const e=document.createElementNS("http://www.w3.org/2000/svg","text");e.setAttribute("x",x);e.setAttribute("y",y);e.setAttribute("text-anchor","middle");e.textContent=s;svg.appendChild(e);};
+
+  // agents (busts in a row — no table)
+  const labels=["Scout","Builder","Critic"];
+  SEATS.forEach((s,i)=>{
+    strip(rc.circle(s.x,s.y,58,O));
+    strip(rc.path(bodyPath(s.x,s.y),O));
+    t(s.x,s.y+112,labels[i]);
+  });
+  // arrows (one accent to show the "pass")
+  const arrow=(a,b,acc)=>{const mx=(a.x+b.x)/2,my=Math.min(a.y,b.y)-40;
+    strip(rc.path(`M ${a.x+38} ${a.y+6} Q ${mx} ${my} ${b.x-38} ${b.y+6}`,O),acc?"accent":null);
+    strip(rc.path(`M ${b.x-49} ${b.y-1} L ${b.x-38} ${b.y+6} L ${b.x-49} ${b.y+13}`,O),acc?"accent":null);};
+  arrow(SEATS[0],SEATS[1],true);
+  arrow(SEATS[1],SEATS[2],false);
+</script>
+</body>
+</html>

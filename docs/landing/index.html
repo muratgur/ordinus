@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ordinus — Not an AI. A team.</title>
+  <meta name="description" content="Ordinus turns the AIs you already pay for — Claude, Codex, Gemini — into a team of agents that work together. Right on your machine." />
+
+  <!-- Open Graph / social share preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Not an AI. A team." />
+  <meta property="og:description" content="Turn the AIs you already pay for into a team of agents that work together — right on your machine." />
+  <meta property="og:image" content="og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Not an AI. A team." />
+  <meta name="twitter:description" content="Turn the AIs you already pay for into a team of agents that work together — right on your machine." />
+  <meta name="twitter:image" content="og-image.png" />
+
+  <!-- Hand-drawn doodle mark as favicon -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='12' r='6' fill='none' stroke='%23111' stroke-width='2'/%3E%3Cpath d='M7 27c1-6 17-6 18 0' fill='none' stroke='%23111' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="stage">
+    <header class="topbar">
+      <span class="wordmark">Ordinus</span>
+      <a class="ghost-link" href="https://github.com/muratgur/ordinus" target="_blank" rel="noopener">GitHub ★</a>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <h1>Not an AI.<br /><span class="ink-underline">A team.</span></h1>
+        <p class="sub">
+          Ordinus turns the AIs you already pay for — Claude, Codex, Gemini —
+          into a team of agents that work together.
+        </p>
+        <p class="micro-badge">
+          <span class="dot" aria-hidden="true"></span>
+          Runs on your machine. Nothing leaves it.
+        </p>
+
+        <div class="cta-row">
+          <a class="btn btn-primary" id="cta-download"
+             href="https://github.com/muratgur/ordinus/releases/latest"
+             target="_blank" rel="noopener">Download</a>
+          <a class="btn btn-secondary" id="cta-star"
+             href="https://github.com/muratgur/ordinus"
+             target="_blank" rel="noopener">Star on GitHub</a>
+        </div>
+      </div>
+
+      <div class="hero-stage">
+        <div class="scene-wrap">
+          <svg id="scene" viewBox="0 0 900 430" role="img"
+               aria-label="A doodled team of AI agents passing work to each other"></svg>
+          <div id="result-card" class="result-card" aria-hidden="true">
+            <div class="result-title"></div>
+            <ul class="result-list"></ul>
+          </div>
+        </div>
+
+        <p class="prompt-label">Pick a job — watch the team take it on.</p>
+        <div class="cards" role="group" aria-label="Try a scenario">
+          <button class="card" data-scenario="roadtrip">Plan a road trip</button>
+          <button class="card" data-scenario="finances">Review my finances</button>
+          <button class="card" data-scenario="dinner">Plan tonight's family dinner</button>
+        </div>
+      </div>
+    </section>
+
+    <a class="scroll-hint" href="#how" aria-label="How it works">⌄</a>
+  </main>
+
+  <!-- Optional tail for the curious / the dev crowd -->
+  <section class="tail" id="how">
+    <div class="tail-inner">
+      <div class="steps">
+        <div class="step"><span class="step-n">1</span><h3>Pick a job</h3><p>Describe what you need in plain words.</p></div>
+        <div class="step"><span class="step-n">2</span><h3>The team works</h3><p>Specialized agents — powered by your local AI CLIs — pass the work down the line.</p></div>
+        <div class="step"><span class="step-n">3</span><h3>You get the result</h3><p>One clean answer, checked by more than one mind.</p></div>
+      </div>
+
+      <div class="built-on">
+        <h2>Built on the AIs you already pay for</h2>
+        <p>Claude · Codex · Gemini. Ordinus installs and wires up the CLIs for you — no terminal, no setup.</p>
+      </div>
+
+      <div class="download-block">
+        <h2>Download</h2>
+        <table class="dl-table">
+          <tr><td>macOS (Apple Silicon)</td><td><a href="https://github.com/muratgur/ordinus/releases/latest" target="_blank" rel="noopener">.dmg →</a></td></tr>
+          <tr><td>Windows (x64)</td><td><a href="https://github.com/muratgur/ordinus/releases/latest" target="_blank" rel="noopener">setup.exe →</a></td></tr>
+        </table>
+        <a class="btn btn-secondary" href="https://github.com/muratgur/ordinus" target="_blank" rel="noopener">Star on GitHub ★</a>
+      </div>
+
+      <footer class="foot">
+        <span>Local-first — your data stays on your machine.</span>
+        <span>MIT · <a href="https://github.com/muratgur/ordinus" target="_blank" rel="noopener">github.com/muratgur/ordinus</a></span>
+      </footer>
+    </div>
+  </section>
+
+  <script src="https://unpkg.com/roughjs@4.6.6/bundled/rough.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
