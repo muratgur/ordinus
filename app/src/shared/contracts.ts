@@ -755,7 +755,7 @@ export const ConversationParticipantStatusSchema = z.enum([
   'failed',
   'cancelled'
 ])
-export const ConversationTurnSpeakerSchema = z.enum(['user', 'agent'])
+export const ConversationTurnSpeakerSchema = z.enum(['user', 'agent', 'moderator'])
 export const ConversationTurnStatusSchema = z.enum([
   'running',
   'waiting_for_user',
@@ -935,6 +935,8 @@ export const ConversationTurnSchema = z.object({
   sequence: z.number().int().positive(),
   speaker: ConversationTurnSpeakerSchema,
   content: z.string(),
+  // ADR-030 parity: optional full body produced by the agent, shown on demand.
+  resultContent: z.string().default(''),
   preview: z.string(),
   status: ConversationTurnStatusSchema,
   error: z.string(),
@@ -1728,10 +1730,37 @@ export const OrchestrationAssignmentSchema = z.object({
   instruction: z.string().trim().min(1).max(16_000)
 })
 
-export const OrchestrationPlanSchema = z.object({
-  action: z.literal('route'),
-  assignments: z.array(OrchestrationAssignmentSchema).min(1).max(8)
-})
+export const OrchestrationActionSchema = z.enum(['route', 'conclude'])
+
+export const OrchestrationPlanSchema = z
+  .object({
+    action: OrchestrationActionSchema.default('route'),
+    assignments: z.array(OrchestrationAssignmentSchema).max(8).default([]),
+    // Strict structured output emits null (not omission) for the unused branch.
+    summary: z
+      .string()
+      .trim()
+      .min(1)
+      .max(16_000)
+      .nullish()
+      .transform((value) => value ?? undefined)
+  })
+  .superRefine((plan, ctx) => {
+    if (plan.action === 'route' && plan.assignments.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['assignments'],
+        message: 'A route plan must include at least one assignment.'
+      })
+    }
+    if (plan.action === 'conclude' && !plan.summary) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['summary'],
+        message: 'A conclude plan must include a summary.'
+      })
+    }
+  })
 
 export const AgentScheduleDisableReasonSchema = z.enum([
   'failures',
@@ -2033,4 +2062,5 @@ export type FileReadInput = z.infer<typeof FileReadInputSchema>
 export type FileContent = z.infer<typeof FileContentSchema>
 export type WorkboardSaveRunResultResult = z.infer<typeof WorkboardSaveRunResultResultSchema>
 export type OrchestrationAssignment = z.infer<typeof OrchestrationAssignmentSchema>
+export type OrchestrationAction = z.infer<typeof OrchestrationActionSchema>
 export type OrchestrationPlan = z.infer<typeof OrchestrationPlanSchema>

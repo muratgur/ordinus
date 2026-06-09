@@ -4,9 +4,11 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Sparkles,
   ClipboardList,
   Activity,
   FolderOpen,
@@ -148,6 +150,9 @@ export function ConversationsScreen(): React.JSX.Element {
 
   const runningTurns = detail?.turns.filter((turn) => turn.status === 'running') ?? []
   const runningTurn = runningTurns[0] ?? null
+  // ADR-032: a moderated discussion keeps the conversation 'running' across the gaps
+  // between sequential agent turns, so poll on that too (not just a live turn).
+  const conversationRunning = detail?.status === 'running'
   const pendingInputRequest = detail?.inputRequests.find((request) => request.status === 'pending')
   const activeInputRequest =
     detail?.inputRequests.find((request) => request.id === activeInputRequestId) ?? null
@@ -155,6 +160,9 @@ export function ConversationsScreen(): React.JSX.Element {
   const composerBlocked =
     !detail ||
     Boolean(runningTurn) ||
+    // ADR-032: a moderated discussion keeps the conversation 'running' across the
+    // gaps between sequential turns; block sends for the whole discussion.
+    conversationRunning ||
     Boolean(pendingInputRequest) ||
     sending ||
     !participant ||
@@ -268,7 +276,7 @@ export function ConversationsScreen(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!selectedConversationId || !runningTurn) {
+    if (!selectedConversationId || (!runningTurn && !conversationRunning)) {
       return
     }
 
@@ -285,7 +293,7 @@ export function ConversationsScreen(): React.JSX.Element {
     }, 1500)
 
     return () => window.clearInterval(timer)
-  }, [runningTurn, selectedConversationId])
+  }, [runningTurn, conversationRunning, selectedConversationId])
 
   useEffect(() => {
     shouldFollowMessagesRef.current = true
@@ -608,34 +616,56 @@ export function ConversationsScreen(): React.JSX.Element {
               <ScrollArea ref={messagesScrollAreaRef} className="min-h-0 flex-1">
                 <CardContent className="grid gap-3 p-4">
                   {detail.turns.length > 0 || activePendingSend ? (
-                    detail.turns.map((turn, index) => {
-                      const turnInputRequest = detail.inputRequests.find(
-                        (request) => request.turnId === turn.id && request.status === 'pending'
+                    (() => {
+                      const turnIndexById = new Map(
+                        detail.turns.map((turnItem, turnIndex) => [turnItem.id, turnIndex] as const)
                       )
-                      const turnInputRequestDisabled = turnInputRequest
-                        ? hasRunningTurnForParticipant(detail.turns, turnInputRequest.participantId)
-                        : false
-                      const answeringTurnInputRequest = turnInputRequest
-                        ? answeringRequestId === turnInputRequest.id
-                        : false
+                      const renderTurnCard = (turn: ConversationTurn): React.JSX.Element => {
+                        const index = turnIndexById.get(turn.id) ?? 0
+                        const turnInputRequest = detail.inputRequests.find(
+                          (request) => request.turnId === turn.id && request.status === 'pending'
+                        )
+                        const turnInputRequestDisabled = turnInputRequest
+                          ? hasRunningTurnForParticipant(
+                              detail.turns,
+                              turnInputRequest.participantId
+                            )
+                          : false
+                        const answeringTurnInputRequest = turnInputRequest
+                          ? answeringRequestId === turnInputRequest.id
+                          : false
 
-                      return (
-                        <TurnCard
-                          key={turn.id}
-                          turn={turn}
-                          participantName={getTurnParticipantLabel(detail, turn, index)}
-                          observedRun={observedRunByTurnId.get(turn.id) ?? null}
-                          inputRequest={turnInputRequest ?? null}
-                          inputRequestDrafts={
-                            turnInputRequest ? (inputDrafts[turnInputRequest.id] ?? {}) : {}
-                          }
-                          answeringInputRequest={answeringTurnInputRequest}
-                          inputRequestDisabled={turnInputRequestDisabled}
-                          onOpenInputRequest={(requestId) => setActiveInputRequestId(requestId)}
-                          onRevealPath={(path) => void handleRevealPath(turn.id, path)}
-                        />
+                        return (
+                          <TurnCard
+                            key={turn.id}
+                            turn={turn}
+                            participantName={getTurnParticipantLabel(detail, turn, index)}
+                            observedRun={observedRunByTurnId.get(turn.id) ?? null}
+                            inputRequest={turnInputRequest ?? null}
+                            inputRequestDrafts={
+                              turnInputRequest ? (inputDrafts[turnInputRequest.id] ?? {}) : {}
+                            }
+                            answeringInputRequest={answeringTurnInputRequest}
+                            inputRequestDisabled={turnInputRequestDisabled}
+                            onOpenInputRequest={(requestId) => setActiveInputRequestId(requestId)}
+                            onRevealPath={(path) => void handleRevealPath(turn.id, path)}
+                          />
+                        )
+                      }
+
+                      return buildTurnRenderItems(detail.turns).map((item) =>
+                        item.kind === 'discussion' ? (
+                          <DiscussionCard
+                            key={item.moderator.id}
+                            moderator={item.moderator}
+                            agentTurns={item.agentTurns}
+                            renderTurnCard={renderTurnCard}
+                          />
+                        ) : (
+                          renderTurnCard(item.turn)
+                        )
                       )
-                    })
+                    })()
                   ) : (
                     <EmptyState
                       icon={<MessageSquareText />}
@@ -645,6 +675,9 @@ export function ConversationsScreen(): React.JSX.Element {
                   )}
                   {activePendingSend ? (
                     <PendingSendTimeline pendingSend={activePendingSend} />
+                  ) : null}
+                  {conversationRunning && !runningTurn && usesOrchestrator(detail) ? (
+                    <ModeratorDeliberatingRow />
                   ) : null}
                   <div ref={messagesEndRef} aria-hidden="true" />
                 </CardContent>
@@ -658,11 +691,12 @@ export function ConversationsScreen(): React.JSX.Element {
                   detail,
                   participant,
                   runningTurn,
+                  conversationRunning,
                   pendingInputRequest
                 )}
                 disabled={composerBlocked}
                 sending={sending}
-                routingDisabled={Boolean(runningTurn)}
+                routingDisabled={Boolean(runningTurn) || conversationRunning}
                 updatingRoutingMode={updatingRoutingMode}
                 onChange={handleMessageChange}
                 onRoutingModeChange={(orchestrated) => void handleRoutingModeChange(orchestrated)}
@@ -1117,6 +1151,84 @@ function DeleteConversationDialog({
   )
 }
 
+// ADR-032: a concluded advisory discussion renders as a single Result card with the
+// agent turns collapsed beneath it. Manual conversations (no moderator turn) keep a
+// flat list — every turn becomes its own item, exactly as before.
+type TurnRenderItem =
+  | { kind: 'turn'; turn: ConversationTurn }
+  | { kind: 'discussion'; moderator: ConversationTurn; agentTurns: ConversationTurn[] }
+
+function buildTurnRenderItems(turns: ConversationTurn[]): TurnRenderItem[] {
+  const items: TurnRenderItem[] = []
+  let buffer: ConversationTurn[] = []
+  const flush = (): void => {
+    buffer.forEach((bufferedTurn) => items.push({ kind: 'turn', turn: bufferedTurn }))
+    buffer = []
+  }
+
+  for (const turn of turns) {
+    if (turn.speaker === 'moderator') {
+      items.push({ kind: 'discussion', moderator: turn, agentTurns: buffer })
+      buffer = []
+    } else if (turn.speaker === 'user') {
+      flush()
+      items.push({ kind: 'turn', turn })
+    } else {
+      buffer.push(turn)
+    }
+  }
+
+  flush()
+  return items
+}
+
+function DiscussionCard({
+  moderator,
+  agentTurns,
+  renderTurnCard
+}: {
+  moderator: ConversationTurn
+  agentTurns: ConversationTurn[]
+  renderTurnCard: (turn: ConversationTurn) => React.JSX.Element
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <article className="mr-auto grid w-full min-w-0 max-w-full gap-3 overflow-hidden rounded-lg border border-primary/30 bg-primary-soft/40 p-4 sm:max-w-[82%] dark:border-primary/40 dark:bg-primary-soft/30">
+      <div className="flex min-w-0 items-center gap-2">
+        <Sparkles className="size-4 shrink-0 text-primary" />
+        <p className="truncate text-sm font-semibold">Result</p>
+      </div>
+      <AgentMarkdown content={moderator.content} />
+      {moderator.truncated ? (
+        <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
+      ) : null}
+      {agentTurns.length > 0 ? (
+        <div className="grid gap-3">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            aria-expanded={open}
+          >
+            {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            {open
+              ? 'Hide discussion'
+              : `See discussion (${agentTurns.length} ${
+                  agentTurns.length === 1 ? 'reply' : 'replies'
+                })`}
+          </button>
+          {open ? (
+            <div className="grid gap-3 border-l-2 border-primary/20 pl-3">
+              {agentTurns.map((turn) => renderTurnCard(turn))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
 function TurnCard({
   turn,
   participantName,
@@ -1190,6 +1302,9 @@ function TurnCard({
       {turn.truncated ? (
         <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
       ) : null}
+      {!isUser && turn.status === 'completed' && turn.resultContent.trim() ? (
+        <TurnFullResponse content={turn.resultContent} />
+      ) : null}
       {!isUser && turn.status === 'completed' ? (
         <TurnFiles turn={turn} onRevealPath={onRevealPath} />
       ) : null}
@@ -1247,6 +1362,44 @@ function OrchestratorPlanningRow(): React.JSX.Element {
       <span className="shrink-0 font-medium text-foreground">Orchestrator</span>
       <span className="min-w-0 truncate">is planning the route</span>
       <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-status-running" />
+    </div>
+  )
+}
+
+// ADR-032: shown between sequential agent turns while the moderator decides who
+// speaks next (or concludes), so the discussion never looks idle/finished.
+function ModeratorDeliberatingRow(): React.JSX.Element {
+  return (
+    <div className="mr-auto flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-dashed bg-surface-subtle/60 px-3 py-2 text-xs text-muted-foreground sm:max-w-[82%]">
+      <Sparkles className="size-3.5 shrink-0 text-primary" />
+      <span className="shrink-0 font-medium text-foreground">Moderator</span>
+      <span className="min-w-0 truncate">is reviewing the discussion</span>
+      <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-status-running" />
+    </div>
+  )
+}
+
+// ADR-030 parity: the summary is always shown; the agent's full produced body
+// (resultContent) is surfaced on demand so the room stays calm by default.
+function TurnFullResponse({ content }: { content: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="grid gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        {open ? 'Hide full response' : 'Show full response'}
+      </button>
+      {open ? (
+        <div className="border-l-2 border-primary/20 pl-3">
+          <AgentMarkdown content={content} />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -2658,9 +2811,14 @@ function getBlockedReason(
   detail: ConversationDetail,
   participant: ConversationDetail['participants'][number] | null,
   runningTurn: ConversationTurn | null,
+  conversationRunning: boolean,
   pendingInputRequest: ConversationInputRequest | undefined
 ): string {
-  if (runningTurn) {
+  if (!runningTurn && conversationRunning && usesOrchestrator(detail)) {
+    return 'The advisory discussion is in progress. The moderator is deciding who speaks next.'
+  }
+
+  if (runningTurn || conversationRunning) {
     return 'This conversation is running. Stop it or wait for the agent response.'
   }
 
@@ -2835,6 +2993,12 @@ function getTurnParticipantLabel(
 ): string {
   if (turn.speaker === 'agent') {
     return getParticipantName(detail.participants, turn.participantId)
+  }
+
+  // ADR-032: in orchestrated mode the user addresses the room, not a chosen agent.
+  // The moderator decides who responds, so don't pin the user turn to a target.
+  if (usesOrchestrator(detail)) {
+    return ''
   }
 
   const targetParticipantIds = getAgentTurnTargetsAfterUserTurn(detail.turns, turnIndex)

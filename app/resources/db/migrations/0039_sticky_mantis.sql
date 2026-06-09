@@ -1,0 +1,1 @@
+ALTER TABLE `conversation_turns` ADD `result_content` text DEFAULT '' NOT NULL;

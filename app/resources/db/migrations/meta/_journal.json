@@ -274,6 +274,13 @@
       "when": 1780954048640,
       "tag": "0038_jazzy_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1781020189546,
+      "tag": "0039_sticky_mantis",
+      "breakpoints": true
     }
   ]
 }

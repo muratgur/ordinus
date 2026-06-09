@@ -383,7 +383,42 @@ export class OrdinusDatabase {
       )
     }
 
+    this.reconcileInterruptedConversations()
+
     return this.getStatus()
+  }
+
+  // ADR-032: conversation turns run via in-memory drivers (parallel one-shot turns
+  // and the sequential moderated-discussion loop). If the app exits mid-run, those
+  // drivers are gone but the rows are still 'running', which would permanently block
+  // the composer (a running turn or a 'running' conversation with no live turn, and
+  // no turn to cancel). On startup, fail orphaned running turns and unblock their
+  // conversations. Legitimately persisted states (waiting_for_user) are left intact.
+  private reconcileInterruptedConversations(): void {
+    const now = new Date().toISOString()
+
+    this.db
+      .update(conversationTurns)
+      .set({
+        status: 'failed',
+        error: 'This turn was interrupted when the app closed.',
+        preview: 'Interrupted',
+        updatedAt: now
+      })
+      .where(eq(conversationTurns.status, 'running'))
+      .run()
+
+    this.db
+      .update(conversationParticipants)
+      .set({ status: 'ready', updatedAt: now })
+      .where(eq(conversationParticipants.status, 'running'))
+      .run()
+
+    this.db
+      .update(conversations)
+      .set({ status: 'active', updatedAt: now })
+      .where(eq(conversations.status, 'running'))
+      .run()
   }
 
   getStatus(): DbStatus {
@@ -3957,10 +3992,17 @@ export class OrdinusDatabase {
     )
   }
 
-  prepareOrchestratedConversationTurn(
-    input: ConversationSendTurnInput,
-    assignments: OrchestrationAssignment[]
-  ): PreparedConversationTurn {
+  // ADR-032: moderator-routed advisory discussion primitives. Unlike
+  // prepareConversationAssignments (which inserts the user turn and every agent
+  // turn up front), a moderated discussion adds one agent turn at a time so the
+  // moderator can decide the next speaker after seeing each reply.
+
+  startModeratedDiscussion(input: ConversationSendTurnInput): {
+    conversationId: string
+    userMessage: string
+    userTurnId: string
+    userTurnSequence: number
+  } {
     const parsed = ConversationSendTurnInputSchema.parse(input)
     const detail = this.getConversation({ conversationId: parsed.conversationId })
 
@@ -3970,23 +4012,150 @@ export class OrdinusDatabase {
     if (detail.inputRequests.some((request) => request.status === 'pending')) {
       throw new Error('Answer or cancel the pending input request before sending another message.')
     }
-
-    const uniqueAssignments = mergeAssignmentsByParticipant(assignments)
-
-    if (uniqueAssignments.length === 0) {
-      throw new Error('Orchestrator did not choose an agent for this message.')
+    if (detail.participants.length === 0) {
+      throw new Error('Conversation has no participant.')
     }
 
-    const targetParticipants = this.resolveConversationTurnTargets(
-      detail,
-      uniqueAssignments.map((assignment) => assignment.participantId)
-    )
+    const now = new Date().toISOString()
+    const userTurn = createBoundedTurnContent(parsed.message)
+    const userTurnId = createConversationTurnId()
+    const userTurnSequence = this.getNextConversationTurnSequence(detail.id)
 
-    if (targetParticipants.length === 0) {
-      throw new Error('Orchestrator did not choose an agent for this message.')
+    this.db.transaction((tx) => {
+      tx.insert(conversationTurns)
+        .values({
+          id: userTurnId,
+          conversationId: detail.id,
+          participantId: detail.participants[0].id,
+          sequence: userTurnSequence,
+          speaker: 'user',
+          content: userTurn.content,
+          preview: userTurn.preview,
+          status: 'completed',
+          error: '',
+          logRef: '',
+          truncated: userTurn.truncated,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.update(conversations)
+        .set({ status: 'running', summary: userTurn.preview, updatedAt: now })
+        .where(eq(conversations.id, detail.id))
+        .run()
+    })
+
+    return {
+      conversationId: detail.id,
+      userMessage: parsed.message,
+      userTurnId,
+      userTurnSequence
+    }
+  }
+
+  appendModeratedAgentTurn(input: {
+    conversationId: string
+    participantId: string
+    message: string
+  }): PreparedConversationAgentTurn {
+    const detail = this.getConversation({ conversationId: input.conversationId })
+    const participant = detail.participants.find((item) => item.id === input.participantId)
+    if (!participant) {
+      throw new Error('The moderator chose an agent that is not part of this conversation.')
     }
 
-    return this.prepareConversationAssignments(detail, parsed.message, uniqueAssignments)
+    const agent = this.requireActiveAgent(participant.agentId)
+    const now = new Date().toISOString()
+    const agentTurnId = createConversationTurnId()
+    const sequence = this.getNextConversationTurnSequence(detail.id)
+
+    this.db.transaction((tx) => {
+      tx.insert(conversationTurns)
+        .values({
+          id: agentTurnId,
+          conversationId: detail.id,
+          participantId: participant.id,
+          sequence,
+          speaker: 'agent',
+          content: '',
+          preview: 'Running',
+          status: 'running',
+          error: '',
+          logRef: '',
+          truncated: false,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.update(conversationParticipants)
+        .set({ status: 'running', updatedAt: now })
+        .where(eq(conversationParticipants.id, participant.id))
+        .run()
+      tx.update(conversations)
+        .set({ status: 'running', updatedAt: now })
+        .where(eq(conversations.id, detail.id))
+        .run()
+    })
+
+    return {
+      conversationId: detail.id,
+      participantId: participant.id,
+      agentTurnId,
+      agent,
+      providerSessionRef:
+        participant.providerId === agent.providerId ? participant.providerSessionRef : null,
+      message: input.message
+    }
+  }
+
+  // ADR-032: completeConversationTurn downgrades a conversation to 'active' once a
+  // turn finishes (no live turn at that instant). During a moderated discussion the
+  // driver is still looping, so re-assert 'running' between turns. Without this the
+  // status flickers active↔running, which both unblocks the composer mid-discussion
+  // and stops the renderer's status-keyed polling.
+  markConversationDeliberating(conversationId: string): void {
+    this.db
+      .update(conversations)
+      .set({ status: 'running', updatedAt: new Date().toISOString() })
+      .where(eq(conversations.id, conversationId))
+      .run()
+  }
+
+  concludeModeratedDiscussion(input: {
+    conversationId: string
+    summary: string
+  }): ConversationDetail {
+    const detail = this.getConversation({ conversationId: input.conversationId })
+    const now = new Date().toISOString()
+    const synthesis = createBoundedTurnContent(input.summary)
+    const moderatorTurnId = createConversationTurnId()
+    const sequence = this.getNextConversationTurnSequence(detail.id)
+
+    this.db.transaction((tx) => {
+      tx.insert(conversationTurns)
+        .values({
+          id: moderatorTurnId,
+          conversationId: detail.id,
+          participantId: detail.participants[0]?.id ?? '',
+          sequence,
+          speaker: 'moderator',
+          content: synthesis.content,
+          preview: synthesis.preview,
+          status: 'completed',
+          error: '',
+          logRef: '',
+          truncated: synthesis.truncated,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.update(conversations)
+        .set({ status: 'active', summary: synthesis.preview, updatedAt: now })
+        .where(eq(conversations.id, detail.id))
+        .run()
+    })
+
+    return this.getConversation({ conversationId: detail.id })
   }
 
   private prepareConversationAssignments(
@@ -4176,6 +4345,7 @@ export class OrdinusDatabase {
       .update(conversationTurns)
       .set({
         content: output.content,
+        resultContent: input.outcome.content ?? '',
         preview: output.preview,
         status: 'completed',
         error: '',
@@ -5752,29 +5922,6 @@ function buildAssignedConversationMessage(userMessage: string, instruction: stri
     '',
     'Respond only to your assignment while preserving the relevant user context.'
   ].join('\n')
-}
-
-function mergeAssignmentsByParticipant(
-  assignments: OrchestrationAssignment[]
-): OrchestrationAssignment[] {
-  const merged = new Map<string, string[]>()
-
-  assignments.forEach((assignment) => {
-    const instruction = assignment.instruction.trim()
-    if (!instruction) {
-      return
-    }
-
-    merged.set(assignment.participantId, [
-      ...(merged.get(assignment.participantId) ?? []),
-      instruction
-    ])
-  })
-
-  return Array.from(merged, ([participantId, instructions]) => ({
-    participantId,
-    instruction: uniqueValues(instructions).join('\n\n')
-  }))
 }
 
 function formatConversationAgentNames(agentNames: string[]): string {

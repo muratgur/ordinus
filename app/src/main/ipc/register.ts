@@ -112,7 +112,6 @@ import {
   type AgentTurnOutcome,
   type ConversationDetail,
   type ConversationDeletePreview,
-  type ConversationSendTurnInput,
   type ProviderId,
   type WorkboardDraftPlan,
   type WorkboardGenerateRequestPlanInput,
@@ -130,6 +129,7 @@ import type {
   PreparedWorkRun
 } from '../db/database'
 import { getSystemPaths } from '../paths'
+import type { OrchestrationTranscriptEntry } from '../runtime/prompts/orchestration'
 import type { RuntimeService } from '../runtime'
 import type { ObservabilityService } from '../observability/service'
 import type { SanitizedInvocationSummary } from '../observability/types'
@@ -637,7 +637,23 @@ export function registerIpcHandlers(
       throw new Error('Wait for the current turn to finish before sending another message.')
     }
 
-    const prepared = await prepareConversationTurn(database, runtime, current, input)
+    // ADR-032: Orchestrator-ON conversations run a moderator-routed advisory
+    // discussion (sequential, bounded). All other modes keep the one-shot path.
+    if (current.routingMode === 'orchestrated') {
+      // Validate provider readiness up front so the user gets a synchronous error;
+      // the fire-and-forget driver cannot surface a throw.
+      await getOrchestratorRuntimeConfig(database, runtime)
+      const started = database.startModeratedDiscussion(input)
+      void runModeratedDiscussion(database, runtime, observability, {
+        conversationId: started.conversationId,
+        userMessage: started.userMessage,
+        userTurnSequence: started.userTurnSequence,
+        mentionedParticipantIds: input.targetParticipantIds ?? []
+      })
+      return database.getConversation({ conversationId: started.conversationId })
+    }
+
+    const prepared = database.prepareConversationTurn(input)
     startPreparedConversationTurns(database, runtime, observability, prepared)
 
     return database.getConversation({ conversationId: prepared.conversationId })
@@ -1873,28 +1889,6 @@ function isTerminalWorkRunStatus(status: WorkRun['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
-async function prepareConversationTurn(
-  database: OrdinusDatabase,
-  runtime: RuntimeService,
-  current: ConversationDetail,
-  input: ConversationSendTurnInput
-): Promise<PreparedConversationTurn> {
-  if (current.routingMode !== 'orchestrated') {
-    return database.prepareConversationTurn(input)
-  }
-
-  const plan = OrchestrationPlanSchema.parse(
-    await runtime.generateOrchestrationPlan({
-      ...(await getOrchestratorRuntimeConfig(database, runtime)),
-      participants: current.participants,
-      mentionedParticipantIds: input.targetParticipantIds ?? [],
-      userMessage: input.message
-    })
-  )
-
-  return database.prepareOrchestratedConversationTurn(input, plan.assignments)
-}
-
 function startPreparedConversationTurns(
   database: OrdinusDatabase,
   runtime: RuntimeService,
@@ -1909,60 +1903,79 @@ function startPreparedConversationTurns(
   ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, conversation.workingRoot)
 
   prepared.agentTurns.forEach((agentTurn) => {
-    const logRef = join('conversations', prepared.conversationId, agentTurn.agentTurnId)
-    const logDir = join(getSystemPaths().logs, logRef)
-    const turn = database.getConversationTurn(agentTurn.agentTurnId)
-    const startedAt = new Date().toISOString()
-    const observationSink = observability.startConversationTurn({
-      turn,
-      conversationId: prepared.conversationId,
-      conversationTitle: conversation.title,
-      agent: agentTurn.agent,
-      logRef,
-      invocation: buildProviderInvocationSummary({
-        providerId: agentTurn.agent.providerId,
-        sandbox: agentTurn.agent.sandbox,
-        workspaceRoot: workspace.workspaceRoot,
-        startedAt
-      })
-    })
-    mkdirSync(logDir, { recursive: true })
-
-    database.recordAgentUsage(agentTurn.agent.id)
-
-    void runtime
-      .sendConversationTurn({
-        turnId: agentTurn.agentTurnId,
-        conversationId: prepared.conversationId,
-        providerId: agentTurn.agent.providerId,
-        model: agentTurn.agent.model,
-        sandbox: agentTurn.agent.sandbox,
-        workspaceRoot: workspace.workspaceRoot,
-        workingRoot: conversation.workingRoot,
-        agentHomePath: getAgentHome(agentTurn.agent.id),
-        extraDirectories: agentTurn.agent.extraDirectories,
-        agentName: agentTurn.agent.name,
-        agentRole: agentTurn.agent.role,
-        instructions: composeInstructionsWithMemory(
-          database,
-          agentTurn.agent.id,
-          agentTurn.agent.instructions
-        ),
-        connectors: agentTurn.agent.connectors,
-        providerSessionRef: agentTurn.providerSessionRef,
-        message: agentTurn.message,
-        logRef,
-        eventLogPath: join(logDir, 'events.jsonl'),
-        lastMessagePath: join(logDir, 'last-message.txt'),
-        observability: observationSink
-      })
-      .then((result) => {
-        saveConversationTurnCompletion(database, observability, agentTurn, result)
-      })
-      .catch((error) => {
-        saveConversationTurnFailure(database, observability, agentTurn.agentTurnId, error, logRef)
-      })
+    void runConversationAgentTurn(database, runtime, observability, agentTurn)
   })
+}
+
+/**
+ * Executes a single prepared agent turn end to end: starts observation, runs the
+ * provider, and persists the completion or failure. Resolves when the turn is
+ * finalized. Used both by the parallel one-shot path (fire-and-forget) and by the
+ * sequential moderated discussion driver (awaited).
+ */
+async function runConversationAgentTurn(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  observability: ObservabilityService,
+  agentTurn: PreparedConversationAgentTurn,
+  options?: { suppressNeedsInput?: boolean }
+): Promise<void> {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before running conversations.')
+  }
+  const conversation = database.getConversation({ conversationId: agentTurn.conversationId })
+  const logRef = join('conversations', agentTurn.conversationId, agentTurn.agentTurnId)
+  const logDir = join(getSystemPaths().logs, logRef)
+  const turn = database.getConversationTurn(agentTurn.agentTurnId)
+  const startedAt = new Date().toISOString()
+  const observationSink = observability.startConversationTurn({
+    turn,
+    conversationId: agentTurn.conversationId,
+    conversationTitle: conversation.title,
+    agent: agentTurn.agent,
+    logRef,
+    invocation: buildProviderInvocationSummary({
+      providerId: agentTurn.agent.providerId,
+      sandbox: agentTurn.agent.sandbox,
+      workspaceRoot: workspace.workspaceRoot,
+      startedAt
+    })
+  })
+  mkdirSync(logDir, { recursive: true })
+
+  database.recordAgentUsage(agentTurn.agent.id)
+
+  try {
+    const result = await runtime.sendConversationTurn({
+      turnId: agentTurn.agentTurnId,
+      conversationId: agentTurn.conversationId,
+      providerId: agentTurn.agent.providerId,
+      model: agentTurn.agent.model,
+      sandbox: agentTurn.agent.sandbox,
+      workspaceRoot: workspace.workspaceRoot,
+      workingRoot: conversation.workingRoot,
+      agentHomePath: getAgentHome(agentTurn.agent.id),
+      extraDirectories: agentTurn.agent.extraDirectories,
+      agentName: agentTurn.agent.name,
+      agentRole: agentTurn.agent.role,
+      instructions: composeInstructionsWithMemory(
+        database,
+        agentTurn.agent.id,
+        agentTurn.agent.instructions
+      ),
+      connectors: agentTurn.agent.connectors,
+      providerSessionRef: agentTurn.providerSessionRef,
+      message: agentTurn.message,
+      logRef,
+      eventLogPath: join(logDir, 'events.jsonl'),
+      lastMessagePath: join(logDir, 'last-message.txt'),
+      observability: observationSink
+    })
+    saveConversationTurnCompletion(database, observability, agentTurn, result, options)
+  } catch (error) {
+    saveConversationTurnFailure(database, observability, agentTurn.agentTurnId, error, logRef)
+  }
 }
 
 async function getOrchestratorRuntimeConfig(
@@ -1988,15 +2001,179 @@ async function getOrchestratorRuntimeConfig(
   }
 }
 
+// ADR-032: fixed turn cap and context windows for moderated advisory discussions.
+const MODERATED_DISCUSSION_MAX_AGENT_TURNS = 4
+const MODERATOR_TRANSCRIPT_WINDOW = 12
+const AGENT_CONTEXT_WINDOW = 2
+
+function buildModeratorTranscript(
+  detail: ConversationDetail,
+  userTurnSequence: number
+): OrchestrationTranscriptEntry[] {
+  const agentNameByParticipant = new Map(
+    detail.participants.map((participant) => [participant.id, participant.agentName])
+  )
+
+  return detail.turns
+    .filter(
+      (turn) =>
+        turn.sequence > userTurnSequence &&
+        turn.speaker !== 'user' &&
+        turn.status === 'completed' &&
+        turn.content.trim().length > 0
+    )
+    .sort((a, b) => a.sequence - b.sequence)
+    .slice(-MODERATOR_TRANSCRIPT_WINDOW)
+    .map((turn) => ({
+      speaker: turn.speaker,
+      agentName:
+        turn.speaker === 'agent'
+          ? (agentNameByParticipant.get(turn.participantId) ?? undefined)
+          : undefined,
+      content: turn.content
+    }))
+}
+
+function buildModeratedAgentMessage(
+  userMessage: string,
+  instruction: string,
+  recentEntries: OrchestrationTranscriptEntry[]
+): string {
+  const lines = ['Topic under discussion:', userMessage, '']
+
+  if (recentEntries.length > 0) {
+    lines.push('Recent points in the discussion:')
+    recentEntries.forEach((entry) => {
+      const who = entry.speaker === 'agent' ? (entry.agentName ?? 'A colleague') : 'Moderator'
+      lines.push(`${who} said: ${entry.content}`)
+    })
+    lines.push('')
+  }
+
+  lines.push('Your assignment:', instruction.trim(), '')
+  lines.push(
+    'Give your opinion as a member of an advisory board. Build on or challenge the points above as relevant. Do not ask the user questions — state any assumptions explicitly and give your view.'
+  )
+
+  return lines.join('\n')
+}
+
+/**
+ * ADR-032: drives a moderator-routed advisory discussion. Runs the moderator, then
+ * one agent turn at a time, re-consulting the moderator after each reply until it
+ * concludes or the fixed turn cap is reached. Fire-and-forget at the call site; the
+ * renderer observes turns appearing via its normal conversation polling.
+ */
+async function runModeratedDiscussion(
+  database: OrdinusDatabase,
+  runtime: RuntimeService,
+  observability: ObservabilityService,
+  context: {
+    conversationId: string
+    userMessage: string
+    userTurnSequence: number
+    mentionedParticipantIds: string[]
+  }
+): Promise<void> {
+  const { conversationId, userMessage, userTurnSequence, mentionedParticipantIds } = context
+  let priorAgentTurns = 0
+  let successfulTurns = 0
+
+  try {
+    const config = await getOrchestratorRuntimeConfig(database, runtime)
+
+    for (;;) {
+      const detail = database.getConversation({ conversationId })
+      if (detail.status === 'cancelled') {
+        return
+      }
+
+      // Hold the conversation in 'running' across the gap between turns so the UI
+      // stays blocked and keeps polling while the moderator deliberates.
+      database.markConversationDeliberating(conversationId)
+
+      const transcript = buildModeratorTranscript(detail, userTurnSequence)
+      const plan = OrchestrationPlanSchema.parse(
+        await runtime.generateOrchestrationPlan({
+          ...config,
+          participants: detail.participants,
+          mentionedParticipantIds,
+          userMessage,
+          transcript,
+          priorAgentTurns,
+          maxAgentTurns: MODERATED_DISCUSSION_MAX_AGENT_TURNS
+        })
+      )
+
+      const mustConclude = priorAgentTurns >= MODERATED_DISCUSSION_MAX_AGENT_TURNS
+      const assignment = plan.assignments[0]
+
+      if (plan.action === 'conclude' || mustConclude || !assignment) {
+        const summary =
+          plan.summary?.trim() ||
+          (successfulTurns === 0
+            ? 'The advisory discussion could not produce a result because no agent responded.'
+            : 'The advisory discussion concluded.')
+        database.concludeModeratedDiscussion({ conversationId, summary })
+        return
+      }
+
+      const message = buildModeratedAgentMessage(
+        userMessage,
+        assignment.instruction,
+        transcript.slice(-AGENT_CONTEXT_WINDOW)
+      )
+      const prepared = database.appendModeratedAgentTurn({
+        conversationId,
+        participantId: assignment.participantId,
+        message
+      })
+
+      await runConversationAgentTurn(database, runtime, observability, prepared, {
+        suppressNeedsInput: true
+      })
+
+      const completed = database.getConversationTurn(prepared.agentTurnId)
+      if (completed.status === 'cancelled') {
+        // User cancelled mid-discussion; stop without forcing a conclusion.
+        return
+      }
+      if (completed.status === 'completed') {
+        successfulTurns += 1
+      }
+      priorAgentTurns += 1
+    }
+  } catch (error) {
+    // Never leave a discussion stuck in 'running'. Surface a conclusion the user can read.
+    const detail = database.getConversation({ conversationId })
+    if (detail.status === 'running') {
+      database.concludeModeratedDiscussion({
+        conversationId,
+        summary: `The advisory discussion stopped early: ${
+          error instanceof Error ? error.message : 'unexpected error'
+        }`
+      })
+    }
+  }
+}
+
 function saveConversationTurnCompletion(
   database: OrdinusDatabase,
   observability: ObservabilityService,
   agentTurn: PreparedConversationAgentTurn,
-  result: Awaited<ReturnType<RuntimeService['sendConversationTurn']>>
+  result: Awaited<ReturnType<RuntimeService['sendConversationTurn']>>,
+  options?: { suppressNeedsInput?: boolean }
 ): void {
   try {
     const turnId = agentTurn.agentTurnId
-    const outcome = resolveConversationTurnOutcome(database, turnId, result.outcome)
+    // ADR-032: advisory turns must not open input requests. If an agent ignores the
+    // directive and asks for input, fold its questions into a stated-assumptions
+    // opinion so the discussion still benefits and the loop is never blocked.
+    const rawOutcome =
+      options?.suppressNeedsInput && result.outcome.outcome === 'needs_input'
+        ? coerceNeedsInputToOpinion(result.outcome)
+        : result.outcome
+    const outcome = resolveConversationTurnOutcome(database, turnId, rawOutcome)
     database.completeConversationTurn({
       turnId,
       providerId: agentTurn.agent.providerId,
@@ -2043,6 +2220,31 @@ function resolveConversationTurnOutcome(
     ...outcome,
     artifactRefs: fileRefs.artifactRefs,
     changedFiles: fileRefs.changedFiles
+  }
+}
+
+// ADR-032: turn an agent's needs_input outcome into a final opinion. Advisory-board
+// members state assumptions instead of asking the user to unblock them.
+function coerceNeedsInputToOpinion(
+  outcome: Extract<AgentTurnOutcome, { outcome: 'needs_input' }>
+): AgentTurnOutcome {
+  const questionLines = outcome.questions.map((question) => `- ${question.label}`).join('\n')
+  const heading = outcome.title.trim() || 'Open considerations'
+  const detail = outcome.detail?.trim()
+  const summary = [
+    `**${heading}** (stated as open considerations rather than blocking questions):`,
+    detail ?? '',
+    questionLines
+  ]
+    .filter((line) => line.length > 0)
+    .join('\n\n')
+
+  return {
+    outcome: 'final_response',
+    summary,
+    content: '',
+    artifactRefs: [],
+    changedFiles: []
   }
 }
 

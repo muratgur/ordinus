@@ -109,6 +109,9 @@ export const conversationTurns = sqliteTable('conversation_turns', {
   sequence: integer('sequence').notNull(),
   speaker: text('speaker').notNull(),
   content: text('content').notNull(),
+  // ADR-030 parity: `content` holds the always-shown summary; `resultContent`
+  // holds the optional full body the agent produced (surfaced on demand).
+  resultContent: text('result_content').notNull().default(''),
   preview: text('preview').notNull(),
   status: text('status').notNull(),
   error: text('error').notNull(),

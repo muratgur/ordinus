@@ -43,7 +43,18 @@ const RuntimeOrchestrationPlanInputSchema = z.object({
   workspaceRoot: z.string().trim().min(1),
   participants: z.array(ConversationParticipantSchema).min(1).max(8),
   mentionedParticipantIds: z.array(z.string().min(1)).max(8),
-  userMessage: z.string().trim().min(1).max(64_000)
+  userMessage: z.string().trim().min(1).max(64_000),
+  transcript: z
+    .array(
+      z.object({
+        speaker: z.enum(['user', 'agent', 'moderator']),
+        agentName: z.string().min(1).optional(),
+        content: z.string()
+      })
+    )
+    .optional(),
+  priorAgentTurns: z.number().int().nonnegative().optional(),
+  maxAgentTurns: z.number().int().positive().optional()
 })
 
 const RuntimeWorkboardPlanInputSchema = z.object({
