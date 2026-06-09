@@ -4,6 +4,15 @@
 
 Accepted
 
+Partially superseded by ADR-031 (folder-scoped agent isolation). The **context reference**
+mechanism defined here — selecting files, folders, prior outputs, or artifacts through the
+References surface (Suggested / Selected / All files / Manual path) — is **removed** and replaced by
+per-request **folder selection** (New: a fresh title-named folder; Existing: any folder under the
+root). The **destination** model (no selection → new Work Request; selected Work Request → add a
+Work Item) and the **Continue** entry path remain. Multi-item continuation context now flows through
+inline database-backed results (ADR-030) and/or by pointing a new request at the same Existing
+folder, rather than through filesystem context references.
+
 ## Date
 
 2026-05-16

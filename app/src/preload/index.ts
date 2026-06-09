@@ -117,6 +117,8 @@ import type {
   WorkboardSaveRunResultResult,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
+  WorkboardListWorkspaceFoldersInput,
+  WorkboardListWorkspaceFoldersResult,
   WorkboardStartRequestInput,
   WorkflowDesign,
   WorkflowDesignCreateInput,
@@ -338,6 +340,10 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workboardGenerateRequestPlan, input),
     startRequestPlan: async (input: WorkboardStartRequestPlanInput): Promise<WorkboardData> =>
       ipcRenderer.invoke(ipcChannels.workboardStartRequestPlan, input),
+    listWorkspaceFolders: async (
+      input: WorkboardListWorkspaceFoldersInput
+    ): Promise<WorkboardListWorkspaceFoldersResult> =>
+      ipcRenderer.invoke(ipcChannels.workboardListWorkspaceFolders, input),
     generatePlan: async (input: WorkboardGeneratePlanInput): Promise<WorkboardDraftPlan> =>
       ipcRenderer.invoke(ipcChannels.workboardGeneratePlan, input),
     startRequest: async (input: WorkboardStartRequestInput): Promise<WorkboardData> =>

@@ -93,6 +93,8 @@ import {
   WorkboardCheckPathsInputSchema,
   WorkboardArchiveRequestInputSchema,
   WorkboardUnarchiveRequestInputSchema,
+  WorkboardListWorkspaceFoldersInputSchema,
+  WorkboardListWorkspaceFoldersResultSchema,
   WorkboardPathStatusListSchema,
   WorkboardStartFollowUpInputSchema,
   WorkboardStartRequestPlanInputSchema,
@@ -116,6 +118,7 @@ import {
   type WorkboardGenerateRequestPlanInput,
   type WorkboardGenerateFollowUpPlanInput,
   type WorkboardContextReferenceInput,
+  type WorkboardListWorkspaceFoldersResult,
   type WorkRequest,
   type WorkRun
 } from '@shared/contracts'
@@ -166,6 +169,7 @@ import {
   filterExistingWorkspacePaths,
   resolveReportedWorkspaceFileRefs,
   resolveWorkspaceRelativePath,
+  workspaceModuleFolders,
   type WorkspaceWorkingFolderContext
 } from '../workspace/path-policy'
 import {
@@ -723,6 +727,10 @@ export function registerIpcHandlers(
     const request = database.createWorkRequestPlan(input)
     startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardListWorkspaceFolders, (_event, payload) => {
+    const input = WorkboardListWorkspaceFoldersInputSchema.parse(payload)
+    return listWorkspaceFolders(database, input.path)
   })
   ipcMain.handle(ipcChannels.workboardGeneratePlan, async (_event, payload) => {
     const input = WorkboardGeneratePlanInputSchema.parse(payload)
@@ -1317,6 +1325,70 @@ function formatDestinationWorkRequestForPrompt(
     '',
     formatExistingWorkForPrompt(requestRuns, null)
   ].join('\n')
+}
+
+// ADR-031: browse folders under the workspace root for the Existing-folder
+// picker. System buckets (Conversations, Ordinus, Schedules) are hidden; the
+// Projects bucket root is navigable but not selectable, so a request can only
+// bind to a specific project folder, never to a bucket root (which would
+// re-expose every project). Folders outside the root are out of scope here —
+// that is the job of per-agent extra directories (ADR-024).
+function listWorkspaceFolders(
+  database: OrdinusDatabase,
+  path: string | undefined
+): WorkboardListWorkspaceFoldersResult {
+  const workspace = database.getWorkspaceConfig()
+  const basePath = path ?? ''
+  if (!workspace) {
+    return { path: basePath, entries: [] }
+  }
+
+  const projectsBucket = workspaceModuleFolders.workboard
+  const hiddenRootBuckets = new Set<string>([
+    workspaceModuleFolders.conversations,
+    workspaceModuleFolders.ordinus,
+    workspaceModuleFolders.schedules
+  ])
+
+  const absoluteBase = basePath
+    ? resolveWorkspaceRelativePath(workspace.workspaceRoot, basePath)
+    : workspace.workspaceRoot
+
+  let dirents
+  try {
+    dirents = readdirSync(absoluteBase, { withFileTypes: true })
+  } catch {
+    return { path: basePath, entries: [] }
+  }
+
+  const atRoot = basePath === ''
+  const entries = dirents
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .filter((entry) => !(atRoot && hiddenRootBuckets.has(entry.name)))
+    .map((entry) => {
+      const entryPath = basePath ? `${basePath}/${entry.name}` : entry.name
+      return {
+        name: entry.name,
+        path: entryPath,
+        hasChildren: directoryHasSubdirectory(join(absoluteBase, entry.name)),
+        // The Projects bucket root is navigate-only; everything else (specific
+        // project folders, the user's own folders) is selectable.
+        selectable: !(atRoot && entry.name === projectsBucket)
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  return WorkboardListWorkspaceFoldersResultSchema.parse({ path: basePath, entries })
+}
+
+function directoryHasSubdirectory(absolutePath: string): boolean {
+  try {
+    return readdirSync(absolutePath, { withFileTypes: true }).some(
+      (entry) => entry.isDirectory() && !entry.name.startsWith('.')
+    )
+  } catch {
+    return false
+  }
 }
 
 function buildContextReferencesForPrompt(

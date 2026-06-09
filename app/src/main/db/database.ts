@@ -187,8 +187,21 @@ import {
   createWorkboardWorkingRoot,
   ensureWorkspaceRelativeDirectory,
   filterExistingWorkspacePaths,
-  resolveWorkspaceRelativePath
+  resolveWorkspaceRelativePath,
+  workspaceModuleFolders,
+  type WorkingRootReservation
 } from '../workspace/path-policy'
+
+// ADR-031: a user-chosen Existing folder may be any folder under the workspace
+// root except a system bucket root (Projects/Conversations/Ordinus/Schedules) —
+// binding to a bucket root would re-expose every project beneath it.
+function assertSelectableWorkingRoot(workingRoot: string): string {
+  const bucketRoots = new Set<string>(Object.values(workspaceModuleFolders))
+  if (bucketRoots.has(workingRoot)) {
+    throw new Error('Choose a project folder inside the workspace, not a system folder.')
+  }
+  return workingRoot
+}
 
 const turnContentLimit = 16_000
 const turnPreviewLimit = 240
@@ -1607,6 +1620,29 @@ export class OrdinusDatabase {
     return AgentMemoryDeactivateResultSchema.parse({ deactivatedRuleId: parsed.ruleId })
   }
 
+  // ADR-031: a workingRoot is reserved if any Work Request or conversation
+  // already uses it. Folders are created lazily at run start, so the database —
+  // not the filesystem — is the authoritative claim when allocating a new
+  // title-based folder name.
+  private workingRootReservation(): WorkingRootReservation {
+    return (candidate) => {
+      const request = this.db
+        .select({ id: workRequests.id })
+        .from(workRequests)
+        .where(eq(workRequests.workingRoot, candidate))
+        .get()
+      if (request) {
+        return true
+      }
+      const conversation = this.db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.workingRoot, candidate))
+        .get()
+      return Boolean(conversation)
+    }
+  }
+
   createWorkRun(input: WorkRunCreateInput): WorkRun {
     const parsed = WorkRunCreateInputSchema.parse(input)
     const agent = this.requireActiveAgent(parsed.assignedAgentId)
@@ -1623,14 +1659,18 @@ export class OrdinusDatabase {
 
     const now = new Date().toISOString()
     const runId = createWorkRunId()
+    const workspace = this.getWorkspaceConfig()
     const workingRoot =
       parentRun?.workingRoot ??
       (parsed.source?.type === workRequestSourceType && parsed.source.id
         ? this.getWorkRequest(parsed.source.id).workingRoot
-        : createWorkboardWorkingRoot(parsed.title, runId))
+        : createWorkboardWorkingRoot(
+            workspace?.workspaceRoot ?? '',
+            parsed.title,
+            this.workingRootReservation()
+          ))
     const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds(requiredRuns)
     const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
-    const workspace = this.getWorkspaceConfig()
     if (workspace) {
       ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
     }
@@ -1733,9 +1773,19 @@ export class OrdinusDatabase {
 
     const now = new Date().toISOString()
     const requestId = destinationRequest?.id ?? createWorkRequestId()
+    // ADR-031: destination request inherits its folder; an explicit
+    // Existing-folder choice (parsed.workingRoot) binds to that folder; otherwise
+    // a new title-based folder is allocated. A chosen folder may not be a bucket
+    // root — that would re-expose every project under it.
     const workingRoot =
       destinationRequest?.workingRoot ??
-      createWorkboardWorkingRoot(plan.title || parsed.originalRequest, requestId)
+      (parsed.workingRoot
+        ? assertSelectableWorkingRoot(parsed.workingRoot)
+        : createWorkboardWorkingRoot(
+            workspace.workspaceRoot,
+            plan.title || parsed.originalRequest,
+            this.workingRootReservation()
+          ))
     const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
@@ -1920,7 +1970,11 @@ export class OrdinusDatabase {
 
     const now = new Date().toISOString()
     const requestId = createWorkRequestId()
-    const workingRoot = createWorkboardWorkingRoot(plan.title || parsed.originalRequest, requestId)
+    const workingRoot = createWorkboardWorkingRoot(
+      workspace.workspaceRoot,
+      plan.title || parsed.originalRequest,
+      this.workingRootReservation()
+    )
     const runIdsByTempId = new Map(plan.items.map((item) => [item.tempId, createWorkRunId()]))
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
@@ -2437,7 +2491,13 @@ export class OrdinusDatabase {
     const now = new Date().toISOString()
     const runId = createWorkRunId()
     const requestId = request?.id ?? createWorkRequestId()
-    const workingRoot = request?.workingRoot ?? createWorkboardWorkingRoot(schedule.name, requestId)
+    const workingRoot =
+      request?.workingRoot ??
+      createWorkboardWorkingRoot(
+        workspace.workspaceRoot,
+        schedule.name,
+        this.workingRootReservation()
+      )
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db.transaction((tx) => {
@@ -3664,7 +3724,11 @@ export class OrdinusDatabase {
     const conversationId = createConversationId()
     const participantId = createConversationParticipantId()
     const title = parsed.title?.trim() || agent.name
-    const workingRoot = createConversationWorkingRoot(title, conversationId)
+    const workingRoot = createConversationWorkingRoot(
+      workspace.workspaceRoot,
+      title,
+      this.workingRootReservation()
+    )
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db
@@ -3731,7 +3795,11 @@ export class OrdinusDatabase {
     const conversationId = createConversationId()
     const participantId = createConversationParticipantId()
     const title = agent.name
-    const workingRoot = createConversationWorkingRoot(title, conversationId)
+    const workingRoot = createConversationWorkingRoot(
+      workspace.workspaceRoot,
+      title,
+      this.workingRootReservation()
+    )
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db.transaction((tx) => {
@@ -3784,7 +3852,11 @@ export class OrdinusDatabase {
     const title =
       parsed.title?.trim() ||
       formatConversationAgentNames(selectedAgents.map((agent) => agent.name))
-    const workingRoot = createConversationWorkingRoot(title, conversationId)
+    const workingRoot = createConversationWorkingRoot(
+      workspace.workspaceRoot,
+      title,
+      this.workingRootReservation()
+    )
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
     this.db.transaction((tx) => {

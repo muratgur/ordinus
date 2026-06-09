@@ -520,6 +520,7 @@ export const AgentProfileSchema = z.object({
     )
     .refine((value) => !value.startsWith('agt-'), 'Profile ids must not use the agent namespace.'),
   category: z.string().min(1),
+  categories: z.array(z.string().min(1)).default([]),
   name: z.string().min(1).max(80),
   role: z.string().min(1).max(120),
   capabilities: AgentCapabilitiesSchema,
@@ -1329,7 +1330,33 @@ export const WorkboardStartRequestPlanInputSchema = z.object({
   destinationRequestId: z.string().min(1).optional(),
   contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
   requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([]),
+  // ADR-031: an explicit Existing-folder choice for a brand-new Work Request.
+  // Ignored when destinationRequestId is set (the request inherits that
+  // request's folder). When omitted, a new title-based folder is allocated.
+  workingRoot: WorkspaceRelativePathSchema.optional(),
   plan: WorkboardDraftPlanSchema
+})
+
+// ADR-031: browse folders under the workspace root for the Existing-folder
+// picker. `path` is the workspace-relative folder to list (root when omitted).
+export const WorkboardListWorkspaceFoldersInputSchema = z.object({
+  path: WorkspaceRelativePathSchema.optional()
+})
+
+export const WorkboardWorkspaceFolderEntrySchema = z.object({
+  name: z.string(),
+  // Workspace-relative path of this folder (used as the Work Request workingRoot).
+  path: WorkspaceRelativePathSchema,
+  hasChildren: z.boolean(),
+  // System buckets (e.g. the Projects bucket root) are navigable but not
+  // selectable, so the agent is never bound to a bucket root.
+  selectable: z.boolean()
+})
+
+export const WorkboardListWorkspaceFoldersResultSchema = z.object({
+  // The folder currently being listed ('' = workspace root).
+  path: z.string(),
+  entries: z.array(WorkboardWorkspaceFolderEntrySchema)
 })
 
 export const WorkboardGenerateFollowUpPlanInputSchema = z.object({
@@ -1349,7 +1376,9 @@ export const PendingPlanTargetSchema = z.discriminatedUnion('kind', [
     kind: z.literal('request'),
     destinationRequestId: z.string().min(1).optional(),
     contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([]),
-    requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([])
+    requestedAgentIds: z.array(z.string().min(1)).max(WORKBOARD_AGENT_LIMIT).default([]),
+    // ADR-031: carry the Existing-folder choice through plan review.
+    workingRoot: WorkspaceRelativePathSchema.optional()
   }),
   z.object({
     kind: z.literal('follow_up'),
@@ -1839,6 +1868,13 @@ export type SetupStatus = z.infer<typeof SetupStatusSchema>
 export type Agent = z.infer<typeof AgentSchema>
 export type AgentProfile = z.infer<typeof AgentProfileSchema>
 export type AgentProfileCategory = z.infer<typeof AgentProfileCategorySchema>
+
+/** Every category a profile belongs to: its home category plus any extras, de-duplicated. */
+export function agentProfileCategories(
+  profile: Pick<AgentProfile, 'category' | 'categories'>
+): string[] {
+  return [...new Set([profile.category, ...profile.categories])]
+}
 export type AgentProfileCatalog = z.infer<typeof AgentProfileCatalogSchema>
 export type AgentDraftFromIntentInput = z.infer<typeof AgentDraftFromIntentInputSchema>
 export type AgentDraftFromProfileInput = z.infer<typeof AgentDraftFromProfileInputSchema>
@@ -1959,6 +1995,13 @@ export type WorkboardGenerateRequestPlanInput = z.infer<
   typeof WorkboardGenerateRequestPlanInputSchema
 >
 export type WorkboardStartRequestPlanInput = z.infer<typeof WorkboardStartRequestPlanInputSchema>
+export type WorkboardListWorkspaceFoldersInput = z.infer<
+  typeof WorkboardListWorkspaceFoldersInputSchema
+>
+export type WorkboardWorkspaceFolderEntry = z.infer<typeof WorkboardWorkspaceFolderEntrySchema>
+export type WorkboardListWorkspaceFoldersResult = z.infer<
+  typeof WorkboardListWorkspaceFoldersResultSchema
+>
 export type WorkboardGenerateFollowUpPlanInput = z.infer<
   typeof WorkboardGenerateFollowUpPlanInputSchema
 >

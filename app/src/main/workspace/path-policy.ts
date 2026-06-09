@@ -1,17 +1,30 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 
+// ADR-031: capitalized, human-readable buckets directly under the workspace
+// root. The root is the user's own area; everything Ordinus creates lives in one
+// of these three buckets. The keys are stable internal module ids; only the
+// folder names changed.
 export const workspaceModuleFolders = {
-  conversations: 'conversations',
-  workboard: 'workboard',
-  schedules: 'schedules',
+  conversations: 'Conversations',
+  workboard: 'Projects',
+  schedules: 'Schedules',
   // ADR-029: Ordinus assistant turns are scoped to their own folder so they
   // don't collide with agent conversations and so future workspace cleanups
   // can target them as a unit.
-  ordinus: 'ordinus'
+  ordinus: 'Ordinus'
 } as const
 
 export type WorkspaceModule = keyof typeof workspaceModuleFolders
+
+const defaultModuleNames: Record<WorkspaceModule, string> = {
+  conversations: 'Conversation',
+  workboard: 'Work request',
+  schedules: 'Scheduled job',
+  ordinus: 'Ordinus'
+}
+
+export type WorkingRootReservation = (workspaceRelativePath: string) => boolean
 
 export type WorkspaceWorkingFolderContext = {
   workspaceRoot: string
@@ -23,34 +36,79 @@ export type ResolvedWorkspaceRefs = {
   missingRefs: string[]
 }
 
-export function createConversationWorkingRoot(title: string, conversationId: string): string {
-  return createModuleWorkingRoot('conversations', title || 'conversation', conversationId)
+export function createConversationWorkingRoot(
+  workspaceRoot: string,
+  title: string,
+  isReserved?: WorkingRootReservation
+): string {
+  return allocateModuleWorkingRoot(workspaceRoot, 'conversations', title, isReserved)
 }
 
-export function createWorkboardWorkingRoot(title: string, requestId: string): string {
-  return createModuleWorkingRoot('workboard', title || 'work-request', requestId)
+export function createWorkboardWorkingRoot(
+  workspaceRoot: string,
+  title: string,
+  isReserved?: WorkingRootReservation
+): string {
+  return allocateModuleWorkingRoot(workspaceRoot, 'workboard', title, isReserved)
 }
 
-export function createScheduleWorkingRoot(title: string, scheduledJobId: string): string {
-  return createModuleWorkingRoot('schedules', title || 'scheduled-job', scheduledJobId)
+export function createScheduleWorkingRoot(
+  workspaceRoot: string,
+  title: string,
+  isReserved?: WorkingRootReservation
+): string {
+  return allocateModuleWorkingRoot(workspaceRoot, 'schedules', title, isReserved)
 }
 
 // Unlike conversations/workboard/schedules, Ordinus turns share ONE working
 // folder for the whole app. Ordinus drives work through MCP tools rather than
 // writing files, so per-conversation subfolders only produced empty scratch
-// dirs. A single `<workspace>/ordinus/` cwd keeps the sandbox isolation (any
+// dirs. A single `<workspace>/Ordinus/` cwd keeps the sandbox isolation (any
 // stray file write still lands in a folder we own) without the clutter.
 export function getOrdinusWorkingRoot(): string {
   return workspaceModuleFolders.ordinus
 }
 
-export function createModuleWorkingRoot(
+// ADR-031: module working folders use human-readable, title-based names with no
+// id suffix. Uniqueness is guaranteed by a Finder-style numeric suffix on
+// collision ("Snake game", "Snake game 2", …). The folder name is computed once
+// at creation; identity lives in the database `workingRoot`, not the name, so a
+// later title edit does not rename or move the folder.
+//
+// `isReserved` lets the caller exclude names already claimed by other Work
+// Requests / conversations in the database — necessary because folders are
+// created lazily at run start (they are not yet on disk when this runs). The
+// on-disk check additionally avoids colliding with the user's own folders.
+export function allocateModuleWorkingRoot(
+  workspaceRoot: string,
   module: WorkspaceModule,
   title: string,
-  stableId: string
+  isReserved: WorkingRootReservation = () => false
 ): string {
-  const slug = slugifyPathSegment(title) || module
-  return `${workspaceModuleFolders[module]}/${slug}-${shortStableId(stableId)}`
+  const bucket = workspaceModuleFolders[module]
+  const base = humanizePathSegment(title) || defaultModuleNames[module]
+
+  let candidate = `${bucket}/${base}`
+  let counter = 2
+  while (isWorkingRootTaken(workspaceRoot, candidate, isReserved)) {
+    candidate = `${bucket}/${base} ${counter}`
+    counter += 1
+  }
+  return candidate
+}
+
+function isWorkingRootTaken(
+  workspaceRoot: string,
+  candidate: string,
+  isReserved: WorkingRootReservation
+): boolean {
+  if (isReserved(candidate)) {
+    return true
+  }
+  if (!workspaceRoot) {
+    return false
+  }
+  return workspaceRelativePathExists(workspaceRoot, candidate)
 }
 
 export function ensureWorkspaceRelativeDirectory(
@@ -114,23 +172,26 @@ export function resolveReportedWorkspaceFileRefs(
 // gets dropped entirely by the [^a-z0-9] filter (while dotted '\u0130' folds to
 // 'i'), producing the asymmetric character loss we saw in folder names.
 const turkishCharFolds: Record<string, string> = {
-  \u0131: 'i',
-  \u0130: 'i',
-  \u015f: 's',
-  \u015e: 's',
-  \u011f: 'g',
-  \u011e: 'g',
-  \u00e7: 'c',
-  \u00c7: 'c',
-  \u00f6: 'o',
-  \u00d6: 'o',
-  \u00fc: 'u',
-  \u00dc: 'u'
+  ı: 'i',
+  İ: 'i',
+  ş: 's',
+  Ş: 's',
+  ğ: 'g',
+  Ğ: 'g',
+  ç: 'c',
+  Ç: 'c',
+  ö: 'o',
+  Ö: 'o',
+  ü: 'u',
+  Ü: 'u'
 }
 
 export function slugifyPathSegment(value: string): string {
   return value
-    .replace(/[\u0131\u0130\u015f\u015e\u011f\u011e\u00e7\u00c7\u00f6\u00d6\u00fc\u00dc]/g, (char) => turkishCharFolds[char] ?? char)
+    .replace(
+      /[\u0131\u0130\u015f\u015e\u011f\u011e\u00e7\u00c7\u00f6\u00d6\u00fc\u00dc]/g,
+      (char) => turkishCharFolds[char] ?? char
+    )
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
@@ -140,13 +201,20 @@ export function slugifyPathSegment(value: string): string {
     .replace(/-+$/g, '')
 }
 
-export function shortStableId(value: string): string {
-  return (
-    value
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .slice(-6)
-      .toLowerCase() || '000000'
-  )
+// ADR-031: produce a human-readable folder name from a title. Unlike
+// slugifyPathSegment (which lowercases and dash-joins for agent-home folders),
+// this preserves the user's words, spacing, and case, removing only characters
+// that are unsafe or awkward in a filesystem path segment.
+export function humanizePathSegment(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '')
+    .trim()
+    .slice(0, 60)
+    .trim()
 }
 
 function findExistingWorkspaceRef(

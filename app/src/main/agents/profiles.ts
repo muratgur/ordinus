@@ -5,6 +5,7 @@ import { renderAgentProfileInstructions } from '@shared/agent-profile-template'
 import {
   AgentProfileCatalogSchema,
   AgentProfileSchema,
+  agentProfileCategories,
   type AgentDraft,
   type AgentProfile,
   type AgentProfileCatalog,
@@ -33,7 +34,9 @@ export function listAgentProfiles(): AgentProfileCatalog {
 
   const counts = new Map<string, number>()
   profiles.forEach((profile) =>
-    counts.set(profile.category, (counts.get(profile.category) ?? 0) + 1)
+    agentProfileCategories(profile).forEach((category) =>
+      counts.set(category, (counts.get(category) ?? 0) + 1)
+    )
   )
 
   return AgentProfileCatalogSchema.parse({
@@ -131,6 +134,7 @@ function readProfileFile(categoryRoot: string, category: string, fileName: strin
   return AgentProfileSchema.parse({
     id: parsed.frontmatter.id ?? fallbackId,
     category: parsed.frontmatter.category ?? category,
+    categories: parsed.frontmatter.categories ?? [],
     name: parsed.frontmatter.name,
     role: parsed.frontmatter.role,
     capabilities: parsed.frontmatter.capabilities ?? '',

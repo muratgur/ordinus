@@ -6,6 +6,9 @@ export type WorkComposerTarget = {
   contextReferences: WorkboardContextReferenceInput[]
   contextLabels: string[]
   requestedAgentIds: string[]
+  // ADR-031: explicit Existing-folder choice for a brand-new Work Request.
+  // Undefined for continuations (folder inherited) and for New folder (allocated).
+  workingRoot?: string
 }
 
 export type WorkboardDraftPlanContext = {

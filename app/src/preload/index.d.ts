@@ -115,6 +115,8 @@ import type {
   WorkboardSaveRunResultResult,
   WorkboardStartFollowUpInput,
   WorkboardStartRequestPlanInput,
+  WorkboardListWorkspaceFoldersInput,
+  WorkboardListWorkspaceFoldersResult,
   WorkboardStartRequestInput,
   WorkflowDesign,
   WorkflowDesignCreateInput,
@@ -230,6 +232,9 @@ export type OrdinusApi = {
     list: () => Promise<WorkboardData>
     generateRequestPlan: (input: WorkboardGenerateRequestPlanInput) => Promise<WorkboardDraftPlan>
     startRequestPlan: (input: WorkboardStartRequestPlanInput) => Promise<WorkboardData>
+    listWorkspaceFolders: (
+      input: WorkboardListWorkspaceFoldersInput
+    ) => Promise<WorkboardListWorkspaceFoldersResult>
     generatePlan: (input: WorkboardGeneratePlanInput) => Promise<WorkboardDraftPlan>
     startRequest: (input: WorkboardStartRequestInput) => Promise<WorkboardData>
     directStart: (input: WorkboardDirectStartInput) => Promise<WorkboardData>

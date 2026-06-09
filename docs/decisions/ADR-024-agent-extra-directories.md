@@ -12,6 +12,15 @@ rule against agent-prompted absolute paths: extra directories are
 user-configured through a native picker, never inferred from agent output.
 Supersedes no prior decision.
 
+Context note updated by ADR-031 (folder-scoped agent isolation): where this ADR
+describes the CLI `cwd`/sandbox as "the workspace root," that base is now the
+per-Work-Request / per-conversation working folder. The per-agent
+extra-directory mechanism, validation, and read+write semantics in this ADR are
+unchanged — extra directories remain the deliberate, user-configured way to
+grant access outside that folder, and the OS-level read-only/sandbox work
+deferred here is the same future work ADR-031 records under "Sandbox
+calibration."
+
 ## Date
 
 2026-05-26

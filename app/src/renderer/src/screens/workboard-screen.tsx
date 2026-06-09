@@ -17,12 +17,14 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Clock3,
   Columns3,
   CornerDownRight,
   Copy,
   FileText,
   Files,
+  Folder,
   FolderOpen,
   GitBranch,
   Loader2,
@@ -46,6 +48,7 @@ import type {
   ObservedRunSnapshot,
   WorkRunInputRequestStatus,
   WorkboardContextReferenceInput,
+  WorkboardWorkspaceFolderEntry,
   WorkboardData,
   WorkboardDraftItem,
   WorkboardDraftPlan,
@@ -167,6 +170,12 @@ type ComposerContextReference = {
 
 type WorkComposerMode = 'request' | 'workflow'
 
+// ADR-031: a brand-new Work Request binds to a folder — either a fresh
+// title-based folder ('new') or an existing folder under the workspace root
+// ('existing'). When a destination request is selected, the folder is inherited
+// and these fields are ignored.
+type WorkComposerFolderMode = 'new' | 'existing'
+
 type WorkComposerState = {
   open: boolean
   mode: WorkComposerMode
@@ -175,7 +184,8 @@ type WorkComposerState = {
   destinationRequestId: string
   contextReferences: ComposerContextReference[]
   requestedAgentIds: string[]
-  workspacePath: string
+  folderMode: WorkComposerFolderMode
+  existingFolder: string
 }
 
 const emptyComposerState: WorkComposerState = {
@@ -186,7 +196,8 @@ const emptyComposerState: WorkComposerState = {
   destinationRequestId: '',
   contextReferences: [],
   requestedAgentIds: [],
-  workspacePath: ''
+  folderMode: 'new',
+  existingFolder: ''
 }
 
 export function WorkboardScreen({
@@ -811,15 +822,6 @@ const targetDropdownTriggerClass =
 const targetDropdownPanelClass =
   'absolute top-11 z-40 w-full max-w-[calc(100vw-3rem)] rounded-lg border bg-card p-2 shadow-lg sm:min-w-[28rem]'
 
-type ReferenceView = 'suggested' | 'selected' | 'all' | 'manual'
-
-const referenceViews: Array<{ id: ReferenceView; label: string }> = [
-  { id: 'suggested', label: 'Suggested' },
-  { id: 'selected', label: 'Selected' },
-  { id: 'all', label: 'All files' },
-  { id: 'manual', label: 'Manual path' }
-]
-
 function RequestComposerDialog({
   open,
   composer,
@@ -1018,8 +1020,8 @@ function RequestComposerDialog({
               )}
             </div>
 
-            {isWorkflowMode ? null : (
-              <FileContextPanel composer={composer} data={data} onComposerChange={update} />
+            {isWorkflowMode || composer.destinationRequestId ? null : (
+              <WorkingFolderPanel composer={composer} onComposerChange={update} />
             )}
           </div>
         </div>
@@ -1398,137 +1400,159 @@ function ComposerOptionButton({
   )
 }
 
-function FileContextPanel({
+// ADR-031: replaces the old file/folder "References" panel. A brand-new Work
+// Request binds to one folder — a fresh title-based folder under Projects, or an
+// existing folder under the workspace root. The agent is then confined to it.
+function WorkingFolderPanel({
   composer,
-  data,
   onComposerChange
 }: {
   composer: WorkComposerState
-  data: WorkboardData
   onComposerChange: (patch: Partial<WorkComposerState>) => void
 }): React.JSX.Element {
-  const [view, setView] = useState<ReferenceView>('suggested')
-  const fileReferences = composer.contextReferences.filter(
-    (reference) => reference.input.kind === 'workspace_path'
-  )
-  const selectedKeys = new Set(fileReferences.map((reference) => reference.key))
-  const scopedRuns = getReferenceScopedRuns(composer, data)
-  const suggestedFileReferences = getRunFileContextReferences(scopedRuns)
-  const allFileReferences = getRunFileContextReferences(data.runs)
-  const visibleFileReferences = getVisibleFileReferences(
-    view,
-    suggestedFileReferences,
-    fileReferences,
-    allFileReferences
-  )
-
-  function addWorkspacePath(): void {
-    const trimmedPath = composer.workspacePath.trim()
-    if (!trimmedPath) return
-
-    const reference = createWorkspacePathContextReference(trimmedPath)
-    onComposerChange({
-      workspacePath: '',
-      contextReferences: selectedKeys.has(reference.key)
-        ? composer.contextReferences
-        : [...composer.contextReferences, reference]
-    })
-  }
-
-  function addFileReference(reference: ComposerContextReference): void {
-    if (selectedKeys.has(reference.key)) return
-    onComposerChange({ contextReferences: [...composer.contextReferences, reference] })
-  }
-
-  function removeContextReference(key: string): void {
-    onComposerChange({
-      contextReferences: composer.contextReferences.filter((reference) => reference.key !== key)
-    })
-  }
-
   return (
     <section className="rounded-lg border bg-card">
       <div className="flex flex-col gap-3 border-b px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-foreground">References</h3>
+          <h3 className="text-sm font-semibold text-foreground">Working folder</h3>
+          <p className="text-xs text-muted-foreground">
+            Where this work runs. The agent stays inside this folder.
+          </p>
         </div>
         <div className="flex flex-wrap gap-1 rounded-md border bg-background p-1">
-          {referenceViews.map((referenceView) => (
-            <ReferenceViewButton
-              key={referenceView.id}
-              active={view === referenceView.id}
-              onClick={() => setView(referenceView.id)}
-            >
-              {referenceView.label}
-            </ReferenceViewButton>
-          ))}
+          <ReferenceViewButton
+            active={composer.folderMode === 'new'}
+            onClick={() => onComposerChange({ folderMode: 'new' })}
+          >
+            New folder
+          </ReferenceViewButton>
+          <ReferenceViewButton
+            active={composer.folderMode === 'existing'}
+            onClick={() => onComposerChange({ folderMode: 'existing' })}
+          >
+            Existing folder
+          </ReferenceViewButton>
         </div>
       </div>
 
       <div className="grid gap-3 p-3">
-        {fileReferences.length > 0 && view !== 'selected' ? (
-          <div className="flex flex-wrap gap-2">
-            {fileReferences.map((reference) => (
-              <button
-                key={reference.key}
-                type="button"
-                className="inline-flex max-w-full items-center gap-2 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => removeContextReference(reference.key)}
-              >
-                <span className="max-w-[28rem] truncate">{reference.label}</span>
-                <XCircle className="size-3.5 shrink-0" />
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        {view === 'manual' ? (
-          <div className="flex gap-2">
-            <input
-              className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/50"
-              placeholder="src/renderer/src/..."
-              value={composer.workspacePath}
-              onChange={(event) => onComposerChange({ workspacePath: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  addWorkspacePath()
-                }
-              }}
-            />
-            <Button type="button" variant="outline" size="sm" onClick={addWorkspacePath}>
-              Add
-            </Button>
-          </div>
+        {composer.folderMode === 'new' ? (
+          <p className="rounded-md border bg-background px-3 py-3 text-sm text-muted-foreground">
+            A new folder will be created under{' '}
+            <span className="font-medium text-foreground">Projects</span> from the request title.
+          </p>
         ) : (
-          <div className="grid max-h-64 gap-1 overflow-y-auto ordinus-scrollbar">
-            {visibleFileReferences.length === 0 ? (
-              <p className="rounded-md border bg-background px-3 py-3 text-sm text-muted-foreground">
-                {view === 'suggested'
-                  ? 'Select a Work Request or Work Item to see suggested files, or add a manual path.'
-                  : 'No file references selected yet.'}
-              </p>
-            ) : (
-              visibleFileReferences.map((reference) => {
-                const selected = selectedKeys.has(reference.key)
-                return (
-                  <ComposerOptionButton
-                    key={reference.key}
-                    selected={selected}
-                    label={reference.label}
-                    detail={reference.detail}
-                    icon={selected ? <Check className="size-4" /> : <FileText className="size-4" />}
-                    onClick={() =>
-                      selected ? removeContextReference(reference.key) : addFileReference(reference)
-                    }
-                  />
-                )
-              })
-            )}
-          </div>
+          <ExistingFolderBrowser
+            selectedPath={composer.existingFolder}
+            onSelect={(path) => onComposerChange({ existingFolder: path })}
+          />
         )}
       </div>
     </section>
+  )
+}
+
+function ExistingFolderBrowser({
+  selectedPath,
+  onSelect
+}: {
+  selectedPath: string
+  onSelect: (path: string) => void
+}): React.JSX.Element {
+  const [currentPath, setCurrentPath] = useState('')
+  const [entries, setEntries] = useState<WorkboardWorkspaceFolderEntry[]>([])
+
+  useEffect(() => {
+    let active = true
+    window.ordinus.workboard
+      .listWorkspaceFolders({ path: currentPath || undefined })
+      .then((result) => {
+        if (active) setEntries(result.entries)
+      })
+      .catch(() => {
+        if (active) setEntries([])
+      })
+    return () => {
+      active = false
+    }
+  }, [currentPath])
+
+  const parentPath = currentPath.includes('/')
+    ? currentPath.slice(0, currentPath.lastIndexOf('/'))
+    : ''
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={currentPath === ''}
+          onClick={() => setCurrentPath(parentPath)}
+        >
+          <ChevronLeft className="size-3.5" />
+          Up
+        </button>
+        <span className="min-w-0 truncate">
+          {currentPath ? `Workspace / ${currentPath.replace(/\//g, ' / ')}` : 'Workspace root'}
+        </span>
+      </div>
+
+      <div className="ordinus-scrollbar grid max-h-64 gap-1 overflow-y-auto">
+        {entries.length === 0 ? (
+          <p className="rounded-md border bg-background px-3 py-3 text-sm text-muted-foreground">
+            No folders here.
+          </p>
+        ) : (
+          entries.map((entry) => {
+            const selected = entry.path === selectedPath
+            return (
+              <div key={entry.path} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={!entry.selectable}
+                  className={cn(
+                    'flex min-w-0 flex-1 items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                    selected
+                      ? 'border-primary/50 bg-primary-soft text-foreground'
+                      : 'bg-background text-foreground hover:bg-accent',
+                    !entry.selectable && 'cursor-not-allowed opacity-60'
+                  )}
+                  onClick={() => entry.selectable && onSelect(entry.path)}
+                >
+                  {selected ? (
+                    <Check className="size-4 shrink-0" />
+                  ) : (
+                    <Folder className="size-4 shrink-0" />
+                  )}
+                  <span className="truncate">{entry.name}</span>
+                </button>
+                {entry.hasChildren ? (
+                  <button
+                    type="button"
+                    className="rounded-md border bg-background px-2 py-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={() => setCurrentPath(entry.path)}
+                    aria-label={`Open ${entry.name}`}
+                  >
+                    <ChevronRight className="size-4" />
+                  </button>
+                ) : null}
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        {selectedPath ? (
+          <>
+            Selected: <span className="font-medium text-foreground">{selectedPath}</span>
+          </>
+        ) : (
+          'Pick a folder for this work.'
+        )}
+      </p>
+    </div>
   )
 }
 
@@ -4071,47 +4095,24 @@ function getRunCountByRequestId(runs: WorkboardRun[]): Map<string, number> {
   return counts
 }
 
-function getReferenceScopedRuns(composer: WorkComposerState, data: WorkboardData): WorkboardRun[] {
-  const selectedRunIds = new Set(
-    composer.contextReferences.flatMap((reference) =>
-      reference.input.kind === 'work_item' ? [reference.input.runId] : []
-    )
-  )
-
-  if (selectedRunIds.size > 0) {
-    return data.runs.filter((run) => selectedRunIds.has(run.id))
-  }
-
-  if (composer.destinationRequestId) {
-    return data.runs.filter((run) => run.requestId === composer.destinationRequestId)
-  }
-
-  return []
-}
-
-function getVisibleFileReferences(
-  view: ReferenceView,
-  suggestedFileReferences: ComposerContextReference[],
-  fileReferences: ComposerContextReference[],
-  allFileReferences: ComposerContextReference[]
-): ComposerContextReference[] {
-  if (view === 'suggested') return suggestedFileReferences
-  if (view === 'selected') return fileReferences
-  if (view === 'all') return allFileReferences
-  return []
-}
-
 function buildComposerTarget(composer: WorkComposerState, data: WorkboardData): WorkComposerTarget {
   const destinationRequest = composer.destinationRequestId
     ? data.requests.find((request) => request.id === composer.destinationRequestId)
     : null
+
+  // ADR-031: only a brand-new request with an explicit Existing-folder choice
+  // carries a workingRoot. Continuations inherit the destination's folder; New
+  // mode leaves it unset so the backend allocates a title-based folder.
+  const bindsExistingFolder =
+    !destinationRequest && composer.folderMode === 'existing' && composer.existingFolder !== ''
 
   return {
     destinationRequestId: destinationRequest?.id,
     destinationRequestTitle: destinationRequest?.title,
     contextReferences: composer.contextReferences.map((reference) => reference.input),
     contextLabels: composer.contextReferences.map((reference) => reference.label),
-    requestedAgentIds: composer.requestedAgentIds
+    requestedAgentIds: composer.requestedAgentIds,
+    workingRoot: bindsExistingFolder ? composer.existingFolder : undefined
   }
 }
 
@@ -4123,34 +4124,6 @@ function createWorkItemContextReference(run: WorkboardRun): ComposerContextRefer
     label: run.title,
     detail: `${run.requestTitle} - ${formatRunStatus(run.status)}`
   }
-}
-
-function createWorkspacePathContextReference(path: string): ComposerContextReference {
-  const input = { kind: 'workspace_path', path } as const
-  return {
-    key: getContextReferenceKey(input),
-    input,
-    label: path,
-    detail: 'Workspace path'
-  }
-}
-
-function getRunFileContextReferences(runs: WorkboardRun[]): ComposerContextReference[] {
-  const references = new Map<string, ComposerContextReference>()
-
-  runs.forEach((run) => {
-    getFileReferences(run.artifactRefs, run.changedFiles).forEach((file) => {
-      const reference = createWorkspacePathContextReference(file.path)
-      if (!references.has(reference.key)) {
-        references.set(reference.key, {
-          ...reference,
-          detail: `${file.artifact ? 'Artifact' : 'Changed file'} - ${run.title}`
-        })
-      }
-    })
-  })
-
-  return Array.from(references.values()).slice(0, 24)
 }
 
 function getContextReferenceKey(reference: WorkboardContextReferenceInput): string {
@@ -4355,6 +4328,7 @@ function startPlan(
     destinationRequestId: target.destinationRequestId,
     contextReferences: target.contextReferences,
     requestedAgentIds: target.requestedAgentIds,
+    workingRoot: target.workingRoot,
     plan
   })
 }

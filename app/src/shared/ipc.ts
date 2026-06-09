@@ -84,6 +84,7 @@ export const ipcChannels = {
   workboardList: 'workboard:list',
   workboardGenerateRequestPlan: 'workboard:generate-request-plan',
   workboardStartRequestPlan: 'workboard:start-request-plan',
+  workboardListWorkspaceFolders: 'workboard:list-workspace-folders',
   workboardGeneratePlan: 'workboard:generate-plan',
   workboardStartRequest: 'workboard:start-request',
   workboardDirectStart: 'workboard:direct-start',

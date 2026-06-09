@@ -12,6 +12,18 @@ deliverables. The runtime rule that spilled long textual output to a workspace f
 threshold is removed. The single-workspace-root, module-working-folder, and Markdown
 frontmatter/`## References` policies for genuine files remain in force.
 
+Further partially superseded by ADR-031 (folder-scoped agent isolation). The **execution model**
+defined here — run the provider CLI from the workspace root and pass the module folder only as a
+non-restrictive "Suggested working folder" in the prompt (see "Provider Runtime Contract" and the
+rejected "Execute Provider CLIs From Module Subfolders" alternative) — is **reversed**: the CLI now
+runs with the per-unit working folder as its cwd/sandbox root, and the agent is confined to that
+folder. The stance that "agents may read or modify other files inside the workspace" and "edit
+existing project files in their natural locations" no longer holds, and the lowercase
+`workboard/<slug-id>` / `conversations/<slug-id>` module naming is replaced by capitalized,
+title-based `Projects/` and `Conversations/` folders. The single-workspace-root concept,
+workspace-relative reporting, agent-owned support directories, internal provider paths, and the
+Markdown frontmatter/`## References` policy remain in force.
+
 ## Date
 
 2026-05-12

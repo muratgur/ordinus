@@ -14,12 +14,15 @@ const markdownDocumentPolicy = [
 
 export function buildWorkspaceWorkingFolderInstructions(workingRoot: string): string {
   return [
+    // ADR-031: the working folder is a hard boundary, not a suggestion. The CLI
+    // runs with this folder as its current directory; the agent must stay inside
+    // it and must not reach into neighbouring projects elsewhere in the workspace.
     'Workspace file policy:',
-    '- You are running from the workspace root.',
-    `- Suggested working folder: ${workingRoot}`,
-    '- Use the suggested folder for new notes, reports, drafts, handoff files, or generated artifacts when it fits.',
-    '- Edit existing project files in their natural locations.',
-    '- Report created or modified files as workspace-relative paths only.',
+    `- You are working inside this folder, which is your current working directory: ${workingRoot}`,
+    '- Stay within this folder. Do not read, write, or modify files outside it.',
+    '- Create all new files, notes, reports, drafts, handoff files, and generated artifacts inside this folder.',
+    '- The only exceptions are your agent private folder and any external directories explicitly listed below.',
+    '- Report created or modified files as paths relative to this folder.',
     '- Do not report absolute paths or paths with "..".',
     ...markdownDocumentPolicy
   ].join('\n')

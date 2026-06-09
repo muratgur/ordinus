@@ -40,7 +40,9 @@ function toPendingPlanTarget(target: WorkComposerTarget): PendingPlanTarget {
     kind: 'request',
     destinationRequestId: target.destinationRequestId,
     contextReferences: target.contextReferences,
-    requestedAgentIds: target.requestedAgentIds
+    requestedAgentIds: target.requestedAgentIds,
+    // ADR-031: preserve the Existing-folder choice across persisted/background plans.
+    workingRoot: target.workingRoot
   }
 }
 
@@ -57,7 +59,8 @@ function fromPendingPlanTarget(target: PendingPlanTarget): WorkComposerTarget {
     destinationRequestId: target.destinationRequestId,
     contextReferences: target.contextReferences,
     contextLabels: [],
-    requestedAgentIds: target.requestedAgentIds
+    requestedAgentIds: target.requestedAgentIds,
+    workingRoot: target.workingRoot
   }
 }
 

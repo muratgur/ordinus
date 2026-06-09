@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Library, Loader2, Search } from 'lucide-react'
 import type { Agent, AgentDraft, AgentProfile, AgentProfileCatalog } from '@shared/contracts'
+import { agentProfileCategories } from '@shared/contracts'
 import { Dialog, DialogContent } from './ui/dialog'
 import { Input } from './ui/input'
 import { AGENT_COLORS, AGENT_SYMBOLS, AVATAR_DELIMITER } from './agent-palette'
@@ -529,7 +530,7 @@ function LibraryDrawer({
     if (!catalog) return []
     const normalizedQuery = query.trim().toLowerCase()
     return catalog.profiles.filter((profile) => {
-      if (categoryId && profile.category !== categoryId) return false
+      if (categoryId && !agentProfileCategories(profile).includes(categoryId)) return false
       if (!normalizedQuery) return true
       const haystack =
         `${profile.name} ${profile.role} ${profile.capabilities} ${profile.tags.join(' ')}`.toLowerCase()

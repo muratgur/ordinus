@@ -7,6 +7,7 @@ import { runCapture } from '../cli/process'
 import { ProviderConnectResultSchema, ProviderStatusSchema } from '@shared/contracts'
 import type { ProviderConnectResult, ProviderId, ProviderStatus } from '@shared/contracts'
 import { redactDiagnosticsText } from '../../observability/redaction'
+import { ensureWorkspaceRelativeDirectory } from '../../workspace/path-policy'
 import type { RuntimeObservation } from '../../observability/types'
 import type {
   ProviderLoginProcess,
@@ -110,8 +111,18 @@ export function runConversationProcess({
     const stderrLog = createWriteStream(join(dirname(input.eventLogPath), 'stderr.txt'), {
       flags: 'a'
     })
+    // ADR-031: the agent is confined to its own Work Request / conversation
+    // working folder, not the workspace root. The folder is the cwd (and, for
+    // sandboxing providers, the writable root). Create it here, immediately
+    // before spawn — the cwd must exist before the process starts, so it cannot
+    // be created lazily on first write. mkdir is idempotent, so concurrent
+    // agents sharing one folder race safely.
+    const workingDirectory = ensureWorkspaceRelativeDirectory(
+      input.workspaceRoot,
+      input.workingRoot
+    )
     const child = spawn(executable.command, withCliBaseArgs(executable, args), {
-      cwd: input.workspaceRoot,
+      cwd: workingDirectory,
       env,
       shell: executable.shell,
       stdio: ['pipe', 'pipe', 'pipe']

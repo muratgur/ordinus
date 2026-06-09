@@ -43,6 +43,7 @@ import {
   buildExtraDirectoriesInstructions,
   buildWorkspaceWorkingFolderInstructions
 } from '../../prompts/workspace'
+import { resolveWorkspaceRelativePath } from '../../../workspace/path-policy'
 import {
   addCliModelArg,
   connectCliProvider,
@@ -210,6 +211,11 @@ function buildCodexOrdinusApprovalArgs(input: RuntimeConversationTurnInput): str
 }
 
 function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string[] {
+  // ADR-031: confine Codex to the Work Request / conversation working folder.
+  // `-C` sets both the cwd and the `workspace-write` sandbox writable root, so
+  // pointing it at the working folder (not the workspace root) is what physically
+  // keeps the agent out of neighbouring projects.
+  const workingDirectory = resolveWorkspaceRelativePath(input.workspaceRoot, input.workingRoot)
   if (input.providerSessionRef) {
     const args = [
       'exec',
@@ -217,7 +223,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
       input.sandbox,
       ...buildCodexOrdinusApprovalArgs(input),
       '-C',
-      input.workspaceRoot,
+      workingDirectory,
       '--add-dir',
       input.agentHomePath,
       ...input.extraDirectories.flatMap((dir) => ['--add-dir', dir]),
@@ -246,7 +252,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     input.sandbox,
     ...buildCodexOrdinusApprovalArgs(input),
     '-C',
-    input.workspaceRoot,
+    workingDirectory,
     '--add-dir',
     input.agentHomePath,
     ...input.extraDirectories.flatMap((dir) => ['--add-dir', dir]),
