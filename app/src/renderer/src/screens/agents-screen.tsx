@@ -9,7 +9,6 @@ import {
   MessageSquareText,
   Pin,
   Plus,
-  Search,
   Settings2,
   Sparkles,
   Trash2,
@@ -17,14 +16,9 @@ import {
   WandSparkles
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
+import { Rail, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
 import { SelectControl } from '@renderer/components/select-control'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle
-} from '@renderer/components/ui/card'
+import { Card, CardContent } from '@renderer/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -126,6 +120,7 @@ export function AgentsScreen(): React.JSX.Element {
   const [roomSummaries, setRoomSummaries] = useState<AgentRoomSummary[]>([])
   const [unreadAgentIds, setUnreadAgentIds] = useState<Set<string>>(new Set())
   const [selectedAgentId, setSelectedAgentId] = useState<string>('')
+  const [sidebarDocked, setSidebarDocked] = useState(true)
   const [activeTab, setActiveTab] = useState<AgentTab>('chat')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   // The just-created agent greets itself on first room open (ADR-027 Phase 8).
@@ -357,7 +352,7 @@ export function AgentsScreen(): React.JSX.Element {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-3rem)] gap-4 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:grid-cols-[280px_minmax(0,1fr)] xl:overflow-hidden">
+    <div className="flex h-[calc(100vh-3rem)] gap-3 py-4">
       <AgentLibrary
         agents={agents}
         loading={loading}
@@ -365,6 +360,8 @@ export function AgentsScreen(): React.JSX.Element {
         busyAgentIds={busyAgentIds}
         roomSummaries={roomSummaries}
         unreadAgentIds={unreadAgentIds}
+        collapsed={!sidebarDocked}
+        onToggleCollapsed={() => setSidebarDocked((value) => !value)}
         onCreateAgent={() => setCreateAgentOpen(true)}
         onDeleteAgent={(agent) => {
           setDeleteTargetAgentId(agent.id)
@@ -382,7 +379,7 @@ export function AgentsScreen(): React.JSX.Element {
         onTogglePinned={(agent) => void handleTogglePinned(agent)}
       />
 
-      <main className="min-w-0 xl:min-h-0">
+      <main className="relative min-w-0 flex-1 xl:min-h-0">
         <Card className="flex min-h-[760px] flex-col overflow-hidden xl:h-full xl:min-h-0">
           {error ? (
             <CardContent className="flex min-h-0 flex-1 flex-col p-0">
@@ -477,6 +474,8 @@ function AgentLibrary({
   busyAgentIds,
   roomSummaries,
   unreadAgentIds,
+  collapsed,
+  onToggleCollapsed,
   onCreateAgent,
   onDeleteAgent,
   onSelectAgent,
@@ -488,17 +487,17 @@ function AgentLibrary({
   busyAgentIds: Set<string>
   roomSummaries: AgentRoomSummary[]
   unreadAgentIds: Set<string>
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onCreateAgent: () => void
   onDeleteAgent: (agent: Agent) => void
   onSelectAgent: (agentId: string) => void
   onTogglePinned: (agent: Agent) => void
 }): React.JSX.Element {
-  const [query, setQuery] = useState('')
   const roomSummaryByAgentId = useMemo(
     () => new Map(roomSummaries.map((summary) => [summary.agentId, summary])),
     [roomSummaries]
   )
-  const normalizedQuery = query.trim().toLowerCase()
   const chatRows = agents
     .map((agent) => {
       const summary = roomSummaryByAgentId.get(agent.id)
@@ -514,144 +513,75 @@ function AgentLibrary({
         sortTime: getAgentRoomSortTime(agent, summary)
       }
     })
-    .filter(({ agent }) => {
-      const searchable = `${agent.name} ${agent.role} ${agent.capabilities}`.toLowerCase()
-      return searchable.includes(normalizedQuery)
-    })
     .sort(compareAgentChatRows)
   const lastPinnedIndex = chatRows.reduce((lastIndex, row, index) => {
     return row.pinned ? index : lastIndex
   }, -1)
 
   return (
-    <aside className="min-w-0 xl:min-h-0">
-      <Card className="flex flex-col overflow-hidden xl:h-full xl:min-h-0">
-        <CardHeader className="border-b">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="size-4 text-primary" />
-                Agents
-              </CardTitle>
-              <CardDescription>
-                {loading ? 'Loading' : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}
-              </CardDescription>
-            </div>
-            <Button size="icon" aria-label="Create agent" onClick={onCreateAgent}>
-              <Plus />
-            </Button>
-          </div>
-          <div className="relative mt-3">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Search agents"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-        </CardHeader>
-
-        <CardContent className="ordinus-scrollbar grid auto-rows-min content-start gap-0 p-2 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-          {chatRows.map(({ agent, busy, pinned, unread, preview, timestampLabel }, index) => (
-            <div key={agent.id}>
-              <div
-                role="button"
-                tabIndex={0}
-                className={cn(
-                  'group relative grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  selectedAgentId === agent.id && 'bg-primary-soft/70 pl-3.5'
-                )}
-                onClick={() => onSelectAgent(agent.id)}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) {
-                    return
+    <Rail
+      aria-label="Agents"
+      collapsed={collapsed}
+      onToggleCollapsed={onToggleCollapsed}
+      cta={{ label: 'New agent', onClick: onCreateAgent }}
+      searchPlaceholder="Search agents"
+      search={chatRows.map(({ agent, preview }) => ({
+        id: agent.id,
+        label: agent.name,
+        meta: preview,
+        onSelect: () => onSelectAgent(agent.id)
+      }))}
+    >
+      <RailList isEmpty={!loading && chatRows.length === 0} empty="No agents yet.">
+        {loading
+          ? null
+          : chatRows.map(({ agent, busy, pinned, unread, preview, timestampLabel }, index) => (
+              <div key={agent.id}>
+                <RailItem
+                  title={agent.name}
+                  selected={selectedAgentId === agent.id}
+                  unread={unread}
+                  running={busy}
+                  runningLabel="Working…"
+                  meta={preview}
+                  leadingIcon={
+                    pinned ? <Pin className="size-3 shrink-0 text-primary" /> : undefined
                   }
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    onSelectAgent(agent.id)
+                  leftSlot={
+                    <span className="relative block size-9">
+                      <AgentAvatar avatar={agent.avatar} size={36} />
+                      <PresenceDot
+                        presence={getAgentPresence(agent, busy)}
+                        className="absolute bottom-0 right-0 ring-2 ring-background"
+                      />
+                    </span>
                   }
-                }}
-              >
-                {selectedAgentId === agent.id ? (
-                  <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
-                ) : null}
-                <div className="relative row-span-2 size-9 shrink-0">
-                  <AgentAvatar avatar={agent.avatar} size={36} />
-                  <PresenceDot
-                    presence={getAgentPresence(agent, busy)}
-                    className="absolute bottom-0 right-0 ring-2 ring-background"
-                  />
-                </div>
-                <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold leading-5">
-                  <span className="min-w-0 truncate">{agent.name}</span>
-                  {pinned ? <Pin className="size-3 shrink-0 text-primary" /> : null}
-                </p>
-                <div className="relative min-w-16 pr-3 text-right">
-                  <span
-                    className={cn(
-                      'text-[11px] transition-opacity group-hover:opacity-0 group-focus-within:opacity-0',
-                      unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                    )}
-                  >
-                    {timestampLabel}
-                  </span>
-                  <div className="absolute right-0 top-1/2 flex -translate-y-1/2 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                    <button
-                      type="button"
-                      aria-label={pinned ? `Unpin ${agent.name}` : `Pin ${agent.name}`}
-                      title={pinned ? 'Unpin agent' : 'Pin agent'}
-                      className={cn(
-                        'flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                        pinned && 'text-primary'
-                      )}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onTogglePinned(agent)
-                      }}
-                    >
-                      <Pin className="size-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${agent.name}`}
-                      title="Delete agent"
-                      className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-status-attention/10 hover:text-status-attention focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onDeleteAgent(agent)
-                      }}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
-                </div>
-                <p
-                  className={cn(
-                    'col-start-2 col-end-4 min-w-0 truncate text-xs leading-5',
-                    unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                  )}
-                >
-                  {preview}
-                </p>
-                {unread ? (
-                  <span className="absolute right-2 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-primary transition-all group-hover:right-14 group-focus-within:right-14" />
+                  rightSlot={<span>{timestampLabel}</span>}
+                  onSelect={() => onSelectAgent(agent.id)}
+                  actions={
+                    <>
+                      <RailItemAction
+                        icon={Pin}
+                        label={pinned ? 'Unpin agent' : 'Pin agent'}
+                        className={cn(pinned && 'text-primary')}
+                        onClick={() => onTogglePinned(agent)}
+                      />
+                      <RailItemAction
+                        icon={Trash2}
+                        label="Delete agent"
+                        className="hover:text-status-attention"
+                        onClick={() => onDeleteAgent(agent)}
+                      />
+                    </>
+                  }
+                />
+                {index === lastPinnedIndex && index < chatRows.length - 1 ? (
+                  <div className="mx-2 my-1 border-t border-dashed border-border" />
                 ) : null}
               </div>
-              {index === lastPinnedIndex && index < chatRows.length - 1 ? (
-                <div className="mx-3 my-1 border-t border-dashed border-border" />
-              ) : null}
-            </div>
-          ))}
-
-          {!loading && chatRows.length === 0 ? (
-            <div className="m-2 rounded-lg border border-dashed bg-accent p-4 text-sm text-muted-foreground">
-              {agents.length === 0 ? 'No agents yet.' : 'No agents match this search.'}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-    </aside>
+            ))}
+      </RailList>
+    </Rail>
   )
 }
 

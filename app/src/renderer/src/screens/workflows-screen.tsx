@@ -14,10 +14,9 @@ import {
 import '@xyflow/react/dist/style.css'
 import {
   Check,
+  History,
   Loader2,
   Maximize2,
-  PanelLeft,
-  PanelLeftClose,
   Plus,
   Sparkles,
   Trash2,
@@ -29,6 +28,8 @@ import {
 import type { Agent, WorkflowDesign, WorkflowRunTarget, WorkRequest } from '@shared/contracts'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
+import { Rail, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -176,103 +177,94 @@ export function WorkflowsScreen(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] py-3">
-      <div
-        className={cn(
-          'flex min-h-0 shrink-0 overflow-hidden transition-[width,margin] duration-200 ease-out',
-          sidebarDocked ? 'mr-3 w-64' : 'mr-0 w-0'
-        )}
+    <div className="flex h-[calc(100vh-3rem)] gap-3 py-3">
+      <Rail
+        aria-label="Your workflows"
+        collapsed={!sidebarDocked}
+        onToggleCollapsed={() => setSidebarDocked((value) => !value)}
+        cta={{ label: 'New workflow', onClick: () => void handleCreate() }}
+        searchPlaceholder="Find workflow"
+        search={designs.map((design) => ({
+          id: design.id,
+          label: design.name,
+          meta: formatWorkflowStepCount(design),
+          onSelect: () => setSelectedId(design.id)
+        }))}
       >
-        <aside className="flex w-64 shrink-0 flex-col overflow-hidden rounded-md border bg-card">
-          <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-            <div className="flex items-center gap-2">
-              <Users className="size-4 text-primary" />
-              <span className="text-sm font-semibold">Your workflows</span>
-            </div>
-            <button
-              type="button"
-              title="Hide panel"
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setSidebarDocked(false)}
-            >
-              <PanelLeftClose className="size-4" />
-            </button>
+        {error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {error}
           </div>
-
-          <div className="border-b p-2">
-            <Button size="sm" className="w-full" onClick={() => void handleCreate()}>
-              <Plus className="size-4" /> New workflow
-            </Button>
-          </div>
-
-          {error ? (
-            <div className="border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {error}
-            </div>
-          ) : null}
-
-          <div className="ordinus-scrollbar min-h-0 flex-1 overflow-y-auto">
-            {loading ? (
-              <div className="px-3 py-3 text-sm text-muted-foreground">One moment…</div>
-            ) : designs.length === 0 ? (
-              <div className="px-3 py-3 text-sm text-muted-foreground">
-                No workflows yet. Start one to design how your team works together.
-              </div>
-            ) : (
-              designs.map((design) => (
-                <div
+        ) : null}
+        <RailList
+          isEmpty={!loading && designs.length === 0}
+          empty="No workflows yet. Start one to design how your team works together."
+        >
+          {loading
+            ? null
+            : designs.map((design) => (
+                <RailItem
                   key={design.id}
-                  className={cn(
-                    'flex items-center justify-between gap-1 border-b transition-colors',
-                    design.id === selectedId ? 'bg-accent' : 'hover:bg-accent/50'
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(design.id)}
-                    className="min-w-0 flex-1 px-3 py-2 text-left"
-                  >
-                    <span className="block truncate text-sm font-medium">{design.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {design.canvas.nodes.length === 0
-                        ? 'No steps yet'
-                        : `${design.canvas.nodes.length} step${design.canvas.nodes.length === 1 ? '' : 's'}`}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    title="Delete workflow"
-                    onClick={() => setDeleteTarget(design)}
-                    className="mr-2 shrink-0 rounded p-1 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+                  title={design.name}
+                  selected={design.id === selectedId}
+                  meta={formatWorkflowStepCount(design)}
+                  onSelect={() => setSelectedId(design.id)}
+                  actions={
+                    <RailItemAction
+                      icon={Trash2}
+                      label="Delete workflow"
+                      className="hover:text-destructive"
+                      onClick={() => setDeleteTarget(design)}
+                    />
+                  }
+                />
+              ))}
+        </RailList>
+      </Rail>
 
-          {selectedDesign ? (
-            <div className="border-t">
-              <div className="px-3 py-2 text-xs font-medium text-muted-foreground">Past runs</div>
-              <div className="ordinus-scrollbar max-h-48 overflow-y-auto pb-1">
-                {selectedRuns.length === 0 ? (
-                  <div className="px-3 pb-2 text-xs text-muted-foreground">
-                    Hasn’t run yet — hit Run when you’re ready.
-                  </div>
-                ) : (
-                  selectedRuns.map((request) => (
+      <section className="relative min-w-0 flex-1 overflow-hidden rounded-md border bg-card">
+        {selectedDesign ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="absolute right-3 top-3 z-20 gap-1.5 bg-card/90 backdrop-blur"
+              >
+                <History className="size-3.5" />
+                Run history
+                {selectedRuns.length > 0 ? (
+                  <span className="text-muted-foreground">({selectedRuns.length})</span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={6}
+              className="w-80 border-border bg-card p-0 text-foreground shadow-lg"
+            >
+              <div className="border-b px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Past runs
+              </div>
+              {selectedRuns.length === 0 ? (
+                <p className="px-3 py-4 text-[13px] text-muted-foreground">
+                  Hasn’t run yet — hit Run when you’re ready.
+                </p>
+              ) : (
+                <div className="ordinus-scrollbar max-h-72 overflow-y-auto py-1">
+                  {selectedRuns.map((request) => (
                     <button
                       key={request.id}
                       type="button"
                       onClick={() => openRun(request)}
                       className={cn(
-                        'flex w-full flex-col items-start gap-0.5 border-b px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-accent/50',
+                        'flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-muted',
                         request.archivedAt ? 'opacity-60' : ''
                       )}
                     >
                       <span className="flex w-full items-center gap-1.5">
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                           {request.title}
                         </span>
                         {request.archivedAt ? (
@@ -285,24 +277,11 @@ export function WorkflowsScreen(): React.JSX.Element {
                         {request.status} · {new Date(request.createdAt).toLocaleString()}
                       </span>
                     </button>
-                  ))
-                )}
-              </div>
-            </div>
-          ) : null}
-        </aside>
-      </div>
-
-      <section className="relative min-w-0 flex-1 overflow-hidden rounded-md border bg-card">
-        {!sidebarDocked ? (
-          <button
-            type="button"
-            title="Show panel"
-            className="absolute left-3 top-3 z-20 rounded-md border bg-card p-1.5 text-muted-foreground shadow-sm transition-opacity hover:text-foreground animate-in fade-in-0 duration-200"
-            onClick={() => setSidebarDocked(true)}
-          >
-            <PanelLeft className="size-4" />
-          </button>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
         ) : null}
 
         {selectedDesign ? (
@@ -354,6 +333,12 @@ export function WorkflowsScreen(): React.JSX.Element {
       </AlertDialog>
     </div>
   )
+}
+
+function formatWorkflowStepCount(design: WorkflowDesign): string {
+  const stepCount = design.canvas.nodes.length
+  if (stepCount === 0) return 'No steps yet'
+  return `${stepCount} step${stepCount === 1 ? '' : 's'}`
 }
 
 // --- Canvas editor ---------------------------------------------------------

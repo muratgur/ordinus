@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Brain, HelpCircle, PanelLeft } from 'lucide-react'
+import { Brain, HelpCircle } from 'lucide-react'
 import type {
   InteractionAnswer,
   OrdinusActionEvent,
@@ -48,7 +48,6 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
-import { cn } from '@renderer/lib/utils'
 import { notify } from '@renderer/lib/notifications'
 import { HomeConfirmationPanel } from './home-confirmation-panel'
 import { HomeQuestionPanel } from './home-question-panel'
@@ -769,18 +768,7 @@ export function HomeScreen(): React.JSX.Element {
   // toggle the (empty) sidebar.
   return (
     <div className="flex h-[calc(100vh-3rem)] py-3">
-      <div
-        className={cn(
-          'flex min-h-0 shrink-0 overflow-hidden transition-[width,margin] duration-200 ease-out',
-          // ADR-029 §8 / P3 — the conversation list recedes: default collapsed
-          // (storage.ts). For a fresh user the welcoming stage stays pure
-          // because the rail starts collapsed; it's summonable via the edge
-          // toggle. (We deliberately do NOT force-hide it on the welcoming
-          // state: coupling visibility to showWelcoming deadlocks the summon
-          // button, since that button only renders while the rail is collapsed.)
-          sidebarDocked ? 'mr-3 w-64' : 'mr-0 w-0'
-        )}
-      >
+      <div className="mr-3 flex min-h-0 shrink-0">
         <HomeConversationList
           conversations={conversations}
           activeId={activeId}
@@ -793,25 +781,14 @@ export function HomeScreen(): React.JSX.Element {
           onArchiveConversation={handleArchiveConversation}
           onRestoreConversation={handleRestoreConversation}
           onDeleteConversation={setDeleteTarget}
-          onCollapse={() => setSidebarDocked(false)}
+          collapsed={!sidebarDocked}
+          onToggleCollapsed={() => setSidebarDocked((value) => !value)}
           busy={false}
           loading={loading}
         />
       </div>
 
       <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-card">
-        {!sidebarDocked ? (
-          <button
-            type="button"
-            title="Show conversations"
-            aria-label="Show conversations"
-            className="absolute left-3 top-3 z-20 rounded-md border bg-card p-1.5 text-muted-foreground shadow-sm transition-opacity duration-200 hover:text-foreground"
-            onClick={() => setSidebarDocked(true)}
-          >
-            <PanelLeft className="size-4" />
-          </button>
-        ) : null}
-
         {/* ADR-029 §6 / M8 — Memory panel toggle. Lives in the section's
             top-right so it's always reachable without competing with the
             sidebar toggle on the left. */}

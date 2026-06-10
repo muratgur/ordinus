@@ -25,6 +25,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
+import { Rail, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
 import { Badge } from '@renderer/components/ui/badge'
 import {
   Card,
@@ -122,6 +123,7 @@ export function ConversationsScreen(): React.JSX.Element {
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [sidebarDocked, setSidebarDocked] = useState(true)
   const [message, setMessage] = useState('')
   const [draftMentions, setDraftMentions] = useState<DraftMention[]>([])
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null)
@@ -585,17 +587,19 @@ export function ConversationsScreen(): React.JSX.Element {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-3rem)] gap-4 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:grid-cols-[280px_minmax(0,1fr)] xl:overflow-hidden">
+    <div className="flex h-[calc(100vh-3rem)] gap-3 py-4">
       <ConversationList
         conversations={conversations}
         loading={loading}
         selectedConversationId={selectedConversationId}
+        collapsed={!sidebarDocked}
+        onToggleCollapsed={() => setSidebarDocked((value) => !value)}
         onCreateConversation={() => setCreateOpen(true)}
         onDeleteConversation={(conversationId) => void openDeleteConversation(conversationId)}
         onSelectConversation={(conversationId) => void selectConversation(conversationId)}
       />
 
-      <main className="min-w-0 xl:min-h-0">
+      <main className="relative min-w-0 flex-1 xl:min-h-0">
         <Card className="flex min-h-[420px] flex-col overflow-hidden xl:h-full xl:min-h-0">
           {error ? <InlineError message={error} /> : null}
           {detail ? (
@@ -786,6 +790,8 @@ function ConversationList({
   conversations,
   loading,
   selectedConversationId,
+  collapsed,
+  onToggleCollapsed,
   onCreateConversation,
   onDeleteConversation,
   onSelectConversation
@@ -793,87 +799,59 @@ function ConversationList({
   conversations: ConversationListItem[]
   loading: boolean
   selectedConversationId: string
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onCreateConversation: () => void
   onDeleteConversation: (conversationId: string) => void
   onSelectConversation: (conversationId: string) => void
 }): React.JSX.Element {
   return (
-    <aside className="min-w-0 xl:min-h-0">
-      <Card className="flex flex-col overflow-hidden xl:h-full xl:min-h-0">
-        <CardHeader className="border-b">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquareText className="size-4 text-primary" />
-                Conversations
-              </CardTitle>
-              <CardDescription>
-                {loading
-                  ? 'Loading'
-                  : `${conversations.length} thread${conversations.length === 1 ? '' : 's'}`}
-              </CardDescription>
-            </div>
-            <Button size="icon" aria-label="New conversation" onClick={onCreateConversation}>
-              <Plus />
-            </Button>
-          </div>
-        </CardHeader>
-        <ScrollArea className="min-h-0 flex-1">
-          <CardContent className="grid gap-2 p-3">
-            {conversations.map((conversation) => (
-              <div
-                key={conversation.id}
-                className={cn(
-                  'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-lg border bg-card p-2 transition-colors hover:bg-accent',
-                  selectedConversationId === conversation.id && 'border-primary/40 bg-primary-soft'
-                )}
-              >
-                <button
-                  type="button"
-                  className="grid min-w-0 gap-2 rounded-md p-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => onSelectConversation(conversation.id)}
-                >
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{conversation.title}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {conversation.agentName || 'No participant'}
-                      </p>
-                    </div>
-                    <StatusDot status={conversation.status} />
-                  </div>
-                  <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
-                    {conversation.lastPreview || 'No messages yet'}
-                  </p>
-                </button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 shrink-0 self-start text-muted-foreground hover:text-status-attention"
-                  disabled={conversation.status === 'running'}
-                  title={
-                    conversation.status === 'running'
-                      ? 'Stop this conversation before deleting it.'
-                      : 'Delete conversation'
+    <Rail
+      aria-label="Conversations"
+      collapsed={collapsed}
+      onToggleCollapsed={onToggleCollapsed}
+      cta={{ label: 'New conversation', onClick: onCreateConversation }}
+      searchPlaceholder="Find conversation"
+      search={conversations.map((conversation) => ({
+        id: conversation.id,
+        label: conversation.title,
+        meta: conversation.lastPreview || undefined,
+        onSelect: () => onSelectConversation(conversation.id)
+      }))}
+    >
+      <RailList isEmpty={!loading && conversations.length === 0} empty="No conversations yet.">
+        {loading
+          ? null
+          : conversations.map((conversation) => {
+              const running = conversation.status === 'running'
+              return (
+                <RailItem
+                  key={conversation.id}
+                  title={conversation.title}
+                  selected={selectedConversationId === conversation.id}
+                  running={running}
+                  runningLabel="Working…"
+                  meta={conversation.lastPreview || 'No messages yet'}
+                  rightSlot={<StatusDot status={conversation.status} />}
+                  onSelect={() => onSelectConversation(conversation.id)}
+                  actions={
+                    <RailItemAction
+                      icon={Trash2}
+                      label={
+                        running
+                          ? 'Stop this conversation before deleting it.'
+                          : 'Delete conversation'
+                      }
+                      disabled={running}
+                      className="hover:text-status-attention"
+                      onClick={() => onDeleteConversation(conversation.id)}
+                    />
                   }
-                  onClick={() => onDeleteConversation(conversation.id)}
-                >
-                  <Trash2 />
-                  <span className="sr-only">Delete conversation</span>
-                </Button>
-              </div>
-            ))}
-
-            {!loading && conversations.length === 0 ? (
-              <div className="rounded-lg border border-dashed bg-accent p-4 text-sm text-muted-foreground">
-                No conversations yet.
-              </div>
-            ) : null}
-          </CardContent>
-        </ScrollArea>
-      </Card>
-    </aside>
+                />
+              )
+            })}
+      </RailList>
+    </Rail>
   )
 }
 

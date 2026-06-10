@@ -95,6 +95,14 @@ pattern as Workboard's `sidebarDockedStorageKey`.
 
 ### Run History: Deep-Link and Archived Runs
 
+> **Amendment (2026-06-10, ADR-033):** Run history no longer lives in the left
+> rail. The rail footer is removed under the shared rail design system, and **"Past
+> runs" moves into the content area**, scoped to the selected workflow. The
+> behavior described below (deep-link into Workboard, inline dimmed archived runs
+> with an "Archived" badge) is preserved — only the location changes. The rail
+> keeps "New workflow at top" and dockable behavior, now expressed through ADR-033's
+> canonical stack.
+
 Run history lives at the **bottom of the left rail**, scoped to the selected
 workflow (top: all designs; bottom: the selected design's runs). Clicking an
 entry writes the WR id to `ordinus-workboard-active-request` (and, if the run's

@@ -7,6 +7,14 @@ Accepted
 Builds on ADR-007 (Work Requests) and ADR-020 (request sidebar). Supersedes no prior
 decision.
 
+> **Amendment (2026-06-10, ADR-033):** The archive *surface* changes. The
+> "Show/Hide archived" toggle at the bottom of the sidebar is replaced by a **"Show
+> archived" toggle inside the rail's ⚙ filter popover** (beside search), and the
+> archived **count** in the label is dropped (an active-state dot on ⚙ replaces it).
+> The archiving semantics in this ADR — soft `archivedAt`, default-hidden, search
+> respects the filter, persisted `ordinus-workboard-show-archived` preference — are
+> unchanged.
+
 ## Date
 
 2026-05-22

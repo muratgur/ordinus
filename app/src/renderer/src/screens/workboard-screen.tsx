@@ -29,7 +29,6 @@ import {
   GitBranch,
   Loader2,
   MoreHorizontal,
-  PanelLeft,
   PanelRight,
   Plus,
   Search,
@@ -98,6 +97,13 @@ import {
   draftTextareaClassName,
   sortAgentsByUsage
 } from '@renderer/components/draft-item-shared'
+import {
+  Rail,
+  RailFilterToggle,
+  RailItem,
+  RailItemAction,
+  RailList
+} from '@renderer/components/rail'
 import { cn } from '@renderer/lib/utils'
 import { useLiveness } from '@renderer/app/liveness'
 import type { PlanOperationsController } from '@renderer/app/plan-operations'
@@ -226,7 +232,6 @@ export function WorkboardScreen({
   const [activeRequestId, setActiveRequestId] = useState(getStoredActiveRequestId)
   const [sidebarDocked, setSidebarDocked] = useState(getStoredSidebarDocked)
   const [showArchived, setShowArchived] = useState(getStoredShowArchived)
-  const [railSearch, setRailSearch] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
@@ -663,33 +668,24 @@ export function WorkboardScreen({
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        <div
-          className={cn(
-            'flex min-h-0 overflow-hidden transition-[width,margin] duration-200',
-            sidebarDocked ? 'mr-3 w-64' : 'mr-0 w-0'
-          )}
-        >
-          <RequestSidebar
-            requests={visibleRailStats}
-            activeRequestId={activeRequest?.id ?? ''}
-            search={railSearch}
-            newDisabled={enabledAgents.length === 0}
-            showArchived={showArchived}
-            archivedCount={archivedCount}
-            onSearchChange={setRailSearch}
-            onSelect={changeActiveRequest}
-            onNew={handleNewRequest}
-            onToggleArchived={() => setShowArchived((value) => !value)}
-            onArchive={handleArchiveRequest}
-          />
-        </div>
+      <div className="flex min-h-0 flex-1 gap-3">
+        <RequestSidebar
+          requests={visibleRailStats}
+          activeRequestId={activeRequest?.id ?? ''}
+          newDisabled={enabledAgents.length === 0}
+          showArchived={showArchived}
+          archivedCount={archivedCount}
+          collapsed={!sidebarDocked}
+          onToggleCollapsed={() => setSidebarDocked((docked) => !docked)}
+          onSelect={changeActiveRequest}
+          onNew={handleNewRequest}
+          onToggleArchived={() => setShowArchived((value) => !value)}
+          onArchive={handleArchiveRequest}
+        />
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           <RequestHeaderBar
             request={activeRequest}
-            sidebarDocked={sidebarDocked}
             fileCount={activeRequestFiles.length}
-            onToggleSidebar={() => setSidebarDocked((docked) => !docked)}
             onContinue={handleContinueRequest}
             onOpenFiles={() => setFilesDrawerOpen(true)}
             onArchive={handleArchiveRequest}
@@ -1922,6 +1918,12 @@ type RequestRailStat = {
   updatedAt: string
 }
 
+const requestAttentionDotClass: Record<RequestRailStat['attention'], string | undefined> = {
+  input: 'bg-status-attention',
+  running: 'bg-status-running',
+  none: undefined
+}
+
 function isTerminalRequestStatus(status: WorkboardData['requests'][number]['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
@@ -1968,11 +1970,11 @@ function useExitAnimation(open: boolean): {
 function RequestSidebar({
   requests,
   activeRequestId,
-  search,
   newDisabled,
   showArchived,
   archivedCount,
-  onSearchChange,
+  collapsed,
+  onToggleCollapsed,
   onSelect,
   onNew,
   onToggleArchived,
@@ -1980,87 +1982,59 @@ function RequestSidebar({
 }: {
   requests: RequestRailStat[]
   activeRequestId: string
-  search: string
   newDisabled: boolean
   showArchived: boolean
   archivedCount: number
-  onSearchChange: (value: string) => void
+  collapsed: boolean
+  onToggleCollapsed: () => void
   onSelect: (requestId: string) => void
   onNew: () => void
   onToggleArchived: () => void
   onArchive: (requestId: string) => void
 }): React.JSX.Element {
-  const normalized = search.trim().toLowerCase()
-  const filtered = normalized
-    ? requests.filter((request) => request.title.toLowerCase().includes(normalized))
-    : requests
+  const searchItems = requests.map((request) => ({
+    id: request.id,
+    label: request.title,
+    meta: `${request.completedCount}/${request.totalCount} done`,
+    onSelect: () => onSelect(request.id)
+  }))
 
   return (
-    <aside className="flex min-h-0 w-64 shrink-0 flex-col gap-2 border-r border-border pr-3">
-      <Button type="button" size="sm" className="w-full" onClick={onNew} disabled={newDisabled}>
-        <Plus />
-        New Work Request
-      </Button>
-      <label className="flex h-9 items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground">
-        <Search className="size-4 shrink-0" />
-        <input
-          className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-          placeholder="Find Work Request"
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
-      </label>
-      <RequestList
-        requests={filtered}
-        activeRequestId={activeRequestId}
-        onSelect={onSelect}
-        onArchive={onArchive}
-      />
-      {archivedCount > 0 ? (
-        <button
-          type="button"
-          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onClick={onToggleArchived}
-        >
-          <Archive className="size-3.5 shrink-0" />
-          {showArchived ? 'Hide archived' : 'Show archived'} ({archivedCount})
-        </button>
-      ) : null}
-    </aside>
-  )
-}
-
-function RequestList({
-  requests,
-  activeRequestId,
-  onSelect,
-  onArchive
-}: {
-  requests: RequestRailStat[]
-  activeRequestId: string
-  onSelect: (requestId: string) => void
-  onArchive?: (requestId: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto ordinus-scrollbar">
-      {requests.length === 0 ? (
-        <p className="px-2 py-3 text-xs text-muted-foreground">No Work Requests found.</p>
-      ) : (
-        requests.map((request) => (
-          <RequestListRow
+    <Rail
+      aria-label="Work Requests"
+      collapsed={collapsed}
+      onToggleCollapsed={onToggleCollapsed}
+      cta={{ label: 'New Work Request', onClick: onNew, disabled: newDisabled }}
+      search={searchItems}
+      searchPlaceholder="Find Work Request"
+      filterActive={showArchived}
+      filter={
+        archivedCount > 0 ? (
+          <RailFilterToggle
+            icon={Archive}
+            label="Show archived"
+            checked={showArchived}
+            onCheckedChange={onToggleArchived}
+          />
+        ) : undefined
+      }
+    >
+      <RailList isEmpty={requests.length === 0} empty="No Work Requests found.">
+        {requests.map((request) => (
+          <RequestRailItem
             key={request.id}
             request={request}
             active={request.id === activeRequestId}
             onSelect={onSelect}
             onArchive={onArchive}
           />
-        ))
-      )}
-    </div>
+        ))}
+      </RailList>
+    </Rail>
   )
 }
 
-function RequestListRow({
+function RequestRailItem({
   request,
   active,
   onSelect,
@@ -2071,83 +2045,45 @@ function RequestListRow({
   onSelect: (requestId: string) => void
   onArchive?: (requestId: string) => void
 }): React.JSX.Element {
-  const [exiting, setExiting] = useState(false)
   const canArchive =
     Boolean(onArchive) && !request.archived && isTerminalRequestStatus(request.status)
 
   return (
-    <div
-      className={cn(
-        'group relative flex flex-col gap-0.5 rounded-md transition-colors',
-        active ? 'bg-primary-soft' : 'hover:bg-accent',
-        exiting && 'animate-out fade-out-0 slide-out-to-right-2 duration-150'
-      )}
-      onAnimationEnd={() => {
-        if (exiting) onArchive?.(request.id)
-      }}
-    >
-      {active ? (
-        <span className="absolute bottom-1 left-0 top-1 w-0.5 rounded-full bg-primary" />
-      ) : null}
-      <button
-        type="button"
-        className="flex flex-col gap-0.5 px-2 py-1.5 text-left"
-        onClick={() => onSelect(request.id)}
-      >
-        <div className="flex items-center gap-1.5">
-          <span
-            className={cn(
-              'size-1.5 shrink-0 rounded-full',
-              request.attention === 'input'
-                ? 'bg-status-attention'
-                : request.attention === 'running'
-                  ? 'bg-status-running'
-                  : 'bg-transparent'
-            )}
-          />
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{request.title}</span>
-        </div>
-        <span className="pl-3 text-[11px] tabular-nums text-muted-foreground">
-          {request.archived ? 'Archived - ' : ''}
+    <RailItem
+      title={request.title}
+      selected={active}
+      dimmed={request.archived}
+      leadingDot={requestAttentionDotClass[request.attention]}
+      meta={
+        <span className="tabular-nums">
+          {request.archived ? 'Archived · ' : ''}
           {request.completedCount}/{request.totalCount} done
         </span>
-      </button>
-      {canArchive ? (
-        <div
-          className={cn(
-            'absolute bottom-0 right-0 top-0 hidden w-16 items-center justify-end rounded-r-md bg-gradient-to-l to-transparent pr-1 group-hover:flex',
-            active ? 'from-primary-soft via-primary-soft' : 'from-accent via-accent'
-          )}
-        >
-          <button
-            type="button"
-            aria-label="Archive Work Request"
-            title="Archive Work Request"
-            className="rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-            onClick={() => setExiting(true)}
-          >
-            <Archive className="size-3.5" />
-          </button>
-        </div>
-      ) : null}
-    </div>
+      }
+      onSelect={() => onSelect(request.id)}
+      actions={
+        canArchive ? (
+          <RailItemAction
+            icon={Archive}
+            label="Archive Work Request"
+            onClick={() => onArchive?.(request.id)}
+          />
+        ) : undefined
+      }
+    />
   )
 }
 
 function RequestHeaderBar({
   request,
-  sidebarDocked,
   fileCount,
-  onToggleSidebar,
   onContinue,
   onOpenFiles,
   onArchive,
   onUnarchive
 }: {
   request: WorkboardData['requests'][number] | null
-  sidebarDocked: boolean
   fileCount: number
-  onToggleSidebar: () => void
   onContinue: (requestId: string) => void
   onOpenFiles: () => void
   onArchive: (requestId: string) => void
@@ -2160,16 +2096,6 @@ function RequestHeaderBar({
 
   return (
     <section className="flex shrink-0 items-center gap-2 px-1">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="shrink-0 px-2"
-        onClick={onToggleSidebar}
-        aria-label={sidebarDocked ? 'Collapse request list' : 'Dock request list'}
-      >
-        <PanelLeft />
-      </Button>
       <h2 className="min-w-0 truncate text-sm font-semibold">
         {request ? request.title : 'Workboard'}
       </h2>
