@@ -768,7 +768,7 @@
       const pre = new Image();
       img.style.opacity = "0";
       pre.onload = () => { img.src = pre.src; img.style.opacity = "1"; };
-      pre.src = "shots/" + encodeURIComponent(name);
+      pre.src = "landing/shots/" + encodeURIComponent(name);
       titleEl.textContent = s.title;
       textEl.textContent = s.text;
       [...dotsEl.children].forEach((d, i) => d.classList.toggle("active", i === idx));
