@@ -1,0 +1,1 @@
+ALTER TABLE `ordinus_conversation_turns` ADD `result_content` text DEFAULT '' NOT NULL;

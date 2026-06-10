@@ -671,6 +671,7 @@ export class OrdinusDatabase {
     conversationId: string
     kind: string
     content: string
+    resultContent: string
     turnId: string | null
     createdAt: string
   }> {
@@ -685,6 +686,7 @@ export class OrdinusDatabase {
       conversationId: row.conversationId,
       kind: row.kind,
       content: row.content,
+      resultContent: row.resultContent,
       turnId: row.turnId,
       createdAt: row.createdAt
     }))
@@ -694,12 +696,14 @@ export class OrdinusDatabase {
     conversationId: string
     kind: 'user' | 'assistant' | 'error'
     content: string
+    resultContent?: string
     turnId?: string | null
   }): {
     id: string
     conversationId: string
     kind: string
     content: string
+    resultContent: string
     turnId: string | null
     createdAt: string
   } {
@@ -720,6 +724,7 @@ export class OrdinusDatabase {
           conversationId: input.conversationId,
           kind: input.kind,
           content: input.content,
+          resultContent: input.resultContent ?? '',
           turnId: input.turnId ?? null,
           createdAt: now
         })
@@ -736,6 +741,7 @@ export class OrdinusDatabase {
       conversationId: input.conversationId,
       kind: input.kind,
       content: input.content,
+      resultContent: input.resultContent ?? '',
       turnId: input.turnId ?? null,
       createdAt: now
     }

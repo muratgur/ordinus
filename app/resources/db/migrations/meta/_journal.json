@@ -281,6 +281,13 @@
       "when": 1781020189546,
       "tag": "0039_sticky_mantis",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1781116182147,
+      "tag": "0040_real_swarm",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,9 @@ export type HomeMessage =
       kind: 'assistant'
       id: string
       text: string
+      // ADR-030 parity: optional full produced body, surfaced on demand under
+      // the summary ("Show full response"). Empty when there is no extra body.
+      resultContent: string
       at: string
     }
   | {

@@ -95,6 +95,9 @@ export type OrdinusSessionService = {
     answers: InteractionAnswer[]
   }): Promise<OrdinusTurnOutcome>
   isTurnRunning(conversationId: string): boolean
+  /** Conversation ids with an in-flight turn. Lets a (re)mounted renderer
+   * rehydrate the "thinking" indicator after navigating back to Home. */
+  listRunningConversations(): string[]
 }
 
 export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSessionService {
@@ -150,6 +153,10 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
       return runningConversationIds.has(conversationId)
     },
 
+    listRunningConversations() {
+      return Array.from(runningConversationIds)
+    },
+
     async sendTurn(input) {
       if (runningConversationIds.has(input.conversationId)) {
         throw new Error('Ordinus is already working on this conversation.')
@@ -168,6 +175,7 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
       }
 
       runningConversationIds.add(conversation.id)
+      deps.events.publish({ kind: 'turn_started', conversationId: conversation.id })
       try {
         // ADR-029 M4.5 — Record the user's message before dispatch so a crash
         // or interruption between here and the runtime response still leaves a
@@ -289,8 +297,11 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           database.appendOrdinusTurn({
             conversationId: conversation.id,
             kind: 'assistant',
-            // ADR-030: the transcript message is the always-present summary.
+            // ADR-030: the transcript message is the always-present summary;
+            // the full produced body (if any) is stored alongside and surfaced
+            // on demand ("Show full response") in the transcript.
             content: result.outcome.summary,
+            resultContent: result.outcome.content,
             turnId
           })
         } else {
@@ -313,6 +324,7 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         }
       } finally {
         runningConversationIds.delete(conversation.id)
+        deps.events.publish({ kind: 'turn_settled', conversationId: conversation.id })
       }
     },
 

@@ -8,6 +8,11 @@ export const ipcChannels = {
   ordinusSendTurn: 'ordinus:send-turn',
   // ADR-029 M4.5: persisted transcript so the renderer can rehydrate after nav.
   ordinusListTurns: 'ordinus:list-turns',
+  // Conversation ids with an in-flight turn. The "thinking" indicator is
+  // ephemeral (no running-turn row in the DB), so the renderer queries this on
+  // mount to rehydrate it after navigating back to Home, and keeps it live via
+  // the turn_started / turn_settled action events.
+  ordinusListRunningConversations: 'ordinus:list-running-conversations',
   // ADR-029 M5: broadcast from main to renderer when an Ordinus action tool
   // completes (workboard plan ready, schedule created, workflow created).
   // One channel, discriminated payload — see OrdinusActionEventSchema.

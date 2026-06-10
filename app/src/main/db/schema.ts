@@ -462,6 +462,11 @@ export const ordinusConversationTurns = sqliteTable(
     conversationId: text('conversation_id').notNull(),
     kind: text('kind').notNull(),
     content: text('content').notNull(),
+    // ADR-030 parity: `content` holds the always-shown summary; `resultContent`
+    // holds the optional full produced body, surfaced on demand in the
+    // transcript ("Show full response"). Empty for user/error turns and for
+    // assistant turns whose deliverable was a file rather than text.
+    resultContent: text('result_content').notNull().default(''),
     // The runtime turnId (`ot-...`) when the turn was the assistant's reply or
     // an error within a sendTurn cycle. Null for the user-message turn that
     // initiated the cycle, since the runtime turnId is only minted in the

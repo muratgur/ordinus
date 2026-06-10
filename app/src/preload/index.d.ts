@@ -150,6 +150,7 @@ export type OrdinusApi = {
     ) => Promise<OrdinusConversationSummary>
     sendTurn: (input: OrdinusSendTurnInput) => Promise<OrdinusTurnOutcome>
     listTurns: (input: OrdinusListTurnsInput) => Promise<OrdinusConversationTurn[]>
+    listRunningConversations: () => Promise<string[]>
     onActionEvent: (callback: (event: OrdinusActionEvent) => void) => () => void
     listPendingConfirmations: () => Promise<OrdinusPendingConfirmation[]>
     resolveConfirmation: (input: OrdinusResolveConfirmationInput) => Promise<{ resolved: boolean }>

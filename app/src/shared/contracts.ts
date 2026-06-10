@@ -262,6 +262,22 @@ export const OrdinusActionEventSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('input_request_resolved'),
     requestId: z.string()
+  }),
+  // Turn lifecycle. The Ordinus transcript's "thinking" indicator is ephemeral
+  // UI (there is no running-turn row in the DB), so — unlike Workboard, whose
+  // status is server-persisted — it cannot be recovered by re-fetching after
+  // the screen unmounts on navigation. These events let any (re)mounted window
+  // rehydrate the busy indicator and refresh the transcript when a turn settles
+  // while the user was on another screen. `started` fires when a turn begins;
+  // `settled` fires when it finishes for any reason (final response, needs_input,
+  // or error).
+  z.object({
+    kind: z.literal('turn_started'),
+    conversationId: z.string()
+  }),
+  z.object({
+    kind: z.literal('turn_settled'),
+    conversationId: z.string()
   })
 ])
 
@@ -342,6 +358,9 @@ export const OrdinusConversationTurnSchema = z.object({
   conversationId: z.string(),
   kind: OrdinusConversationTurnKindSchema,
   content: z.string(),
+  // ADR-030 parity: optional full produced body, shown on demand in the
+  // transcript ("Show full response"). Empty when there is no extra body.
+  resultContent: z.string().default(''),
   turnId: z.string().nullable(),
   createdAt: z.string()
 })

@@ -7,12 +7,15 @@
 // the position of HomeConfirmationPanel so the focus path is "see questions →
 // answer → keep going."
 //
-// One request at a time. The user answers all required questions, then submits;
-// the answers become a normal user turn (in the transcript) and Ordinus
-// resumes. The user can also dismiss the request entirely.
+// One request at a time, and within a request ONE QUESTION AT A TIME: the panel
+// is a compact wizard. The user answers the current question (choice/boolean
+// selections auto-advance), can step Back, and submits on the last step. The
+// answers become a normal user turn (in the transcript) and Ordinus resumes.
+// The user can also dismiss the request entirely. Keeping a single question on
+// screen keeps the panel short so it never overflows the docked input.
 
 import { useMemo, useState } from 'react'
-import { Check, X } from 'lucide-react'
+import { ArrowLeft, Check, X } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { cn } from '@renderer/lib/utils'
@@ -50,6 +53,23 @@ function initialDraft(question: InteractionQuestion): QuestionDraft {
   return { kind: 'boolean', value: null }
 }
 
+// Whether a draft holds a complete answer for its question (used to gate
+// auto-advance and the final submit).
+function isAnswered(question: InteractionQuestion, draft: QuestionDraft): boolean {
+  if (question.kind === 'choice' && draft.kind === 'choice') {
+    const { optionId, customText } = draft.choice
+    if (optionId === CUSTOM_OPTION_VALUE) return customText.trim().length > 0
+    return optionId !== null
+  }
+  if (question.kind === 'text' && draft.kind === 'text') {
+    return draft.text.trim().length > 0
+  }
+  if (question.kind === 'boolean' && draft.kind === 'boolean') {
+    return draft.value !== null
+  }
+  return false
+}
+
 export function HomeQuestionPanel({
   request,
   busy,
@@ -58,6 +78,7 @@ export function HomeQuestionPanel({
 }: HomeQuestionPanelProps): React.JSX.Element | null {
   // Keyed by request id so switching requests resets the draft.
   const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({})
+  const [stepByRequest, setStepByRequest] = useState<Record<string, number>>({})
 
   const questionKey = useMemo(
     () => (request ? request.questions.map((q) => q.id).join('|') : ''),
@@ -65,6 +86,17 @@ export function HomeQuestionPanel({
   )
 
   if (!request) return null
+
+  const total = request.questions.length
+  const stepIndex = Math.min(stepByRequest[request.requestId] ?? 0, total - 1)
+  const currentQuestion = request.questions[stepIndex]
+
+  const setStep = (index: number): void => {
+    setStepByRequest((prev) => ({
+      ...prev,
+      [request.requestId]: Math.max(0, Math.min(index, total - 1))
+    }))
+  }
 
   const draftFor = (question: InteractionQuestion): QuestionDraft => {
     const key = `${request.requestId}:${question.id}`
@@ -111,57 +143,132 @@ export function HomeQuestionPanel({
     return answers
   }
 
+  const isLastStep = stepIndex === total - 1
+  const currentDraft = draftFor(currentQuestion)
+  const currentAnswered = isAnswered(currentQuestion, currentDraft)
+  // The current step blocks forward motion only when it's required and unanswered.
+  const canAdvance = currentAnswered || !currentQuestion.required
+
   const answers = buildAnswers()
   const canSubmit = answers !== null && !busy
 
+  // Selecting a choice/boolean should feel like tapping through — advance to the
+  // next step automatically (but never off the last one, where the user submits).
+  // "Something else…" needs a typed answer, so don't jump away from it.
+  const handleAutoAdvance = (draft: QuestionDraft): void => {
+    if (isLastStep) return
+    const advances =
+      (draft.kind === 'boolean' && draft.value !== null) ||
+      (draft.kind === 'choice' &&
+        draft.choice.optionId !== null &&
+        draft.choice.optionId !== CUSTOM_OPTION_VALUE)
+    if (advances) setStep(stepIndex + 1)
+  }
+
   return (
-    <div className="border-t bg-[#ff7a18]/5 px-4 py-3">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-3" key={questionKey}>
-        <div className="min-w-0">
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold">{request.title}</span>
-            <span className="text-[11px] uppercase tracking-wide text-[#ff7a18]">
+    <div className="border-t bg-[#ff7a18]/5 px-4 py-2.5">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2" key={questionKey}>
+        <div className="flex min-w-0 items-baseline justify-between gap-2">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate text-sm font-semibold">{request.title}</span>
+            <span className="shrink-0 text-[11px] uppercase tracking-wide text-[#ff7a18]">
               Ordinus needs a moment
             </span>
           </div>
-          {request.detail ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">{request.detail}</p>
-          ) : null}
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {stepIndex + 1} / {total}
+          </span>
         </div>
 
-        <div className="flex flex-col gap-4">
-          {request.questions.map((question) => (
-            <QuestionField
-              key={question.id}
-              question={question}
-              draft={draftFor(question)}
+        {/* Segmented progress: filled = visited/answered, accent = current. */}
+        {total > 1 ? (
+          <div className="flex gap-1">
+            {request.questions.map((q, index) => {
+              const answered = isAnswered(q, draftFor(q))
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  aria-label={`Question ${index + 1}`}
+                  disabled={busy}
+                  onClick={() => setStep(index)}
+                  className={cn(
+                    'h-1 flex-1 rounded-full transition-colors',
+                    index === stepIndex
+                      ? 'bg-[#ff7a18]'
+                      : answered
+                        ? 'bg-[#ff7a18]/40'
+                        : 'bg-border'
+                  )}
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <div className="h-0" />
+        )}
+
+        {request.detail && stepIndex === 0 ? (
+          <p className="text-xs text-muted-foreground">{request.detail}</p>
+        ) : null}
+
+        <QuestionField
+          // Re-key per step so inner autoFocus / state resets cleanly.
+          key={currentQuestion.id}
+          question={currentQuestion}
+          draft={currentDraft}
+          disabled={busy}
+          onChange={(draft) => setDraft(currentQuestion.id, draft)}
+          onCommit={handleAutoAdvance}
+        />
+
+        <div className="flex items-center justify-between gap-2 pt-0.5">
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => onCancel(request.requestId)}
               disabled={busy}
-              onChange={(draft) => setDraft(question.id, draft)}
-            />
-          ))}
-        </div>
+            >
+              <X className="size-3.5" /> Dismiss
+            </Button>
+            {stepIndex > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setStep(stepIndex - 1)}
+                disabled={busy}
+              >
+                <ArrowLeft className="size-3.5" /> Back
+              </Button>
+            ) : null}
+          </div>
 
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => onCancel(request.requestId)}
-            disabled={busy}
-          >
-            <X className="size-3.5" /> Dismiss
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="bg-[#ff7a18] text-white hover:bg-[#ff7a18]/90"
-            onClick={() => {
-              if (answers) onAnswer(request.requestId, answers)
-            }}
-            disabled={!canSubmit}
-          >
-            <Check className="size-3.5" /> Continue
-          </Button>
+          {isLastStep ? (
+            <Button
+              type="button"
+              size="sm"
+              className="bg-[#ff7a18] text-white hover:bg-[#ff7a18]/90"
+              onClick={() => {
+                if (answers) onAnswer(request.requestId, answers)
+              }}
+              disabled={!canSubmit}
+            >
+              <Check className="size-3.5" /> Continue
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setStep(stepIndex + 1)}
+              disabled={busy || !canAdvance}
+            >
+              Next
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -173,16 +280,20 @@ type QuestionFieldProps = {
   draft: QuestionDraft
   disabled: boolean
   onChange: (draft: QuestionDraft) => void
+  // Fired on a discrete selection (choice option / boolean) so the wizard can
+  // auto-advance. Not fired on every keystroke for free-text inputs.
+  onCommit: (draft: QuestionDraft) => void
 }
 
 function QuestionField({
   question,
   draft,
   disabled,
-  onChange
+  onChange,
+  onCommit
 }: QuestionFieldProps): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex max-h-[36vh] flex-col gap-1.5 overflow-y-auto">
       <div className="flex items-baseline gap-1.5">
         <span className="text-sm font-medium">{question.label}</span>
         {question.required ? null : (
@@ -199,11 +310,13 @@ function QuestionField({
           choice={draft.choice}
           disabled={disabled}
           onChange={(choice) => onChange({ kind: 'choice', choice })}
+          onCommit={(choice) => onCommit({ kind: 'choice', choice })}
         />
       ) : null}
 
       {question.kind === 'text' && draft.kind === 'text' ? (
         <Input
+          autoFocus
           value={draft.text}
           placeholder={question.placeholder}
           disabled={disabled}
@@ -226,7 +339,10 @@ function QuestionField({
               className={cn(
                 draft.value === option.value && 'border-[#ff7a18] bg-[#ff7a18]/10 text-[#ff7a18]'
               )}
-              onClick={() => onChange({ kind: 'boolean', value: option.value })}
+              onClick={() => {
+                onChange({ kind: 'boolean', value: option.value })
+                onCommit({ kind: 'boolean', value: option.value })
+              }}
             >
               {option.label}
             </Button>
@@ -242,16 +358,18 @@ type ChoiceFieldProps = {
   choice: ChoiceDraft
   disabled: boolean
   onChange: (choice: ChoiceDraft) => void
+  onCommit: (choice: ChoiceDraft) => void
 }
 
 function ChoiceField({
   question,
   choice,
   disabled,
-  onChange
+  onChange,
+  onCommit
 }: ChoiceFieldProps): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1">
       {question.options.map((option) => {
         const selected = choice.optionId === option.id
         return (
@@ -259,9 +377,13 @@ function ChoiceField({
             key={option.id}
             type="button"
             disabled={disabled}
-            onClick={() => onChange({ ...choice, optionId: option.id })}
+            onClick={() => {
+              const next = { ...choice, optionId: option.id }
+              onChange(next)
+              onCommit(next)
+            }}
             className={cn(
-              'flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left text-sm transition-colors',
+              'flex flex-col items-start gap-0.5 rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors',
               'hover:border-[#ff7a18]/60 disabled:cursor-not-allowed disabled:opacity-60',
               selected ? 'border-[#ff7a18] bg-[#ff7a18]/10' : 'border-border bg-background/60'
             )}
@@ -269,7 +391,7 @@ function ChoiceField({
             <span className="flex items-center gap-2 font-medium">
               {option.label}
               {question.recommendedOptionId === option.id ? (
-                <span className="rounded bg-[#ff7a18]/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[#ff7a18]">
+                <span className="rounded bg-[#ff7a18]/15 px-1 py-px text-[9px] uppercase tracking-wide text-[#ff7a18]">
                   Recommended
                 </span>
               ) : null}
@@ -282,13 +404,13 @@ function ChoiceField({
       })}
 
       {question.allowCustom ? (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <button
             type="button"
             disabled={disabled}
             onClick={() => onChange({ ...choice, optionId: CUSTOM_OPTION_VALUE })}
             className={cn(
-              'rounded-md border px-3 py-2 text-left text-sm transition-colors',
+              'rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors',
               'hover:border-[#ff7a18]/60 disabled:cursor-not-allowed disabled:opacity-60',
               choice.optionId === CUSTOM_OPTION_VALUE
                 ? 'border-[#ff7a18] bg-[#ff7a18]/10'

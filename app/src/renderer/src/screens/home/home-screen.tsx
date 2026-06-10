@@ -99,6 +99,7 @@ function turnToMessage(turn: OrdinusConversationTurn): HomeMessage {
         kind: 'assistant',
         id: turn.id,
         text: turn.content,
+        resultContent: turn.resultContent,
         at: turn.createdAt
       }
     case 'error':
@@ -308,10 +309,28 @@ export function HomeScreen(): React.JSX.Element {
   const activeConversation = activeId
     ? (conversations.find((c) => c.id === activeId) ?? null)
     : null
-  const activeMessages = activeId ? (messagesByConversation[activeId] ?? []) : []
   const activeArchived = Boolean(activeConversation?.archivedAt)
   const activePendingLabel = activeId ? pendingTurnLabelsByConversation[activeId] : undefined
   const activeTurnBusy = Boolean(activePendingLabel)
+  // The "thinking" row is derived from busy state (reconciled from the backend),
+  // not just the transient status message appended on a local send. This keeps
+  // the indicator visible after navigating away and back while a turn is still
+  // in flight — the moment the user described as "going blind". We synthesize it
+  // only when no status message is already present (the local-send path appends
+  // its own), so the two paths never double up.
+  const activeMessages = useMemo(() => {
+    const base = activeId ? (messagesByConversation[activeId] ?? []) : []
+    if (!activeTurnBusy || base.some((m) => m.kind === 'status')) return base
+    return [
+      ...base,
+      {
+        kind: 'status' as const,
+        id: `status-live-${activeId}`,
+        label: activePendingLabel ?? THINKING_LABEL,
+        at: ''
+      }
+    ]
+  }, [activeId, messagesByConversation, activeTurnBusy, activePendingLabel])
   const activeStartFreshBusy = activeId ? Boolean(freshStartBusyByConversation[activeId]) : false
   const busyConversationIds = useMemo(
     () => Object.keys(pendingTurnLabelsByConversation),
@@ -460,6 +479,53 @@ export function HomeScreen(): React.JSX.Element {
       }
     })
   }, [])
+
+  // Turn lifecycle reconciliation. The backend (runningConversationIds) is the
+  // source of truth for "a turn is in flight"; the renderer's busy state is
+  // ephemeral and is lost when HomeScreen unmounts on navigation. On (re)mount
+  // we seed the busy labels from the backend, and we subscribe to the
+  // turn_started / turn_settled events so a turn that finishes while the user is
+  // on another screen still clears the indicator and pulls in the reply when
+  // they return. Mirrors how Workboard/Conversations stay live (server-derived
+  // status + event subscription), adapted to Ordinus's event-driven model.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const running = await window.ordinus.ordinus.listRunningConversations()
+        if (cancelled || running.length === 0) return
+        setPendingTurnLabelsByConversation((prev) => {
+          const next = { ...prev }
+          for (const id of running) next[id] = THINKING_LABEL
+          return next
+        })
+      } catch {
+        // Non-fatal — without this the indicator simply won't rehydrate.
+      }
+    })()
+    const off = window.ordinus.ordinus.onActionEvent((event: OrdinusActionEvent) => {
+      if (event.kind === 'turn_started') {
+        setPendingTurnLabelsByConversation((prev) =>
+          prev[event.conversationId] ? prev : { ...prev, [event.conversationId]: THINKING_LABEL }
+        )
+      } else if (event.kind === 'turn_settled') {
+        setPendingTurnLabelsByConversation((prev) => {
+          if (!prev[event.conversationId]) return prev
+          const next = { ...prev }
+          delete next[event.conversationId]
+          return next
+        })
+        // Pull the freshly-persisted assistant turn (idempotent with the local
+        // send's own finally-reload; a needs_input outcome paints via its own
+        // event instead).
+        void reloadConversation(event.conversationId).catch(() => {})
+      }
+    })
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [reloadConversation])
 
   const handleSend = useCallback(
     async (text: string) => {

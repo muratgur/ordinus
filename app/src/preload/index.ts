@@ -159,6 +159,8 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.ordinusSendTurn, input),
     listTurns: async (input: OrdinusListTurnsInput): Promise<OrdinusConversationTurn[]> =>
       ipcRenderer.invoke(ipcChannels.ordinusListTurns, input),
+    listRunningConversations: async (): Promise<string[]> =>
+      ipcRenderer.invoke(ipcChannels.ordinusListRunningConversations),
     // ADR-029 M5: subscribe to Ordinus action events (workboard plan ready,
     // schedule/workflow created, confirmation requested/resolved). Returns
     // an unsubscribe function.

@@ -249,6 +249,9 @@ export function registerIpcHandlers(
     const parsed = OrdinusListTurnsInputSchema.parse(payload)
     return database.listOrdinusTurns(parsed.conversationId)
   })
+  ipcMain.handle(ipcChannels.ordinusListRunningConversations, () =>
+    ordinusSession.listRunningConversations()
+  )
 
   // ADR-029 M6 — destructive-tool confirmation gate.
   ipcMain.handle(ipcChannels.ordinusListPendingConfirmations, () => listPendingConfirmations())
