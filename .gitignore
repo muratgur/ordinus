@@ -41,3 +41,6 @@ Thumbs.db
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Local preview server config (not for the repo)
+.claude/launch.json

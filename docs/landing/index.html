@@ -56,48 +56,55 @@
       </div>
 
       <div class="hero-stage">
+        <div class="tabs" role="tablist" aria-label="Ordinus capabilities">
+          <button class="tab" role="tab" data-feature="workboard" aria-selected="true">Workboard</button>
+          <button class="tab" role="tab" data-feature="workflow" aria-selected="false">Workflow</button>
+          <button class="tab" role="tab" data-feature="schedules" aria-selected="false">Schedules</button>
+          <button class="tab" role="tab" data-feature="conversations" aria-selected="false">Conversations</button>
+        </div>
+
+        <div class="ask" id="ask" aria-hidden="true">
+          <span class="ask-text"></span>
+        </div>
+
         <div class="scene-wrap">
           <svg id="scene" viewBox="0 0 900 430" role="img"
-               aria-label="A doodled team of AI agents passing work to each other"></svg>
+               aria-label="A doodled team of AI agents working together"></svg>
           <div id="result-card" class="result-card" aria-hidden="true">
             <div class="result-title"></div>
             <ul class="result-list"></ul>
           </div>
         </div>
 
-        <p class="prompt-label">Pick a job — watch the team take it on.</p>
-        <div class="cards" role="group" aria-label="Try a scenario">
-          <button class="card" data-scenario="roadtrip">Plan a road trip</button>
-          <button class="card" data-scenario="finances">Review my finances</button>
-          <button class="card" data-scenario="dinner">Plan tonight's family dinner</button>
-        </div>
+        <p class="prompt-label" id="micro-prompt">Pick a job — watch the team take it on.</p>
+        <div class="controls" id="controls" role="group" aria-label="Try it"></div>
       </div>
     </section>
 
     <a class="scroll-hint" href="#how" aria-label="How it works">⌄</a>
   </main>
 
-  <!-- Optional tail for the curious / the dev crowd -->
+  <!-- Minimal closing strip — load-bearing facts for anyone who scrolls -->
   <section class="tail" id="how">
     <div class="tail-inner">
-      <div class="steps">
-        <div class="step"><span class="step-n">1</span><h3>Pick a job</h3><p>Describe what you need in plain words.</p></div>
-        <div class="step"><span class="step-n">2</span><h3>The team works</h3><p>Specialized agents — powered by your local AI CLIs — pass the work down the line.</p></div>
-        <div class="step"><span class="step-n">3</span><h3>You get the result</h3><p>One clean answer, checked by more than one mind.</p></div>
+      <div class="shots-lead">
+        <h2>Your AI team, right on your desktop</h2>
+        <p>Ordinus turns the AI subscriptions you already pay for — Claude, Codex, Gemini — into a team of agents that research, build, and review together, <span class="ink-underline">like real colleagues</span>. Hand them a job, wire a repeatable flow, put it on a schedule, or just talk a decision through. No terminal, no setup — and nothing ever leaves <span class="keep-box">your machine</span>.</p>
       </div>
 
-      <div class="built-on">
-        <h2>Built on the AIs you already pay for</h2>
-        <p>Claude · Codex · Gemini. Ordinus installs and wires up the CLIs for you — no terminal, no setup.</p>
-      </div>
-
-      <div class="download-block">
-        <h2>Download</h2>
-        <table class="dl-table">
-          <tr><td>macOS (Apple Silicon)</td><td><a href="https://github.com/muratgur/ordinus/releases/latest" target="_blank" rel="noopener">.dmg →</a></td></tr>
-          <tr><td>Windows (x64)</td><td><a href="https://github.com/muratgur/ordinus/releases/latest" target="_blank" rel="noopener">setup.exe →</a></td></tr>
-        </table>
-        <a class="btn btn-secondary" href="https://github.com/muratgur/ordinus" target="_blank" rel="noopener">Star on GitHub ★</a>
+      <div class="shots" id="shots">
+        <div class="shot-frame">
+          <img class="shot-img" id="shot-img" alt="Ordinus app screenshot" />
+          <button class="shot-play" id="shot-play" aria-label="Pause autoplay">⏸</button>
+          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light or dark theme">☾ Dark</button>
+          <div class="shot-caption">
+            <h3 class="shots-title" id="shots-title"></h3>
+            <p class="shots-text" id="shots-text"></p>
+          </div>
+          <button class="shot-nav prev" id="shot-prev" aria-label="Previous screenshot">‹</button>
+          <button class="shot-nav next" id="shot-next" aria-label="Next screenshot">›</button>
+        </div>
+        <div class="shot-dots" id="shot-dots"></div>
       </div>
 
       <footer class="foot">
