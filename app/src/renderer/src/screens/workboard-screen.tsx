@@ -1721,7 +1721,7 @@ function RunCard({
         ) : null}
       </div>
       <div className="mt-2 flex min-w-0 items-center gap-1.5">
-        <AgentAvatar avatar={run.agentAvatar} size={16} className="shrink-0" />
+        <AgentAvatar avatar={run.agentAvatar} name={run.agentName} size={16} className="shrink-0" />
         <p className="min-w-0 truncate text-xs text-muted-foreground">{run.agentName}</p>
       </div>
       <RunCardActivity run={run} columnId={columnId} observedRun={observedRun} />

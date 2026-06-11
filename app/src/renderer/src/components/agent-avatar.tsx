@@ -1,73 +1,61 @@
-import { AVATAR_DELIMITER, getColorClassName, renderSymbolIcon } from './agent-palette'
+import { getColorClassName, getMascotUrl, parseAgentAvatar } from './mascots'
 import { cn } from '../lib/utils'
 
 type AgentAvatarProps = {
   avatar: string
   size?: number
+  /** Used for the initial shown at tiny sizes where the mascot is unreadable. */
+  name?: string
   className?: string
 }
 
-/**
- * Renders an agent's avatar from its packed `color|symbol` representation.
- *
- * Falls back gracefully when the string is empty, malformed, or contains
- * a legacy emoji value: in those cases the emoji is rendered as-is in a
- * muted circle so old agents still display correctly.
- */
-export function AgentAvatar({ avatar, size = 40, className }: AgentAvatarProps): React.JSX.Element {
-  const parsed = parseAvatar(avatar)
-  const dimension = `${size}px`
-  const iconSize = Math.round(size * 0.45)
+// Below this size the mascot face is an unreadable smudge; render a colored
+// chip with the agent's initial instead (color alone collides with only six
+// hues in the palette).
+const MASCOT_MIN_SIZE = 24
+// Slack-style squircle: corner radius proportional to the rendered size.
+const CORNER_RADIUS_RATIO = 0.24
 
-  if (parsed.kind === 'composed') {
+/**
+ * Renders an agent's avatar from its packed `"<variantId>|<colorId>"`
+ * representation (ADR-038): the transparent mascot render on the user-chosen
+ * background color, in a squircle. Legacy values (color|symbol, emoji, empty)
+ * degrade to the Base variant via parseAgentAvatar.
+ */
+export function AgentAvatar({
+  avatar,
+  size = 40,
+  name,
+  className
+}: AgentAvatarProps): React.JSX.Element {
+  const { variantId, colorId } = parseAgentAvatar(avatar)
+  const mascotUrl = getMascotUrl(variantId)
+  const style = {
+    width: `${size}px`,
+    height: `${size}px`,
+    borderRadius: `${Math.round(size * CORNER_RADIUS_RATIO)}px`
+  }
+  const colorClass = getColorClassName(colorId) ?? 'bg-muted'
+
+  if (size < MASCOT_MIN_SIZE || !mascotUrl) {
+    const initial = name?.trim().charAt(0).toUpperCase() ?? ''
     return (
       <span
         className={cn(
-          'inline-flex items-center justify-center rounded-full text-white',
-          getColorClassName(parsed.color) ?? 'bg-muted',
+          'inline-flex select-none items-center justify-center font-semibold text-white',
+          colorClass,
           className
         )}
-        style={{ width: dimension, height: dimension }}
+        style={{ ...style, fontSize: `${Math.round(size * 0.55)}px` }}
       >
-        {renderSymbolIcon(parsed.symbol, {
-          style: { width: iconSize, height: iconSize },
-          strokeWidth: 1.75
-        })}
-      </span>
-    )
-  }
-
-  if (parsed.kind === 'legacy-emoji') {
-    return (
-      <span
-        className={cn('inline-flex items-center justify-center rounded-full bg-muted', className)}
-        style={{ width: dimension, height: dimension, fontSize: `${iconSize + 4}px` }}
-      >
-        {parsed.emoji}
+        {initial}
       </span>
     )
   }
 
   return (
-    <span
-      className={cn('inline-block rounded-full bg-muted', className)}
-      style={{ width: dimension, height: dimension }}
-    />
+    <span className={cn('inline-flex overflow-hidden', colorClass, className)} style={style}>
+      <img src={mascotUrl} alt="" draggable={false} className="size-full object-cover" />
+    </span>
   )
-}
-
-type ParsedAvatar =
-  | { kind: 'composed'; color: string; symbol: string }
-  | { kind: 'legacy-emoji'; emoji: string }
-  | { kind: 'empty' }
-
-function parseAvatar(raw: string): ParsedAvatar {
-  if (!raw) return { kind: 'empty' }
-  if (raw.includes(AVATAR_DELIMITER)) {
-    const [color, symbol] = raw.split(AVATAR_DELIMITER, 2)
-    if (color && symbol) {
-      return { kind: 'composed', color, symbol }
-    }
-  }
-  return { kind: 'legacy-emoji', emoji: raw }
 }

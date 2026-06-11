@@ -15,6 +15,8 @@ export interface TaskFields {
 
 export interface TaskNodeData extends TaskFields, Record<string, unknown> {
   agentName: string
+  /** Assigned agent's packed avatar, or null when no (valid) teammate is assigned. */
+  agentAvatar: string | null
   invalid: boolean
 }
 
@@ -55,7 +57,12 @@ export function wouldCreateCycle(edges: TaskEdge[], source: string, target: stri
 
 export function decorateNodeData(base: TaskFields, agentsById: Map<string, Agent>): TaskNodeData {
   const agent = agentsById.get(base.assignedAgentId)
-  const data: TaskNodeData = { ...base, agentName: agent?.name ?? '', invalid: false }
+  const data: TaskNodeData = {
+    ...base,
+    agentName: agent?.name ?? '',
+    agentAvatar: agent ? agent.avatar : null,
+    invalid: false
+  }
   data.invalid = nodeInvalidReason(data, Boolean(agent)) !== null
   return data
 }

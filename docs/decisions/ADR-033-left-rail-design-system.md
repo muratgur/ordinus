@@ -248,3 +248,17 @@ dashed containers and plain text.
   cosmetic. Relocating each job to where it belongs is the correct fix.
 - **Full grouping in v1.** Deferred: grouping is the most structurally invasive
   piece and is better matured on one screen (Workboard) than rushed across five.
+
+## Revision (2026-06-11): collapsed strip may host a mini-roster
+
+The collapsed `w-12` strip was originally utility-only (expand / CTA / search /
+filter). The Rail shell now exposes an optional `collapsedContent` slot rendered
+below the utility icons: a screen-provided mini representation of its list,
+scrolling within the strip while the icons stay fixed. The rail remains neutral —
+it only provides the slot; content, selection, and interaction stay with the
+owning screen.
+
+First use: **Agents** renders a quick-switch avatar roster (32px mascot squircles
+with presence/unread dots, ADR-038) so switching agents does not require
+re-expanding the rail. Screens whose records have no compact visual identity
+(e.g. Workboard) simply do not use the slot.

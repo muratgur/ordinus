@@ -44,3 +44,7 @@ Thumbs.db
 
 # Local preview server config (not for the repo)
 .claude/launch.json
+
+# Mascot source renders (ADR-038): local working files, built into app via npm run mascots:build
+docs/Chars/*
+!docs/Chars/README.md

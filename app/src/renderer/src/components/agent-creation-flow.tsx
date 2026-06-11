@@ -4,7 +4,7 @@ import type { Agent, AgentDraft, AgentProfile, AgentProfileCatalog } from '@shar
 import { agentProfileCategories } from '@shared/contracts'
 import { Dialog, DialogContent } from './ui/dialog'
 import { Input } from './ui/input'
-import { AGENT_COLORS, AGENT_SYMBOLS, AVATAR_DELIMITER } from './agent-palette'
+import { packAgentAvatar, randomAvatarParts } from './mascots'
 import { AgentAvatarPicker } from './agent-avatar-picker'
 import { notify } from '../lib/notifications'
 import { cn } from '../lib/utils'
@@ -51,8 +51,8 @@ export function AgentCreationFlow({
   const [draftSource, setDraftSource] = useState('')
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState('')
-  const [color, setColor] = useState<string>('')
-  const [symbol, setSymbol] = useState<string>('')
+  // Random pre-selection: the shape step can be skipped in one click.
+  const [avatarParts, setAvatarParts] = useState(randomAvatarParts)
   const [aiThinking, setAiThinking] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
 
@@ -63,8 +63,7 @@ export function AgentCreationFlow({
     setDraftSource('')
     setBusy(false)
     setName('')
-    setColor('')
-    setSymbol('')
+    setAvatarParts(randomAvatarParts())
     setAiThinking(false)
     setLibraryOpen(false)
   }, [])
@@ -170,14 +169,14 @@ export function AgentCreationFlow({
   }
 
   async function handleCreate(): Promise<void> {
-    if (!draft || !name.trim() || !color || !symbol || busy) return
+    if (!draft || !name.trim() || busy) return
 
     try {
       setBusy(true)
       const agent = await window.ordinus.agents.create({
         ...draft,
         name: name.trim(),
-        avatar: `${color}${AVATAR_DELIMITER}${symbol}`,
+        avatar: packAgentAvatar(avatarParts.variantId, avatarParts.colorId),
         enabled: true
       })
       onAgentCreated(agent)
@@ -234,11 +233,13 @@ export function AgentCreationFlow({
               <ShapeStage
                 name={name}
                 role={draft.role}
-                color={color}
-                symbol={symbol}
+                variantId={avatarParts.variantId}
+                colorId={avatarParts.colorId}
                 onNameChange={setName}
-                onColorChange={setColor}
-                onSymbolChange={setSymbol}
+                onVariantChange={(variantId) =>
+                  setAvatarParts((parts) => ({ ...parts, variantId }))
+                }
+                onColorChange={(colorId) => setAvatarParts((parts) => ({ ...parts, colorId }))}
               />
             ) : null}
 
@@ -248,7 +249,7 @@ export function AgentCreationFlow({
           <FlowFooter
             step={step}
             canContinueFromCapabilities={intent.trim().length > 0 && !busy && !aiThinking}
-            canFinishShape={name.trim().length > 0 && Boolean(color) && Boolean(symbol)}
+            canFinishShape={name.trim().length > 0}
             busy={busy}
             onContinueFromCapabilities={() => void handleContinueFromCapabilities()}
             onContinueFromShape={() => setStep('greet')}
@@ -327,65 +328,45 @@ function CapabilitiesStage({
 function ShapeStage({
   name,
   role,
-  color,
-  symbol,
+  variantId,
+  colorId,
   onNameChange,
-  onColorChange,
-  onSymbolChange
+  onVariantChange,
+  onColorChange
 }: {
   name: string
   role: string
-  color: string
-  symbol: string
+  variantId: number
+  colorId: string
   onNameChange: (next: string) => void
+  onVariantChange: (next: number) => void
   onColorChange: (next: string) => void
-  onSymbolChange: (next: string) => void
 }): React.JSX.Element {
-  const SymbolIcon = AGENT_SYMBOLS.find((entry) => entry.id === symbol)?.Icon ?? null
-  const colorClass = AGENT_COLORS.find((entry) => entry.id === color)?.className ?? ''
-
   return (
-    <div className="grid w-full max-w-md gap-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-500">
-      <div className="flex flex-col items-center gap-2">
-        <div
-          className={cn(
-            'flex size-16 items-center justify-center rounded-full text-white transition-colors duration-300',
-            colorClass || 'bg-muted'
-          )}
-        >
-          {SymbolIcon ? <SymbolIcon className="size-7" strokeWidth={1.75} /> : null}
-        </div>
-        <p
-          className={cn(
-            'text-xl font-semibold tracking-tight transition-colors',
-            name.trim().length === 0 && 'text-muted-foreground/50'
-          )}
-        >
-          {name.trim() || 'Your agent'}
-        </p>
+    <div className="grid w-full max-w-md gap-6 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-500">
+      <AgentAvatarPicker
+        variantId={variantId}
+        colorId={colorId}
+        onVariantChange={onVariantChange}
+        onColorChange={onColorChange}
+      />
+
+      <div className="flex flex-col items-center gap-1">
+        <input
+          type="text"
+          autoFocus
+          value={name}
+          onChange={(event) => onNameChange(event.target.value)}
+          placeholder="Editor Esra, Code Watcher, Pulse…"
+          maxLength={80}
+          className="w-full bg-transparent px-1 py-1 text-center text-xl font-semibold tracking-tight outline-none transition-colors placeholder:font-normal placeholder:text-muted-foreground/40"
+        />
         {role ? (
-          <p className="-mt-1 line-clamp-2 max-w-xs text-center text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          <p className="line-clamp-2 max-w-xs text-center text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {role}
           </p>
         ) : null}
       </div>
-
-      <input
-        type="text"
-        autoFocus
-        value={name}
-        onChange={(event) => onNameChange(event.target.value)}
-        placeholder="Editor Esra, Code Watcher, Pulse…"
-        maxLength={80}
-        className="w-full border-0 border-b border-border bg-transparent px-1 py-1.5 text-center text-base outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-foreground"
-      />
-
-      <AgentAvatarPicker
-        color={color}
-        symbol={symbol}
-        onColorChange={onColorChange}
-        onSymbolChange={onSymbolChange}
-      />
     </div>
   )
 }
@@ -418,7 +399,7 @@ function GreetStage({ name }: { name: string }): React.JSX.Element {
         {!fullyTyped ? <Caret /> : null}
       </p>
       <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-        They&apos;ll say hello in your chat.
+        They&apos;ll be waiting in your chat.
       </p>
     </div>
   )

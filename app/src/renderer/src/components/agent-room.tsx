@@ -29,19 +29,11 @@ import { Button } from './ui/button'
  * (avatar, name) lives in the room chrome, not on every message. The running
  * turn renders the ADR-034 live activity line.
  */
-// A friendly user-side opener for a brand-new teammate. The agent replies in
-// its own voice (persona comes from its instructions/role), which also
-// establishes the room's provider session. See ADR-027 Phase 8 / ADR-018 §1.
-const AUTO_GREETING_OPENER =
-  'Hey! Before we dive in — quick intro: who are you, and how will you help me?'
-
 export function AgentRoom({
   agent,
-  autoGreet = false,
   onRoomChanged
 }: {
   agent: Agent
-  autoGreet?: boolean
   onRoomChanged?: () => void
 }): React.JSX.Element {
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
@@ -56,8 +48,6 @@ export function AgentRoom({
   const [rememberedTurnIds, setRememberedTurnIds] = useState<Set<string>>(new Set())
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const followRef = useRef(true)
-  const autoGreetRef = useRef(autoGreet)
-  const greetedRef = useRef(false)
 
   const runningTurn = useMemo(
     () => detail?.turns.find((turn) => turn.status === 'running') ?? null,
@@ -76,27 +66,6 @@ export function AgentRoom({
   useEffect(() => {
     let cancelled = false
 
-    function maybeStartAutoGreeting(room: ConversationDetail): void {
-      if (!autoGreetRef.current || room.turns.length > 0 || greetedRef.current) {
-        return
-      }
-
-      greetedRef.current = true
-      setSending(true)
-      window.ordinus.conversations
-        .sendTurn({ conversationId: room.id, message: AUTO_GREETING_OPENER })
-        .then((greeted) => {
-          if (!cancelled) {
-            setDetail(greeted)
-            onRoomChanged?.()
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (!cancelled) setSending(false)
-        })
-    }
-
     queueMicrotask(() => {
       if (cancelled) {
         return
@@ -113,7 +82,6 @@ export function AgentRoom({
           if (cancelled) return
           setDetail(next)
           onRoomChanged?.()
-          maybeStartAutoGreeting(next)
         })
         .catch((openError) => {
           if (!cancelled) setError(getErrorMessage(openError, 'This room could not be opened.'))
@@ -579,16 +547,18 @@ function UserMessage({
   )
 }
 
-// Collapsed "what did they do?" — files the turn touched. Bare by default;
+// Welcome scene (ADR-038 §14): a large mascot portrait greets the user in a
+// fresh room. This replaces the retired auto-sent first greeting — the
+// introduction is static, and the conversation starts when the user writes.
 function RoomEmptyState({ agent }: { agent: Agent }): React.JSX.Element {
   return (
-    <div className="mx-auto mt-10 flex max-w-sm flex-col items-center gap-2 text-center">
-      <AgentAvatar avatar={agent.avatar} size={48} />
-      <p className="text-sm font-semibold">{agent.name}</p>
-      {agent.role ? <p className="text-xs text-muted-foreground">{agent.role}</p> : null}
-      <p className="mt-1 text-sm text-muted-foreground">
-        Say hi, or hand them a task to get started.
-      </p>
+    <div className="mx-auto mt-10 flex max-w-sm flex-col items-center gap-3 text-center motion-safe:animate-in motion-safe:fade-in motion-safe:duration-500">
+      <AgentAvatar avatar={agent.avatar} size={140} />
+      <div>
+        <p className="text-lg font-semibold tracking-tight">{agent.name}</p>
+        {agent.role ? <p className="mt-0.5 text-sm text-muted-foreground">{agent.role}</p> : null}
+      </div>
+      <p className="text-sm text-muted-foreground">Say hi, or hand them a task to get started.</p>
     </div>
   )
 }

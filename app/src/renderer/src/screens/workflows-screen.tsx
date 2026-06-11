@@ -383,12 +383,16 @@ function WorkflowCanvasEditor({
     readLastTargetRequestId(design.id)
   )
 
-  // Re-decorate nodes (teammate name + needs-attention flag) when agents change.
+  // Re-decorate nodes (teammate name + avatar + needs-attention flag) when agents change.
   useEffect(() => {
     setNodes((current) =>
       current.map((node) => {
         const next = decorateNodeData(node.data, agentsById)
-        if (node.data.agentName === next.agentName && node.data.invalid === next.invalid) {
+        if (
+          node.data.agentName === next.agentName &&
+          node.data.agentAvatar === next.agentAvatar &&
+          node.data.invalid === next.invalid
+        ) {
           return node
         }
         return { ...node, data: next }

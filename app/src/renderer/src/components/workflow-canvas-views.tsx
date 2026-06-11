@@ -10,6 +10,7 @@ import {
 } from '@xyflow/react'
 import { X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
+import { AgentAvatar } from '@renderer/components/agent-avatar'
 import type { TaskNode } from '@renderer/components/workflow-canvas-model'
 
 export function TaskNodeView({ data, selected }: NodeProps<TaskNode>): React.JSX.Element {
@@ -22,18 +23,30 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskNode>): React.JSX
       )}
     >
       <Handle type="target" position={Position.Top} className="!size-2 !bg-muted-foreground" />
-      <div className="truncate text-sm font-medium text-foreground">
-        {data.title.trim() || 'Untitled step'}
-      </div>
-      <div className="mt-0.5 flex items-center justify-between gap-2">
-        <span className="truncate text-xs text-muted-foreground">
-          {data.agentName || 'No teammate yet'}
-        </span>
-        {data.invalid ? (
-          <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-            !
-          </span>
+      <div className="flex items-center gap-2">
+        {data.agentAvatar !== null ? (
+          <AgentAvatar
+            avatar={data.agentAvatar}
+            name={data.agentName}
+            size={32}
+            className="shrink-0"
+          />
         ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">
+            {data.title.trim() || 'Untitled step'}
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2">
+            <span className="truncate text-xs text-muted-foreground">
+              {data.agentName || 'No teammate yet'}
+            </span>
+            {data.invalid ? (
+              <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                !
+              </span>
+            ) : null}
+          </div>
+        </div>
       </div>
       <Handle type="source" position={Position.Bottom} className="!size-2 !bg-muted-foreground" />
     </div>

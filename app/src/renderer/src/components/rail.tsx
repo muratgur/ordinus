@@ -141,6 +141,7 @@ export function Rail({
   searchPlaceholder = 'Search…',
   filter,
   filterActive,
+  collapsedContent,
   children,
   'aria-label': ariaLabel
 }: {
@@ -153,6 +154,13 @@ export function Rail({
   /** Popover content for the filter (e.g. a "Show archived" toggle). */
   filter?: React.ReactNode
   filterActive?: boolean
+  /**
+   * Optional screen-provided mini content rendered below the utility icons in
+   * the collapsed strip (ADR-033 revision), e.g. a quick-switch avatar roster.
+   * Scrolls within the strip; the utility icons stay fixed. The rail stays
+   * neutral — it only provides the slot.
+   */
+  collapsedContent?: React.ReactNode
   children: React.ReactNode
   'aria-label'?: string
 }): React.JSX.Element {
@@ -204,6 +212,15 @@ export function Rail({
           <RailIconButton icon={Search} label="Search" onClick={() => setSearchOpen(true)} />
         ) : null}
         {filter ? <RailFilter filter={filter} filterActive={filterActive} /> : null}
+        {collapsedContent ? (
+          <>
+            <div className="my-1 w-6 border-b border-border/60" />
+            {/* pt-1 keeps the first item's selection ring (ring-2 + offset-2) inside the scroll clip. */}
+            <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto pb-2 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {collapsedContent}
+            </div>
+          </>
+        ) : null}
         {searchDialog}
       </aside>
     )

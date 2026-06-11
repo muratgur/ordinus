@@ -37,7 +37,7 @@ import { AgentCreationFlow } from '@renderer/components/agent-creation-flow'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentAvatarPicker } from '@renderer/components/agent-avatar-picker'
 import { AgentRoom } from '@renderer/components/agent-room'
-import { AGENT_COLORS, AGENT_SYMBOLS, AVATAR_DELIMITER } from '@renderer/components/agent-palette'
+import { packAgentAvatar, parseAgentAvatar } from '@renderer/components/mascots'
 import type {
   Agent,
   AgentExtraDirectoryEntry,
@@ -131,8 +131,6 @@ export function AgentsScreen(): React.JSX.Element {
   const [sidebarDocked, setSidebarDocked] = useState(true)
   const [activeTab, setActiveTab] = useState<AgentTab>('chat')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
-  // The just-created agent greets itself on first room open (ADR-027 Phase 8).
-  const [greetAgentId, setGreetAgentId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -284,7 +282,6 @@ export function AgentsScreen(): React.JSX.Element {
 
   function handleAgentCreated(nextAgent: Agent): void {
     handleAgentSaved(nextAgent)
-    setGreetAgentId(nextAgent.id)
     setActiveTab('chat')
     setCreateAgentOpen(false)
   }
@@ -427,7 +424,6 @@ export function AgentsScreen(): React.JSX.Element {
                 <AgentTabContent
                   agent={selectedAgent}
                   activeTab={activeTab}
-                  autoGreet={greetAgentId === selectedAgent.id}
                   onAgentSaved={handleAgentSaved}
                   onRoomChanged={handleRoomChanged}
                 />
@@ -539,6 +535,37 @@ function AgentLibrary({
         meta: preview,
         onSelect: () => onSelectAgent(agent.id)
       }))}
+      collapsedContent={
+        loading
+          ? null
+          : chatRows.map(({ agent, busy, unread }, index) => (
+              <div key={agent.id} className="flex flex-col items-center gap-1.5">
+                <button
+                  type="button"
+                  title={agent.name}
+                  aria-label={agent.name}
+                  onClick={() => onSelectAgent(agent.id)}
+                  className={cn(
+                    'relative block rounded-[8px] transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                    selectedAgentId === agent.id &&
+                      'ring-2 ring-primary ring-offset-2 ring-offset-background'
+                  )}
+                >
+                  <AgentAvatar avatar={agent.avatar} name={agent.name} size={32} />
+                  <PresenceDot
+                    presence={getAgentPresence(agent, busy)}
+                    className="absolute -bottom-px -right-px size-2 ring-2 ring-background"
+                  />
+                  {unread ? (
+                    <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary ring-2 ring-background" />
+                  ) : null}
+                </button>
+                {index === lastPinnedIndex && index < chatRows.length - 1 ? (
+                  <div className="w-5 border-t border-dashed border-border" />
+                ) : null}
+              </div>
+            ))
+      }
     >
       <RailList isEmpty={!loading && chatRows.length === 0} empty="No agents yet.">
         {loading
@@ -710,9 +737,9 @@ function EditProfileDialog({
   onOpenChange: (open: boolean) => void
   onAgentSaved: (agent: Agent) => void
 }): React.JSX.Element {
-  const [savedColor, savedSymbol] = agent.avatar.split(AVATAR_DELIMITER)
-  const [color, setColor] = useState(savedColor || AGENT_COLORS[0]?.id || '')
-  const [symbol, setSymbol] = useState(savedSymbol || AGENT_SYMBOLS[0]?.id || '')
+  const saved = parseAgentAvatar(agent.avatar)
+  const [variantId, setVariantId] = useState(saved.variantId)
+  const [colorId, setColorId] = useState(saved.colorId)
   const [name, setName] = useState(agent.name)
   const [role, setRole] = useState(agent.role)
   const [capabilities, setCapabilities] = useState(agent.capabilities)
@@ -720,7 +747,7 @@ function EditProfileDialog({
   const [improving, setImproving] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const nextAvatar = `${color}${AVATAR_DELIMITER}${symbol}`
+  const nextAvatar = packAgentAvatar(variantId, colorId)
   const nameIssue = getAgentNameIssue(name, agent.name, agents, agent.id)
   const canSave = !nameIssue && Boolean(role.trim()) && !saving
 
@@ -781,12 +808,11 @@ function EditProfileDialog({
         </DialogHeader>
         <div className="grid gap-4 py-1">
           <div className="flex flex-col items-center gap-3">
-            <AgentAvatar avatar={nextAvatar} size={56} />
             <AgentAvatarPicker
-              color={color}
-              symbol={symbol}
-              onColorChange={setColor}
-              onSymbolChange={setSymbol}
+              variantId={variantId}
+              colorId={colorId}
+              onVariantChange={setVariantId}
+              onColorChange={setColorId}
               className="w-full"
             />
           </div>
@@ -836,20 +862,16 @@ function EditProfileDialog({
 function AgentTabContent({
   agent,
   activeTab,
-  autoGreet,
   onAgentSaved,
   onRoomChanged
 }: {
   agent: Agent
   activeTab: AgentTab
-  autoGreet: boolean
   onAgentSaved: (agent: Agent) => void
   onRoomChanged: () => void
 }): React.JSX.Element {
   if (activeTab === 'chat') {
-    return (
-      <AgentRoom key={agent.id} agent={agent} autoGreet={autoGreet} onRoomChanged={onRoomChanged} />
-    )
+    return <AgentRoom key={agent.id} agent={agent} onRoomChanged={onRoomChanged} />
   }
 
   if (activeTab === 'skills') {

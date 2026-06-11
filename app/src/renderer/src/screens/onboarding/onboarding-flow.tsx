@@ -18,7 +18,7 @@ import type {
   ProviderId
 } from '@shared/contracts'
 import { getProviderDisplayName } from '@shared/provider-labels'
-import { AVATAR_DELIMITER } from '../../components/agent-palette'
+import { packAgentAvatar, randomAgentAvatar } from '../../components/mascots'
 import { AgentCreationFlow } from '../../components/agent-creation-flow'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
@@ -836,7 +836,7 @@ function ColleagueStage({
         ...draft,
         name: uniqueName('General Assistant', existingAgentNames),
         role: 'Helps with most things',
-        avatar: `slate${AVATAR_DELIMITER}Sparkles`,
+        avatar: packAgentAvatar(0, 'slate'),
         enabled: true
       })
       await onCompleted(agent)
@@ -858,7 +858,7 @@ function ColleagueStage({
       const agent = await window.ordinus.agents.create({
         ...draft,
         name: uniqueName(draft.name, existingAgentNames),
-        avatar: draft.avatar || `indigo${AVATAR_DELIMITER}Compass`,
+        avatar: draft.avatar || randomAgentAvatar(),
         enabled: true
       })
       await onCompleted(agent)
