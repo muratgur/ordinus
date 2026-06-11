@@ -18,6 +18,12 @@ export const workboardDraftPlanJsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    // First on purpose: JSON is generated left-to-right, so the model reasons
+    // about deliverables and boundaries before it commits to items.
+    planningNotes: {
+      type: 'string',
+      maxLength: 2000
+    },
     title: {
       type: 'string',
       minLength: 1,
@@ -97,7 +103,7 @@ export const workboardDraftPlanJsonSchema = {
       }
     }
   },
-  required: ['title', 'summary', 'items']
+  required: ['planningNotes', 'title', 'summary', 'items']
 } as const
 
 export function parseWorkboardDraftPlan(value: unknown): WorkboardDraftPlan {
@@ -115,6 +121,7 @@ OUTPUT SCHEMA
 Return a single JSON object with this exact shape:
 
 {
+  "planningNotes": "...",
   "title": "...",
   "summary": "...",
   "items": [
@@ -132,15 +139,16 @@ Return a single JSON object with this exact shape:
 }
 
 Field notes:
+- planningNotes: fill this FIRST, before items. Working notes for yourself, never shown to the user. List: (1) the concrete deliverables the user asked for, (2) the capability/connector boundaries you see among the available agents for this request, (3) which agent owns each deliverable and why. Keep it under 1500 characters.
 - tempId: must match ^item-[0-9]+$, sequential starting at item-1, no gaps.
 - dependsOnTempIds: always an array. Use [] when there are no dependencies. Never null, never omitted.
 - dependsOnRunIds: always an array, [] in most plans. Only when planning INTO an existing Work Request: list the "Work Run" ids (wrk-...) of existing Work Items whose output this new item needs. The referenced run's result (summary and produced text) is delivered to the assigned agent inline at execution time, exactly like a dependsOnTempIds handoff. Never invent run ids - use only ids shown in the "Existing Work Items in this Work Request" manifest.
 - priority: 0 = normal, 1 = should start first when no dependency forces order, -1 = lowest. Default to 0 unless you have a clear reason.
 
 ============================================================
-SPLITTING PRINCIPLE (most important rule)
+RIGHT-SIZING PRINCIPLE (most important rule)
 ============================================================
-Split work at capability and connector boundaries. Within a single boundary, keep the work as ONE item.
+Sizing anchor: one Work Item = ONE deliverable that ONE agent can produce in one focused pass. Derive the plan size from the boundaries in the request — never from a target item count. Plans with 1 item and plans with 8 items are both normal outcomes.
 
 Create a separate Work Item when at least one of these objective triggers is true:
   (a) Capability boundary: the step needs a clearly different specialization than an adjacent step, and the available agents' "capabilities" describe that specialization as belonging to different agents.
@@ -148,10 +156,13 @@ Create a separate Work Item when at least one of these objective triggers is tru
   (c) Parallelism: two parts have no boundary between them but can genuinely run in parallel and the user benefits from that.
   (d) Output dependency: a later step's instruction cannot be written precisely until an earlier step's concrete output exists.
 
+Both failure directions are equally wrong:
+  - Over-splitting: separating "thinking" from "doing", or adding items to look thorough, when one agent's capabilities cover the whole boundary.
+  - Under-splitting: merging across a genuine capability or connector boundary just to keep the plan small, or assigning one agent work that the planningNotes show belongs to two different specializations. If a single item's instruction needs two different specializations, it must be split.
+
 Keep work as a single item when:
   - One agent's capabilities cover the whole request, even if it has several internal steps.
   - The work stays within one connector (or needs no connector at all).
-  - You would only be separating "thinking" from "doing", or splitting to look more thorough.
 
 Connectors are an optional signal, not a requirement:
   - An empty "connectors" list is neutral. Never split a request only because an agent has no connectors, and never treat a connectorless agent as less suitable.
@@ -165,7 +176,7 @@ AGENT ASSIGNMENT
 - If a step needs a specific connector, prefer an agent that has it. If none has it, still assign the closest-capability agent and note the missing connector briefly inside the instruction.
 - If multiple agents could do the work, pick the most specialized one for that boundary.
 - If no agent is a clean fit, still produce the plan: pick the closest match and note the mismatch briefly inside the instruction field so the agent knows.
-- The user may provide preferred agent hints. Prefer those agents when they fit the work, but use another available agent when the hinted agents are clearly not suitable.
+- preferredAgentIds are the user's explicit choices, not hints. Assign work to those agents unless a specific item clearly requires a capability or connector they lack; in that case use the better-suited agent for that item only and keep the preferred agents on everything else.
 
 ============================================================
 INSTRUCTION QUALITY
@@ -219,6 +230,18 @@ Bad:
 "Use item-1 and write the report."
 
 ============================================================
+SELF-CHECK (verify before returning)
+============================================================
+Check the plan against every line below. If any check fails, fix the plan before returning it.
+
+1. Every deliverable the user asked for maps to exactly one Work Item — nothing missing, nothing duplicated.
+2. No single item requires two different specializations from the agents list. If one does, it is under-split.
+3. No item is only "think about" or "prepare for" another item's work. If one is, it is over-split.
+4. No item silently assumes another item's output without a dependency (dependsOnTempIds or dependsOnRunIds).
+5. Each assignedAgentId is the agent whose capabilities most directly cover that item, and preferredAgentIds were honored unless a capability gap forced otherwise.
+6. The item count follows from the boundaries listed in planningNotes — not from a preference for small or large plans.
+
+============================================================
 OUTPUT FORMAT (strict)
 ============================================================
 - The response must start with { and end with }.
@@ -255,6 +278,16 @@ Good plan: 3 items.
   - item-3: write the investigation report (agent whose capabilities cover report writing), dependsOnTempIds: ["item-2"].
 Why: Each step crosses a connector or capability boundary, and each step's instruction needs the prior step's concrete output.
 Note: If one agent's capabilities and connectors cover Jira AND Datadog AND reporting together, this becomes 1 item - the boundary, not the step count, drives the split.
+
+Example 5 - larger multi-agent plan with parallel branches:
+User request: "Yeni urunumuz icin bir lansman paketi hazirlayin: konumlandirma mesaji, lansman blog yazisi, sosyal medya duyurulari ve gorsel yonergesi."
+Good plan: 5 items across 4 agents.
+  - item-1: define the positioning message and key claims (brand/positioning agent), dependsOnTempIds: [].
+  - item-2: write the launch blog post using the positioning (content/SEO agent), dependsOnTempIds: ["item-1"].
+  - item-3: write platform-specific social announcements using the positioning (social copy agent), dependsOnTempIds: ["item-1"].
+  - item-4: prepare the visual direction brief for the campaign (visual design agent), dependsOnTempIds: ["item-1"].
+  - item-5: assemble the final launch package summary from the produced pieces (brand/positioning agent), dependsOnTempIds: ["item-2", "item-3", "item-4"].
+Why: Four distinct specializations exist among the available agents, items 2-4 genuinely run in parallel once the positioning exists, and the user asked for each deliverable explicitly. Collapsing this into 1-2 items would force one agent across several capability boundaries - under-split.
 
 ============================================================
 PLANNING INPUT

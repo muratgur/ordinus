@@ -1818,18 +1818,24 @@ export class OrdinusDatabase {
       return []
     }
 
-    return this.db
-      .select()
-      .from(workRuns)
-      .where(
-        and(
-          inArray(workRuns.id, uniqueValues(dependsOnRunIds)),
-          eq(workRuns.sourceType, workRequestSourceType),
-          eq(workRuns.sourceId, requestId)
+    return (
+      this.db
+        .select()
+        .from(workRuns)
+        .where(
+          and(
+            inArray(workRuns.id, uniqueValues(dependsOnRunIds)),
+            eq(workRuns.sourceType, workRequestSourceType),
+            eq(workRuns.sourceId, requestId)
+          )
         )
-      )
-      .all()
-      .map(parseWorkRun)
+        .all()
+        .map(parseWorkRun)
+        // Failed/cancelled runs never produce output; a dependency on one
+        // would block the new item forever. In-flight runs are fine — the
+        // dependency resolves when they complete.
+        .filter((run) => run.status !== 'failed' && run.status !== 'cancelled')
+    )
   }
 
   createWorkRequestPlan(input: WorkboardStartRequestPlanInput): WorkRequest {
@@ -3699,10 +3705,16 @@ export class OrdinusDatabase {
         and(
           eq(observedRuns.providerSessionRef, providerSessionRef),
           ne(observedRuns.id, excludeRunId),
+          // Only cumulative reporters participate in a baseline chain;
+          // per-invocation rows on the same session ref would poison it.
+          eq(observedRuns.usageSemantics, 'cumulative'),
           isNotNull(observedRuns.inputTokens)
         )
       )
-      .orderBy(desc(observedRuns.lastActivityAt))
+      // Cumulative counters are monotonic per thread, so the true baseline is
+      // the chain's highest counter — not the most recent activity, which
+      // advances on any event and can interleave across runs.
+      .orderBy(desc(observedRuns.inputTokens))
       .get()
 
     if (!row) {

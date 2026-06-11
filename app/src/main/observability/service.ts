@@ -463,6 +463,16 @@ function buildUsagePatch(
   }
 
   const baseline = database.getObservedRunUsageBaseline(chainRef, current.id)
+  // A negative delta means the thread's cumulative counters went backwards
+  // without a session re-key — a CLI-side reset or a misread of the
+  // provider's reporting semantics. Clamp so aggregates stay sane, but log
+  // it: this is exactly the signal the raw counters exist to surface.
+  if (baseline && usage.inputTokens < baseline.inputTokens) {
+    console.warn(
+      `[observability] cumulative usage went backwards on session ${chainRef} ` +
+        `(run ${current.id}): input ${usage.inputTokens} < baseline ${baseline.inputTokens}`
+    )
+  }
   patch.deltaInputTokens = Math.max(0, usage.inputTokens - (baseline?.inputTokens ?? 0))
   patch.deltaCachedInputTokens = Math.max(
     0,

@@ -8,6 +8,7 @@ import {
   type SetStateAction
 } from 'react'
 import { Link } from 'react-router-dom'
+import { useActiveOptionScroll } from '@renderer/hooks/use-active-option-scroll'
 import {
   Archive,
   ArchiveRestore,
@@ -874,7 +875,12 @@ function RequestComposerDialog({
   }
 
   function updateMentionPicker(nextValue: string, caret: number): void {
-    setMentionPicker(getActiveMentionPicker(nextValue, caret))
+    const nextState = getActiveMentionPicker(nextValue, caret)
+    setMentionPicker(
+      nextState
+        ? { ...nextState, anchor: buildMentionAnchor(textareaRef.current, nextState.start) }
+        : null
+    )
     setActiveMentionIndex(0)
   }
 
@@ -977,6 +983,7 @@ function RequestComposerDialog({
                     <AgentMentionPicker
                       activeIndex={activeMentionIndex}
                       options={mentionOptions}
+                      anchor={mentionPicker?.anchor ?? null}
                       onActiveIndexChange={setActiveMentionIndex}
                       onSelect={(option) => {
                         if (mentionPicker) selectMention(option, mentionPicker)
@@ -2436,7 +2443,14 @@ function PlanReviewDialog({
     () =>
       target.destinationRequestId
         ? runs
-            .filter((run) => run.requestId === target.destinationRequestId)
+            .filter(
+              (run) =>
+                run.requestId === target.destinationRequestId &&
+                // Failed/cancelled runs never produce output; binding to one
+                // would block the new item forever.
+                run.status !== 'failed' &&
+                run.status !== 'cancelled'
+            )
             .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
         : [],
     [runs, target.destinationRequestId]
@@ -3203,7 +3217,7 @@ function RunDetailHeader({
             </div>
             <div className="mt-2.5 flex min-w-0 text-sm">
               <Link
-                to={appRoutePaths.agents}
+                to={`${appRoutePaths.agents}?agent=${encodeURIComponent(run.assignedAgentId)}`}
                 className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
               >
                 <Bot className="size-4 shrink-0 text-muted-foreground" />
@@ -3805,6 +3819,91 @@ type MentionPickerState = {
   start: number
   end: number
   query: string
+  // Caret-anchored placement, precomputed against the textarea at update
+  // time: pixel offsets within the composer wrapper, plus whether the panel
+  // should open above the caret (when the caret sits near the bottom edge).
+  anchor: { top: number; left: number; openAbove: boolean } | null
+}
+
+// Mirror-div caret measurement: replicate the textarea's text layout in a
+// hidden div, place a marker span at the caret index, and read its offset.
+// The standard technique — textareas expose no native caret-rect API.
+const caretMirrorProperties = [
+  'boxSizing',
+  'fontFamily',
+  'fontSize',
+  'fontStyle',
+  'fontWeight',
+  'letterSpacing',
+  'lineHeight',
+  'paddingBottom',
+  'paddingLeft',
+  'paddingRight',
+  'paddingTop',
+  'textIndent',
+  'textTransform',
+  'whiteSpace',
+  'wordSpacing'
+] as const
+
+function getTextareaCaretPoint(
+  textarea: HTMLTextAreaElement,
+  index: number
+): { top: number; left: number; lineHeight: number } {
+  const computed = window.getComputedStyle(textarea)
+  const mirror = document.createElement('div')
+  mirror.style.position = 'absolute'
+  mirror.style.visibility = 'hidden'
+  mirror.style.whiteSpace = 'pre-wrap'
+  mirror.style.wordBreak = 'break-word'
+  mirror.style.width = `${textarea.clientWidth}px`
+  for (const property of caretMirrorProperties) {
+    mirror.style[property] = computed[property]
+  }
+
+  mirror.textContent = textarea.value.slice(0, index)
+  const marker = document.createElement('span')
+  marker.textContent = '\u200b' // zero-width space: measurable, never visible
+  mirror.appendChild(marker)
+  document.body.appendChild(mirror)
+  const top = marker.offsetTop
+  const left = marker.offsetLeft
+  mirror.remove()
+
+  const lineHeight = Number.parseFloat(computed.lineHeight)
+  return {
+    top,
+    left,
+    lineHeight: Number.isFinite(lineHeight) ? lineHeight : 24
+  }
+}
+
+const mentionPanelWidth = 320
+const mentionPanelMaxHeight = 224 // matches max-h-56 on the option list
+
+function buildMentionAnchor(
+  textarea: HTMLTextAreaElement | null,
+  mentionStart: number
+): MentionPickerState['anchor'] {
+  if (!textarea) {
+    return null
+  }
+
+  const caret = getTextareaCaretPoint(textarea, mentionStart)
+  const topInView = caret.top - textarea.scrollTop
+  const leftInView = Math.max(
+    0,
+    Math.min(caret.left - textarea.scrollLeft, textarea.clientWidth - mentionPanelWidth - 8)
+  )
+  const openAbove =
+    topInView + caret.lineHeight + mentionPanelMaxHeight > textarea.clientHeight &&
+    topInView > mentionPanelMaxHeight
+
+  return {
+    top: openAbove ? topInView - 4 : topInView + caret.lineHeight + 4,
+    left: leftInView,
+    openAbove
+  }
 }
 
 type AgentMentionOption = {
@@ -3816,20 +3915,33 @@ type AgentMentionOption = {
 function AgentMentionPicker({
   activeIndex,
   options,
+  anchor,
   onActiveIndexChange,
   onSelect
 }: {
   activeIndex: number
   options: AgentMentionOption[]
+  anchor: MentionPickerState['anchor']
   onActiveIndexChange: (index: number) => void
   onSelect: (option: AgentMentionOption) => void
 }): React.JSX.Element {
+  const activeOptionRef = useActiveOptionScroll<HTMLButtonElement>(activeIndex)
+
   return (
-    <div className="absolute left-0 top-full z-20 mt-2 w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-lg">
+    <div
+      className="absolute z-20 overflow-hidden rounded-lg border bg-card shadow-lg"
+      style={{
+        width: mentionPanelWidth,
+        top: anchor?.top ?? 0,
+        left: anchor?.left ?? 0,
+        transform: anchor?.openAbove ? 'translateY(-100%)' : undefined
+      }}
+    >
       <div className="max-h-56 overflow-y-auto p-1">
         {options.map((option, index) => (
           <button
             key={option.agentId}
+            ref={index === activeIndex ? activeOptionRef : null}
             type="button"
             className={cn(
               'grid w-full min-w-0 gap-1 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none',
@@ -3894,7 +4006,10 @@ function formatRelativeUsage(iso: string): string {
   return `${years} yıl önce`
 }
 
-function getActiveMentionPicker(value: string, caret: number): MentionPickerState | null {
+function getActiveMentionPicker(
+  value: string,
+  caret: number
+): Omit<MentionPickerState, 'anchor'> | null {
   const mentionStart = value.lastIndexOf('@', caret - 1)
 
   if (mentionStart < 0 || !isMentionStart(value, mentionStart)) {

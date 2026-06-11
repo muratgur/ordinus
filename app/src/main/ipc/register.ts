@@ -165,7 +165,6 @@ import {
 import { compileWorkflowDesign } from '../workboard/compile-design'
 import { appendRequestDigestEntry } from '../workboard/digest'
 import { ensureOrdinusMcpServer } from '../ordinus-mcp/lifecycle'
-import { buildWorkerMcpUrl } from '../ordinus-mcp/server'
 import type { OrdinusToolContext } from '../ordinus-tools/types'
 import type { RuntimeWorkRunInput } from '../runtime/adapters/types'
 import { composeInstructionsWithMemory } from '../agents/memory-render'
@@ -1773,7 +1772,7 @@ function getWorkerMcpServersForRequest(
     .then((handle): RuntimeWorkRunInput['additionalMcpServers'] => [
       {
         id: 'ordinus-work',
-        url: buildWorkerMcpUrl(handle.url, requestId),
+        url: handle.issueWorkerUrl(requestId),
         codexDefaultToolsApprovalMode: 'approve'
       }
     ])

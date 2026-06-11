@@ -138,7 +138,9 @@ Output:
 Rules:
 - Use the same language as the user's request.
 - Build the profile in the same section standard as Ordinus built-in profiles.
-- capabilities is a single planner-facing line of at most 300 characters. State what work this agent is best at, which capability or connector boundary it owns, and when work should be routed to a different agent. Keep it concrete and free of personality or tone.
+- role is a short professional title of at most 6 words (e.g. "Chief Financial Officer", "Kidemli Veri Analisti"). Never a sentence, never a description - those belong in the profile fields.
+- capabilities is a single planner-facing line of at most 300 characters. State what work this agent is best at, which capability or connector boundary it owns, and when work should be routed to a different agent. Keep it concrete and free of personality or tone. Example shape: "Best at X, Y, Z. Owns the <boundary> boundary. Route <other work> to a better-suited agent."
+- Never copy the user's request text into capabilities; derive what the agent is best at from it.
 - Keep each profile field ready to render as runtime behavior, not a short label.
 - archetypalIdentity explains what kind of agent this is and how it sees the work.
 - roleAndSocialFunction explains the practical role, responsibility surface, and why it exists in a workspace.

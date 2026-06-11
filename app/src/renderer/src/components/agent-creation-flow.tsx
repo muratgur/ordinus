@@ -43,6 +43,12 @@ export function AgentCreationFlow({
   const [step, setStep] = useState<CreationStep>('capabilities')
   const [intent, setIntent] = useState('')
   const [draft, setDraft] = useState<AgentDraft | null>(null)
+  // The intent text the current draft was built from. Editing the intent away
+  // from this invalidates the draft (a new "bring to life" pass is needed).
+  // Kept separately from draft.capabilities: capabilities is the AI-authored
+  // planner-facing line and must NOT be overwritten by the raw intent text —
+  // the planner reads capabilities to route work (ADR-016/ADR-037).
+  const [draftSource, setDraftSource] = useState('')
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState('')
   const [color, setColor] = useState<string>('')
@@ -54,6 +60,7 @@ export function AgentCreationFlow({
     setStep('capabilities')
     setIntent('')
     setDraft(null)
+    setDraftSource('')
     setBusy(false)
     setName('')
     setColor('')
@@ -80,7 +87,7 @@ export function AgentCreationFlow({
   function handleIntentChange(nextIntent: string): void {
     setIntent(nextIntent)
     setDraft((currentDraft) => {
-      if (!currentDraft || nextIntent === currentDraft.capabilities) {
+      if (!currentDraft || nextIntent === draftSource) {
         return currentDraft
       }
       return null
@@ -113,7 +120,11 @@ export function AgentCreationFlow({
       }
       nextDraft = {
         ...nextDraft,
-        capabilities: trimmed,
+        // Keep the AI/profile-authored capabilities line — it is the
+        // planner's routing signal. The raw intent text already lives in
+        // requestedWork; it only fills capabilities as a fallback when the
+        // draft came from the blank scaffold (no AI pass).
+        capabilities: nextDraft.capabilities.trim() ? nextDraft.capabilities : trimmed,
         role:
           nextDraft.role && nextDraft.role.toLowerCase() !== 'custom agent'
             ? nextDraft.role
@@ -121,6 +132,7 @@ export function AgentCreationFlow({
         name: uniqueName(nextDraft.name || 'New agent', existingAgentNames)
       }
       setDraft(nextDraft)
+      setDraftSource(trimmed)
       setName(nextDraft.name)
       setStep('shape')
     } catch (error) {
@@ -141,6 +153,7 @@ export function AgentCreationFlow({
         profileId: profile.id
       })
       setIntent(result.capabilities)
+      setDraftSource(result.capabilities)
       setDraft({
         ...result,
         name: uniqueName(result.name, existingAgentNames)

@@ -384,7 +384,14 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
     '',
     'Upstream textual results are provided inline above (summary and, when present, full result). Read upstream workspace files only for genuine file deliverables (code, HTML, PDFs, spreadsheets, images) that you need in full.',
     '',
-    'A digest.md file in the working folder records completed work in this Work Request (run ids and summaries). To fetch the full output of a prior run that is not inlined above, call the get_work_run_result tool with its run id.',
+    // Only advertise the lazy-fetch tool when the worker MCP endpoint was
+    // actually attached — otherwise the agent burns a turn on a missing tool.
+    ...(input.additionalMcpServers?.length
+      ? [
+          'A digest.md file in the working folder records completed work in this Work Request (run ids and summaries). To fetch the full output of a prior run that is not inlined above, call the get_work_run_result tool with its run id.',
+          ''
+        ]
+      : []),
     ...formatResumeMessage(input.resumeMessage),
     '',
     'When you complete the Work Item, make the final content easy to review in the Workboard drawer.',

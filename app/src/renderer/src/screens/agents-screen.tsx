@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useId } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   Bot,
@@ -119,7 +120,14 @@ export function AgentsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [roomSummaries, setRoomSummaries] = useState<AgentRoomSummary[]>([])
   const [unreadAgentIds, setUnreadAgentIds] = useState<Set<string>>(new Set())
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('')
+  // Deep link: other screens (e.g. a Work Item's agent name) navigate here
+  // with ?agent=<id> to land on that agent. Read once at mount — cross-route
+  // navigation remounts this screen, and in-app links without the param
+  // produce a clean URL, so no clearing effect is needed.
+  const [searchParams] = useSearchParams()
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(
+    () => searchParams.get('agent') ?? ''
+  )
   const [sidebarDocked, setSidebarDocked] = useState(true)
   const [activeTab, setActiveTab] = useState<AgentTab>('chat')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)

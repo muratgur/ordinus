@@ -24,18 +24,25 @@
 //     plus child CLI processes on the same machine; binding to a public
 //     interface would invite untrusted access. ADR-029 explicitly notes
 //     the localhost-as-security-boundary stance.
-//   - No auth token. Same reason — localhost. If we ever expose this
-//     beyond the machine we'll add per-server bearer tokens.
+//   - Token-gated paths (ADR-037 security review). Localhost alone stopped
+//     being a sufficient boundary once worker CLIs — which run arbitrary
+//     agent instructions — learned the server's address: a worker could
+//     strip its path and reach the assistant catalog. The assistant
+//     endpoint now carries a boot-time random token (only the Ordinus Home
+//     session receives it) and each Work Request's worker endpoint carries
+//     its own issued token; everything else 404s.
 //
-// Logical "MCP server" identity (the URL, the tool catalog, the name) is
+// Logical "MCP server" identity (the URL, the tool catalogs, the name) is
 // stable for the app's lifetime. The per-request McpServer JS objects are
-// implementation detail — from a CLI's perspective there's one server at
-// one URL serving the same seven tools.
+// implementation detail — from a CLI's perspective there are two stable
+// surfaces: the assistant endpoint (full catalog) and per-request worker
+// endpoints (scoped read-only subset).
 
 import { z, type ZodType } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createServer, type Server as HttpServer } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { getOrdinusToolsRaw, invokeTool, type ToolInvocationResult } from '../ordinus-tools'
 import type { OrdinusToolContext, OrdinusToolSummary } from '../ordinus-tools/types'
 import { createPendingConfirmation } from '../ordinus/confirmation'
@@ -51,10 +58,19 @@ function deriveToolLabel(name: string): string {
 }
 
 export type OrdinusMcpHandle = {
-  /** Full URL CLIs should connect to (e.g. http://127.0.0.1:54871/mcp). */
+  /**
+   * Assistant endpoint URL (token-gated). Handed only to the Ordinus Home
+   * session; serves the full tool catalog.
+   */
   url: string
   /** Numeric port the OS assigned; useful for diagnostics. */
   port: number
+  /**
+   * Issue (or reuse) the token-gated worker endpoint for one Work Request.
+   * The returned URL serves only the scoped read-only worker subset, and only
+   * for that request id + token pair (ADR-037 security review).
+   */
+  issueWorkerUrl: (requestId: string) => string
   /** Tears down the HTTP server. Idempotent. */
   close: () => Promise<void>
 }
@@ -218,14 +234,13 @@ function buildPerRequestMcpServer(toolContext: OrdinusToolContext): McpServer {
 //   - Tokens: every tool definition is paid as input on every worker
 //     session, so the worker surface must stay minimal.
 //
-// Scope is enforced by the URL: each Work Request gets its own endpoint
-// (/mcp/work/<requestId>) and the tool only serves runs belonging to that
-// request.
-const workerEndpointPattern = /^\/mcp\/work\/([A-Za-z0-9_-]+)(?:[/?]|$)/
-
-export function buildWorkerMcpUrl(baseUrl: string, requestId: string): string {
-  return `${baseUrl}/work/${requestId}`
-}
+// Scope is enforced by token-gated URLs (ADR-037 security review): the
+// assistant endpoint carries a boot-time random token only the Ordinus Home
+// session receives, and each Work Request's worker endpoint carries its own
+// issued token. Worker CLIs therefore cannot reach the assistant catalog by
+// stripping the path, and cannot mint endpoints for other requests by
+// guessing ids — both require a secret they were never given.
+const workerEndpointPattern = /^\/mcp\/work\/([A-Za-z0-9_-]+)\/([A-Za-z0-9-]+)(?:[/?]|$)/
 
 const getWorkRunResultInputSchema = z.object({
   runId: z.string().trim().min(1)
@@ -309,28 +324,40 @@ export async function startOrdinusMcpServer(
       .join(', ')}`
   )
 
+  // ADR-037 security review: both surfaces are token-gated. The assistant
+  // token exists for the app's lifetime and is embedded in handle.url; worker
+  // tokens are issued per Work Request via handle.issueWorkerUrl. A request
+  // that presents no valid token gets a 404 — bare /mcp serves nothing.
+  const assistantToken = randomUUID()
+  const assistantPath = `/mcp/${assistantToken}`
+  const workerTokensByRequestId = new Map<string, string>()
+
   const httpServer: HttpServer = createServer((req, res) => {
     console.log(`[ordinus-mcp] ${req.method} ${req.url}`)
 
-    if (!req.url || !req.url.startsWith('/mcp')) {
+    const workerMatch = req.url?.match(workerEndpointPattern) ?? null
+    const isAuthorizedWorker =
+      workerMatch !== null && workerTokensByRequestId.get(workerMatch[1]) === workerMatch[2]
+    const isAssistant =
+      req.url === assistantPath ||
+      req.url?.startsWith(`${assistantPath}?`) ||
+      req.url?.startsWith(`${assistantPath}/`)
+
+    if (!isAuthorizedWorker && !isAssistant) {
       res.statusCode = 404
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ error: 'not_found' }))
       return
     }
 
-    // ADR-037: worker endpoints get the scoped read-only subset, never the
-    // assistant catalog. Matched BEFORE the assistant branch — /mcp/work/...
-    // also satisfies startsWith('/mcp').
-    const workerMatch = req.url.match(workerEndpointPattern)
-
     // Per-request fresh pair. The SDK's stateless transport contract is
     // "fresh transport per request" — we honor that and spawn the McpServer
     // alongside so the wiring is symmetric.
     void (async () => {
-      const mcp = workerMatch
-        ? buildWorkerMcpServer(toolContext, workerMatch[1])
-        : buildPerRequestMcpServer(toolContext)
+      const mcp =
+        isAuthorizedWorker && workerMatch
+          ? buildWorkerMcpServer(toolContext, workerMatch[1])
+          : buildPerRequestMcpServer(toolContext)
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined
       })
@@ -366,11 +393,19 @@ export async function startOrdinusMcpServer(
     throw new Error('Ordinus MCP server failed to bind to a local port.')
   }
   const { port } = address
-  const url = `http://127.0.0.1:${port}/mcp`
+  const url = `http://127.0.0.1:${port}${assistantPath}`
 
   return {
     url,
     port,
+    issueWorkerUrl: (requestId: string) => {
+      let token = workerTokensByRequestId.get(requestId)
+      if (!token) {
+        token = randomUUID()
+        workerTokensByRequestId.set(requestId, token)
+      }
+      return `http://127.0.0.1:${port}/mcp/work/${requestId}/${token}`
+    },
     close: async () => {
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve())

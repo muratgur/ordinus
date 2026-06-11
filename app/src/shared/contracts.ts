@@ -1328,6 +1328,12 @@ export const WorkboardDraftItemSchema = z.object({
 })
 
 export const WorkboardDraftPlanSchema = z.object({
+  // ADR-037 planner revision: reasoning-first field. The model fills this
+  // BEFORE items (it is first in the JSON schema and the prompt's example),
+  // which recovers chain-of-thought quality lost under strict structured
+  // output. Never shown in the UI; defaulted so older stored plans and
+  // workflow-design compiles stay valid.
+  planningNotes: z.string().trim().max(2_000).default(''),
   title: z.string().trim().min(1).max(160),
   summary: z.string().trim().max(2_000).default(''),
   items: z.array(WorkboardDraftItemSchema).min(1).max(16)

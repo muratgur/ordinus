@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useActiveOptionScroll } from '@renderer/hooks/use-active-option-scroll'
 import {
   AlertTriangle,
   Bot,
@@ -2433,12 +2434,15 @@ function MentionPicker({
   onActiveIndexChange: (index: number) => void
   onSelect: (option: MentionOption) => void
 }): React.JSX.Element {
+  const activeOptionRef = useActiveOptionScroll<HTMLButtonElement>(activeIndex)
+
   return (
     <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-lg">
       <div className="max-h-56 overflow-y-auto p-1">
         {options.map((option, index) => (
           <button
             key={option.id}
+            ref={index === activeIndex ? activeOptionRef : null}
             type="button"
             className={cn(
               'grid w-full min-w-0 gap-1 rounded-md px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none',
