@@ -1,6 +1,6 @@
 {
   "name": "ordinus",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local-first agent orchestration shell.",
   "main": "./out/main/index.js",
   "author": "Murat Gür",
