@@ -1255,7 +1255,11 @@ export const WorkRunInputSummarySchema = z.object({
   resultSummary: z.string().min(1),
   resultContent: z.string().default(''),
   artifactRefs: z.array(WorkspaceRelativePathSchema),
-  changedFiles: z.array(WorkspaceRelativePathSchema)
+  changedFiles: z.array(WorkspaceRelativePathSchema),
+  // ADR-037: the provider session the producing run executed on. When the
+  // dependent run resumes the same session, its full result content is
+  // already in session history and is not inlined again.
+  providerSessionRef: z.string().default('')
 })
 
 export const WorkRunInputRequestSchema = z.object({
@@ -1316,6 +1320,10 @@ export const WorkboardDraftItemSchema = z.object({
   expectedOutput: z.string().trim().min(1).max(2_000),
   assignedAgentId: z.string().min(1),
   dependsOnTempIds: z.array(z.string().trim().min(1).max(80)).max(16).default([]),
+  // ADR-037: dependencies on EXISTING completed runs of the destination Work
+  // Request (follow-up planning). Routes the producing run's output to this
+  // item through the same inline-handoff machinery as dependsOnTempIds.
+  dependsOnRunIds: z.array(z.string().trim().min(1).max(80)).max(16).default([]),
   priority: z.number().int().min(-100).max(100).default(0)
 })
 
@@ -1599,9 +1607,19 @@ export const ObservedRunSnapshotSchema = z.object({
   completedAt: z.string().nullable(),
   elapsedMs: z.number().int().nonnegative(),
   idleMs: z.number().int().nonnegative().nullable(),
+  // ADR-037: raw token counters as the provider reported them. Codex reports
+  // thread-cumulative values (the whole resumed session so far); Claude and
+  // Gemini report per-invocation values. The delta* fields are the run's true
+  // cost in both cases — derived against the previous run on the same provider
+  // session for cumulative reporters, equal to the raw values otherwise.
   inputTokens: z.number().int().nonnegative().nullable(),
+  cachedInputTokens: z.number().int().nonnegative().nullable().default(null),
   outputTokens: z.number().int().nonnegative().nullable(),
   totalTokens: z.number().int().nonnegative().nullable(),
+  deltaInputTokens: z.number().int().nonnegative().nullable().default(null),
+  deltaCachedInputTokens: z.number().int().nonnegative().nullable().default(null),
+  deltaOutputTokens: z.number().int().nonnegative().nullable().default(null),
+  deltaTotalTokens: z.number().int().nonnegative().nullable().default(null),
   usageSource: ObservedRunUsageSourceSchema,
   updatedAt: z.string(),
   // ADR-034: live-activity decoration. Populated in-memory by the

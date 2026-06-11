@@ -163,6 +163,11 @@ import {
   listAgentProfiles
 } from '../agents/profiles'
 import { compileWorkflowDesign } from '../workboard/compile-design'
+import { appendRequestDigestEntry } from '../workboard/digest'
+import { ensureOrdinusMcpServer } from '../ordinus-mcp/lifecycle'
+import { buildWorkerMcpUrl } from '../ordinus-mcp/server'
+import type { OrdinusToolContext } from '../ordinus-tools/types'
+import type { RuntimeWorkRunInput } from '../runtime/adapters/types'
 import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { createOrdinusSessionService } from '../ordinus/session'
 import { listPendingConfirmations, resolvePendingConfirmation } from '../ordinus/confirmation'
@@ -184,6 +189,9 @@ import {
 const workRequestConcurrencyLimit = 3
 
 let activeScheduler: SchedulerService | null = null
+// ADR-037: lets startPreparedWorkRun boot the shared MCP server for the
+// request-scoped worker tool surface. Set once in registerIpcHandlers.
+let activeOrdinusToolContext: OrdinusToolContext | null = null
 
 type ReportedWorkspaceFileRefs = WorkspaceWorkingFolderContext & {
   artifactRefs: string[]
@@ -234,6 +242,7 @@ export function registerIpcHandlers(
       }
     }
   }
+  activeOrdinusToolContext = { database, observability, runtime, events: ordinusEvents }
   const ordinusSession = createOrdinusSessionService({
     database,
     observability,
@@ -1652,43 +1661,47 @@ function startPreparedWorkRun(
       sandbox: prepared.run.sandbox,
       workspaceRoot: workspaceContext.workspaceRoot,
       startedAt
-    })
+    }),
+    providerSessionRef
   })
   mkdirSync(logDir, { recursive: true })
   ensureWorkspaceRelativeDirectory(workspaceContext.workspaceRoot, workspaceContext.workingRoot)
 
   database.recordAgentUsage(prepared.agent.id)
 
-  void runtime
-    .sendWorkRun({
-      runId: prepared.run.id,
-      workRequestId: requestId,
-      providerId: prepared.run.providerId,
-      model: prepared.run.model,
-      sandbox: prepared.run.sandbox,
-      workspaceRoot: workspaceContext.workspaceRoot,
-      workingRoot: workspaceContext.workingRoot,
-      agentHomePath: getAgentHome(prepared.agent.id),
-      extraDirectories: prepared.agent.extraDirectories,
-      agentName: prepared.agent.name,
-      agentRole: prepared.agent.role,
-      instructions: composeInstructionsWithMemory(
-        database,
-        prepared.agent.id,
-        prepared.agent.instructions
-      ),
-      connectors: prepared.agent.connectors,
-      providerSessionRef,
-      title: prepared.run.title,
-      instruction: prepared.run.instruction,
-      expectedOutput: prepared.run.expectedOutput,
-      requiredInputs,
-      resumeMessage: prepared.message || undefined,
-      logRef,
-      eventLogPath: join(logDir, 'events.jsonl'),
-      lastMessagePath: join(logDir, 'last-message.txt'),
-      observability: observationSink
-    })
+  void getWorkerMcpServersForRequest(requestId)
+    .then((additionalMcpServers) =>
+      runtime.sendWorkRun({
+        additionalMcpServers,
+        runId: prepared.run.id,
+        workRequestId: requestId,
+        providerId: prepared.run.providerId,
+        model: prepared.run.model,
+        sandbox: prepared.run.sandbox,
+        workspaceRoot: workspaceContext.workspaceRoot,
+        workingRoot: workspaceContext.workingRoot,
+        agentHomePath: getAgentHome(prepared.agent.id),
+        extraDirectories: prepared.agent.extraDirectories,
+        agentName: prepared.agent.name,
+        agentRole: prepared.agent.role,
+        instructions: composeInstructionsWithMemory(
+          database,
+          prepared.agent.id,
+          prepared.agent.instructions
+        ),
+        connectors: prepared.agent.connectors,
+        providerSessionRef,
+        title: prepared.run.title,
+        instruction: prepared.run.instruction,
+        expectedOutput: prepared.run.expectedOutput,
+        requiredInputs,
+        resumeMessage: prepared.message || undefined,
+        logRef,
+        eventLogPath: join(logDir, 'events.jsonl'),
+        lastMessagePath: join(logDir, 'last-message.txt'),
+        observability: observationSink
+      })
+    )
     .then((result) => {
       try {
         if (isTerminalWorkRunStatus(database.getWorkRun(prepared.run.id).status)) {
@@ -1722,6 +1735,12 @@ function startPreparedWorkRun(
           artifactRefs: fileRefs.artifactRefs,
           changedFiles: fileRefs.changedFiles
         })
+        appendCompletedWorkRunDigestEntry({
+          workspaceContext,
+          prepared,
+          fileRefs,
+          resultSummary: result.outcome.summary
+        })
         observability.markWorkboardCompleted(prepared.run.id, result.outcome.summary)
         activeScheduler?.notifyRunTerminal(prepared.run.id, true)
       } catch (error) {
@@ -1738,6 +1757,56 @@ function startPreparedWorkRun(
       activeScheduler?.notifyRunTerminal(prepared.run.id, false)
       startWorkRequestRuns(database, runtime, observability, requestId)
     })
+}
+
+// ADR-037: request-scoped worker MCP endpoint (get_work_run_result). Best
+// effort — an MCP boot failure degrades the run to no lazy-fetch tool, it
+// never blocks the work itself.
+function getWorkerMcpServersForRequest(
+  requestId: string
+): Promise<RuntimeWorkRunInput['additionalMcpServers']> {
+  if (!activeOrdinusToolContext) {
+    return Promise.resolve(undefined)
+  }
+
+  return ensureOrdinusMcpServer(activeOrdinusToolContext)
+    .then((handle): RuntimeWorkRunInput['additionalMcpServers'] => [
+      {
+        id: 'ordinus-work',
+        url: buildWorkerMcpUrl(handle.url, requestId),
+        codexDefaultToolsApprovalMode: 'approve'
+      }
+    ])
+    .catch((error) => {
+      console.error('[workboard] worker MCP unavailable:', error)
+      return undefined
+    })
+}
+
+function appendCompletedWorkRunDigestEntry(input: {
+  workspaceContext: WorkspaceWorkingFolderContext
+  prepared: PreparedWorkRun
+  fileRefs: ReturnType<typeof resolveReportedFileRefs>
+  resultSummary: string
+}): void {
+  try {
+    appendRequestDigestEntry({
+      workspaceRoot: input.workspaceContext.workspaceRoot,
+      workingRoot: input.workspaceContext.workingRoot,
+      entry: {
+        runId: input.prepared.run.id,
+        title: input.prepared.run.title,
+        agentName: input.prepared.agent.name,
+        agentRole: input.prepared.agent.role,
+        resultSummary: input.resultSummary,
+        artifactRefs: input.fileRefs.artifactRefs,
+        changedFiles: input.fileRefs.changedFiles,
+        completedAt: new Date().toISOString()
+      }
+    })
+  } catch (digestError) {
+    console.error('[workboard] digest append failed:', digestError)
+  }
 }
 
 function buildProviderInvocationSummary(input: {
@@ -1987,7 +2056,8 @@ async function runConversationAgentTurn(
       sandbox: agentTurn.agent.sandbox,
       workspaceRoot: workspace.workspaceRoot,
       startedAt
-    })
+    }),
+    providerSessionRef: agentTurn.providerSessionRef
   })
   mkdirSync(logDir, { recursive: true })
 

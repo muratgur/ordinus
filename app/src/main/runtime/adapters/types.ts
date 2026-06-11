@@ -109,6 +109,9 @@ export type RuntimeWorkRunInput = {
   eventLogPath: string
   lastMessagePath: string
   observability?: RuntimeObservationSink
+  // ADR-037: the request-scoped worker MCP endpoint (get_work_run_result),
+  // injected alongside connectors exactly like the assistant's server above.
+  additionalMcpServers?: RuntimeConversationTurnInput['additionalMcpServers']
 }
 
 export type RuntimeWorkRunResult = RuntimeConversationTurnResult

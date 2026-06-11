@@ -307,9 +307,23 @@ export const observedRuns = sqliteTable(
     lastActivityAt: text('last_activity_at'),
     completedAt: text('completed_at'),
     inputTokens: integer('input_tokens'),
+    cachedInputTokens: integer('cached_input_tokens'),
     outputTokens: integer('output_tokens'),
     totalTokens: integer('total_tokens'),
+    // ADR-037: per-run cost derived from the raw counters above. For
+    // cumulative reporters (Codex) this is raw minus the previous run's raw
+    // on the same provider session; for per-invocation reporters it equals
+    // the raw values.
+    deltaInputTokens: integer('delta_input_tokens'),
+    deltaCachedInputTokens: integer('delta_cached_input_tokens'),
+    deltaOutputTokens: integer('delta_output_tokens'),
+    deltaTotalTokens: integer('delta_total_tokens'),
     usageSource: text('usage_source').notNull().default('unavailable'),
+    // ADR-037: '' until known, then 'cumulative' or 'invocation'; plus the
+    // provider session/thread this run executed on — the chain key delta
+    // computation uses to find its baseline.
+    usageSemantics: text('usage_semantics').notNull().default(''),
+    providerSessionRef: text('provider_session_ref').notNull().default(''),
     sanitizedInvocation: text('sanitized_invocation').notNull().default('{}'),
     logRef: text('log_ref').notNull().default(''),
     createdAt: text('created_at').notNull(),

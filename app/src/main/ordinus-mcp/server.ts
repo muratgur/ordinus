@@ -32,7 +32,7 @@
 // implementation detail — from a CLI's perspective there's one server at
 // one URL serving the same seven tools.
 
-import type { ZodType } from 'zod'
+import { z, type ZodType } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createServer, type Server as HttpServer } from 'node:http'
@@ -209,6 +209,89 @@ function buildPerRequestMcpServer(toolContext: OrdinusToolContext): McpServer {
   return mcp
 }
 
+// ADR-037 — worker tool surface.
+//
+// Workboard worker agents get a deliberately tiny, read-only MCP subset —
+// NOT the assistant catalog above. Two reasons (ADR-029 amendment):
+//   - Security: the full catalog includes destructive/privileged tools
+//     (archive, schedules, raw SQL); raw provider CLIs must not reach them.
+//   - Tokens: every tool definition is paid as input on every worker
+//     session, so the worker surface must stay minimal.
+//
+// Scope is enforced by the URL: each Work Request gets its own endpoint
+// (/mcp/work/<requestId>) and the tool only serves runs belonging to that
+// request.
+const workerEndpointPattern = /^\/mcp\/work\/([A-Za-z0-9_-]+)(?:[/?]|$)/
+
+export function buildWorkerMcpUrl(baseUrl: string, requestId: string): string {
+  return `${baseUrl}/work/${requestId}`
+}
+
+const getWorkRunResultInputSchema = z.object({
+  runId: z.string().trim().min(1)
+})
+
+function buildWorkerMcpServer(toolContext: OrdinusToolContext, requestId: string): McpServer {
+  const mcp = new McpServer(
+    { name: 'ordinus-work', version: '1.0.0' },
+    { capabilities: { tools: {} } }
+  )
+
+  mcp.registerTool(
+    'get_work_run_result',
+    {
+      description:
+        'Fetch the full stored result of a prior Work Run in this Work Request. Input: the run id (wrk-...) as listed in digest.md or an upstream-work reference. Returns the run title, agent, status, result summary, full result content, and file paths. Only call this when you need the FULL output of prior work that was not already provided inline.',
+      inputSchema: getWorkRunResultInputSchema as ZodType<unknown>
+    },
+    async (args: unknown) => {
+      const parsed = getWorkRunResultInputSchema.safeParse(args)
+      if (!parsed.success) {
+        return asCallToolResult({
+          outcome: 'invalid_input',
+          name: 'get_work_run_result',
+          errors: parsed.error.message
+        })
+      }
+
+      try {
+        const run = toolContext.database.getWorkRun(parsed.data.runId)
+        const runRequestId = run.source?.type === 'work_request' ? run.source.id : ''
+        if (runRequestId !== requestId) {
+          return asCallToolResult({
+            outcome: 'error',
+            name: 'get_work_run_result',
+            message: 'That run does not belong to this Work Request.'
+          })
+        }
+
+        return asCallToolResult({
+          outcome: 'ok',
+          output: {
+            runId: run.id,
+            title: run.title,
+            agentName: run.assignedAgentName,
+            agentRole: run.assignedAgentRole,
+            status: run.status,
+            resultSummary: run.resultSummary,
+            resultContent: run.resultContent,
+            artifactRefs: run.artifactRefs,
+            changedFiles: run.changedFiles
+          }
+        })
+      } catch {
+        return asCallToolResult({
+          outcome: 'error',
+          name: 'get_work_run_result',
+          message: 'No Work Run with that id was found in this Work Request.'
+        })
+      }
+    }
+  )
+
+  return mcp
+}
+
 /**
  * Boot the HTTP server. The McpServer + Transport are NOT created here —
  * they live per-request (see the request handler below). This function just
@@ -236,11 +319,18 @@ export async function startOrdinusMcpServer(
       return
     }
 
+    // ADR-037: worker endpoints get the scoped read-only subset, never the
+    // assistant catalog. Matched BEFORE the assistant branch — /mcp/work/...
+    // also satisfies startsWith('/mcp').
+    const workerMatch = req.url.match(workerEndpointPattern)
+
     // Per-request fresh pair. The SDK's stateless transport contract is
     // "fresh transport per request" — we honor that and spawn the McpServer
     // alongside so the wiring is symmetric.
     void (async () => {
-      const mcp = buildPerRequestMcpServer(toolContext)
+      const mcp = workerMatch
+        ? buildWorkerMcpServer(toolContext, workerMatch[1])
+        : buildPerRequestMcpServer(toolContext)
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined
       })

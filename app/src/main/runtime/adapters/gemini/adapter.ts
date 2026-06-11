@@ -23,6 +23,7 @@ import { firstLine, isRecord, parseJsonFromCliOutput } from '../../cli/output'
 import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
+import type { ProviderUsageReport } from '../../../observability/types'
 import { materializeGeminiConnectors } from '../../../integrations/materialize'
 import {
   AgentDraftOutputSchema,
@@ -33,6 +34,7 @@ import { buildOrchestrationPrompt, parseOrchestrationPlan } from '../../prompts/
 import { buildWorkboardPlanPrompt, parseWorkboardDraftPlan } from '../../prompts/work-plan'
 import {
   buildConversationOutcomeInstructions,
+  buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
 import {
@@ -191,6 +193,20 @@ async function sendGeminiConversationTurn(
       throw new Error('Gemini did not provide a session reference for this conversation.')
     }
 
+    // ADR-037: Gemini reports per-invocation usage in the final JSON stats
+    // block (no streaming usage events), so it is recorded post-parse.
+    if (parsed.usage) {
+      input.observability?.record({
+        kind: 'status',
+        source: 'provider',
+        confidence: 'reported',
+        phase: 'running',
+        summary: 'Gemini reported token usage.',
+        sessionRef: providerSessionRef,
+        usage: parsed.usage
+      })
+    }
+
     writeFileSync(input.lastMessagePath, parsed.responseText, 'utf8')
 
     return {
@@ -259,18 +275,9 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
 }
 
 function buildGeminiResumePrompt(input: RuntimeConversationTurnInput): string {
-  return [
-    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
-    '',
-    buildAgentPrivateFolderInstructions(input.agentHomePath),
-    '',
-    buildExtraDirectoriesInstructions(input.extraDirectories),
-    '',
-    buildConversationOutcomeInstructions(),
-    '',
-    'User message:',
-    input.message
-  ].join('\n')
+  // ADR-037: the resumed session already holds the full rules from its first
+  // turn; the outcome shape is enforced by the JSON output contract regardless.
+  return [buildResumeReminderInstructions(), '', 'User message:', input.message].join('\n')
 }
 
 async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -735,7 +742,60 @@ function extractGeminiAuthUrl(value: string): string {
   })
 }
 
-function readGeminiConversationOutput(value: string): { sessionId: string; responseText: string } {
+// ADR-037 — Gemini reports PER-INVOCATION usage under stats.models.<model>.
+// tokens. Values are summed across models (the CLI may route through a
+// utility model plus the main model in one invocation). `prompt` includes
+// cached tokens; output = candidates + thoughts + tool.
+function readGeminiUsage(parsed: Record<string, unknown>): ProviderUsageReport | undefined {
+  const stats = isRecord(parsed.stats) ? parsed.stats : null
+  const models = stats && isRecord(stats.models) ? stats.models : null
+  if (!models) {
+    return undefined
+  }
+
+  let inputTokens = 0
+  let cachedInputTokens = 0
+  let outputTokens = 0
+  let totalTokens = 0
+  let found = false
+
+  for (const model of Object.values(models)) {
+    const tokens = isRecord(model) && isRecord(model.tokens) ? model.tokens : null
+    if (!tokens) {
+      continue
+    }
+    found = true
+    inputTokens += readGeminiTokenCount(tokens.prompt ?? tokens.input)
+    cachedInputTokens += readGeminiTokenCount(tokens.cached)
+    outputTokens +=
+      readGeminiTokenCount(tokens.candidates) +
+      readGeminiTokenCount(tokens.thoughts) +
+      readGeminiTokenCount(tokens.tool)
+    totalTokens += readGeminiTokenCount(tokens.total)
+  }
+
+  if (!found) {
+    return undefined
+  }
+
+  return {
+    semantics: 'invocation',
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    totalTokens: totalTokens > 0 ? totalTokens : undefined
+  }
+}
+
+function readGeminiTokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+}
+
+function readGeminiConversationOutput(value: string): {
+  sessionId: string
+  responseText: string
+  usage?: ProviderUsageReport
+} {
   const parsed = parseJsonFromCliOutput(value)
 
   if (!isRecord(parsed)) {
@@ -763,7 +823,8 @@ function readGeminiConversationOutput(value: string): { sessionId: string; respo
 
   return {
     sessionId,
-    responseText: responseText.trim()
+    responseText: responseText.trim(),
+    usage: readGeminiUsage(parsed)
   }
 }
 

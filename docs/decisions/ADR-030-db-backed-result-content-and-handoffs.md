@@ -13,6 +13,13 @@ action that materializes a database result into a new workspace file is added (A
 viewer never creates files). Builds on ADR-006 (generic work runtime) and the planning ADRs
 (ADR-007, ADR-016).
 
+Amended by ADR-037 (token efficiency and work visibility): when the producing run lives in the
+same provider session the dependent run resumes, the full-content inline is dropped (summary +
+run id only); the rejected "lazy fetch via an agent tool" alternative is partially adopted as a
+complement (scoped read-only `getWorkRunResult` / `getRequestDigest` for worker agents); and a
+deterministic per-request `digest.md` (summaries + pointers, never full content) is added. The
+inline direct-dependency handoff and its 100k budget remain the primary transport.
+
 ## Date
 
 2026-06-09

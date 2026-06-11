@@ -36,6 +36,7 @@ import {
 import {
   agentTurnOutcomeJsonSchema,
   buildConversationOutcomeInstructions,
+  buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
 import {
@@ -290,18 +291,9 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
 }
 
 function buildCodexResumePrompt(input: RuntimeConversationTurnInput): string {
-  return [
-    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
-    '',
-    buildAgentPrivateFolderInstructions(input.agentHomePath),
-    '',
-    buildExtraDirectoriesInstructions(input.extraDirectories),
-    '',
-    buildConversationOutcomeInstructions(),
-    '',
-    'User message:',
-    input.message
-  ].join('\n')
+  // ADR-037: the resumed session already holds the full rules from its first
+  // turn; the outcome shape is enforced by --output-schema regardless.
+  return [buildResumeReminderInstructions(), '', 'User message:', input.message].join('\n')
 }
 
 function writeCodexConversationOutcomeSchema(input: RuntimeConversationTurnInput): string {
@@ -705,7 +697,15 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
   const type = getEventType(parsed)
   if (type === 'thread.started') {
     return [
-      codexObservation({ kind: 'status', phase: 'starting', summary: 'Codex session started.' })
+      codexObservation({
+        kind: 'status',
+        phase: 'starting',
+        summary: 'Codex session started.',
+        // ADR-037: announce the actual thread id so the observed run's usage
+        // chain key stays correct even when a fresh-session fallback
+        // (ADR-013) replaced the resume target mid-run.
+        sessionRef: readCodexThreadId(parsed)
+      })
     ]
   }
 
@@ -714,7 +714,14 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
   }
 
   if (type === 'turn.completed') {
-    return [codexObservation({ kind: 'phase', phase: 'running', summary: 'Preparing response.' })]
+    return [
+      codexObservation({
+        kind: 'phase',
+        phase: 'running',
+        summary: 'Preparing response.',
+        usage: readCodexUsage(parsed)
+      })
+    ]
   }
 
   const item = isRecord(parsed) && isRecord(parsed.item) ? parsed.item : null
@@ -828,7 +835,7 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
 
 function codexObservation(
   event: Pick<RuntimeObservation, 'kind' | 'phase' | 'summary'> &
-    Pick<Partial<RuntimeObservation>, 'payload'>
+    Pick<Partial<RuntimeObservation>, 'payload' | 'sessionRef' | 'usage'>
 ): RuntimeObservation {
   return {
     source: 'provider',
@@ -836,6 +843,50 @@ function codexObservation(
     lifecycleStatus: 'running',
     ...event
   }
+}
+
+function readCodexThreadId(parsed: unknown): string | undefined {
+  const candidate =
+    getStringPath(parsed, ['thread_id']) ||
+    getStringPath(parsed, ['threadId']) ||
+    getStringPath(parsed, ['session_id']) ||
+    getStringPath(parsed, ['sessionId']) ||
+    getStringPath(parsed, ['payload', 'thread_id']) ||
+    getStringPath(parsed, ['payload', 'threadId']) ||
+    getStringPath(parsed, ['payload', 'session_id']) ||
+    getStringPath(parsed, ['payload', 'sessionId']) ||
+    getStringPath(parsed, ['payload', 'id'])
+
+  return candidate || undefined
+}
+
+// ADR-037 — Codex usage counters are THREAD-CUMULATIVE: each turn.completed
+// reports totals since the start of the (possibly resumed) thread, not the
+// turn's own cost. input_tokens already includes cached_input_tokens.
+function readCodexUsage(parsed: unknown): RuntimeObservation['usage'] {
+  const usage = isRecord(parsed) && isRecord(parsed.usage) ? parsed.usage : null
+  if (!usage) {
+    return undefined
+  }
+
+  const inputTokens = readNonNegativeInteger(usage.input_tokens)
+  const outputTokens = readNonNegativeInteger(usage.output_tokens)
+  if (inputTokens === null && outputTokens === null) {
+    return undefined
+  }
+
+  return {
+    semantics: 'cumulative',
+    inputTokens: inputTokens ?? 0,
+    cachedInputTokens: readNonNegativeInteger(usage.cached_input_tokens) ?? 0,
+    outputTokens: outputTokens ?? 0
+  }
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null
 }
 
 function isCommandLikeItem(itemType: string, item: Record<string, unknown>): boolean {

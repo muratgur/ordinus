@@ -51,6 +51,10 @@ type StartObservedRunInput = {
   logRef: string
   invocation: SanitizedInvocationSummary
   eventPayload: Record<string, unknown>
+  // ADR-037: the provider session this run will try to resume (null for a
+  // fresh session). Seeds the row's chain key for usage delta computation;
+  // the adapter's sessionRef observation overrides it with the actual thread.
+  providerSessionRef: string | null
 }
 
 export type ObservabilityService = {
@@ -59,6 +63,7 @@ export type ObservabilityService = {
     agent: Agent
     logRef: string
     invocation: SanitizedInvocationSummary
+    providerSessionRef?: string | null
   }): RuntimeObservationSink
   startConversationTurn(input: {
     turn: ConversationTurn
@@ -67,6 +72,7 @@ export type ObservabilityService = {
     agent: Agent
     logRef: string
     invocation: SanitizedInvocationSummary
+    providerSessionRef?: string | null
   }): RuntimeObservationSink
   /**
    * ADR-034 — Ordinus Home turns. Ordinus is a phantom agent (no Agent row,
@@ -83,6 +89,7 @@ export type ObservabilityService = {
     model: string
     logRef: string
     invocation: SanitizedInvocationSummary
+    providerSessionRef?: string | null
   }): RuntimeObservationSink
   markWorkboardWaitingForUser(runId: string, summary: string): void
   markWorkboardCompleted(runId: string, summary: string): void
@@ -116,7 +123,8 @@ export function createObservabilityService(database: OrdinusDatabase): Observabi
         model: input.run.model,
         logRef: input.logRef,
         invocation: input.invocation,
-        eventPayload: {}
+        eventPayload: {},
+        providerSessionRef: input.providerSessionRef ?? null
       })
     },
     startConversationTurn(input) {
@@ -133,7 +141,8 @@ export function createObservabilityService(database: OrdinusDatabase): Observabi
         eventPayload: {
           conversationId: input.conversationId,
           turnId: input.turn.id
-        }
+        },
+        providerSessionRef: input.providerSessionRef ?? null
       })
     },
     startOrdinusTurn(input) {
@@ -150,7 +159,8 @@ export function createObservabilityService(database: OrdinusDatabase): Observabi
         eventPayload: {
           conversationId: input.conversationId,
           turnId: input.turnId
-        }
+        },
+        providerSessionRef: input.providerSessionRef ?? null
       })
     },
     markWorkboardWaitingForUser(runId, summary) {
@@ -274,6 +284,7 @@ function startObservedRun(
     firstActivityAt: now,
     lastActivityAt: now,
     usageSource: 'unavailable',
+    providerSessionRef: input.providerSessionRef ?? '',
     sanitizedInvocation: input.invocation,
     logRef: input.logRef
   })
@@ -393,7 +404,8 @@ function updateActivity(
     latestActivityAt: now,
     firstActivityAt: current.firstActivityAt ?? now,
     lastActivityAt: now,
-    completedAt: isTerminalLifecycle(event.lifecycleStatus) ? now : current.completedAt
+    completedAt: isTerminalLifecycle(event.lifecycleStatus) ? now : current.completedAt,
+    ...buildUsagePatch(database, current, event)
   })
   appendAndBroadcast(database, observedRunId, {
     ...event,
@@ -406,6 +418,59 @@ function updateActivity(
   if (isTerminalLifecycle(event.lifecycleStatus)) {
     liveActivityByRunId.delete(observedRunId)
   }
+}
+
+// ADR-037 — fold a provider usage report (and/or an announced session ref)
+// into the run row. Raw counters are stored as reported; the delta fields are
+// the run's true cost. For 'invocation' reporters (Claude, Gemini) the delta
+// IS the raw report. For 'cumulative' reporters (Codex) the delta is raw
+// minus the latest prior run's raw counters on the same provider session —
+// a fresh session (or an ADR-013 fresh-session fallback, which re-announces
+// a new sessionRef) has no baseline, so the delta equals the raw values.
+function buildUsagePatch(
+  database: OrdinusDatabase,
+  current: ReturnType<OrdinusDatabase['getObservedRunInternal']>,
+  event: RuntimeObservation
+): Partial<Parameters<OrdinusDatabase['patchObservedRun']>[0]> {
+  const patch: Partial<Parameters<OrdinusDatabase['patchObservedRun']>[0]> = {}
+
+  const sessionRef = event.sessionRef?.trim()
+  if (sessionRef && sessionRef !== current.providerSessionRef) {
+    patch.providerSessionRef = sessionRef
+  }
+
+  const usage = event.usage
+  if (!usage) {
+    return patch
+  }
+
+  const chainRef = patch.providerSessionRef ?? current.providerSessionRef
+  const totalTokens = usage.totalTokens ?? usage.inputTokens + usage.outputTokens
+
+  patch.inputTokens = usage.inputTokens
+  patch.cachedInputTokens = usage.cachedInputTokens
+  patch.outputTokens = usage.outputTokens
+  patch.totalTokens = totalTokens
+  patch.usageSource = 'provider'
+  patch.usageSemantics = usage.semantics
+
+  if (usage.semantics === 'invocation') {
+    patch.deltaInputTokens = usage.inputTokens
+    patch.deltaCachedInputTokens = usage.cachedInputTokens
+    patch.deltaOutputTokens = usage.outputTokens
+    patch.deltaTotalTokens = totalTokens
+    return patch
+  }
+
+  const baseline = database.getObservedRunUsageBaseline(chainRef, current.id)
+  patch.deltaInputTokens = Math.max(0, usage.inputTokens - (baseline?.inputTokens ?? 0))
+  patch.deltaCachedInputTokens = Math.max(
+    0,
+    usage.cachedInputTokens - (baseline?.cachedInputTokens ?? 0)
+  )
+  patch.deltaOutputTokens = Math.max(0, usage.outputTokens - (baseline?.outputTokens ?? 0))
+  patch.deltaTotalTokens = Math.max(0, totalTokens - (baseline?.totalTokens ?? 0))
+  return patch
 }
 
 function appendAndBroadcast(

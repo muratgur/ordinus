@@ -227,6 +227,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+// ADR-037 — resumed sessions already hold the workspace, private-folder and
+// outcome-format rules from the session's first turn, and the outcome shape
+// is independently enforced by the CLI schema flags. Re-sending the full
+// blocks every resumed turn wasted ~3-4k chars and pushed the variable user
+// message behind a repeated prefix; a one-line pointer is enough.
+// Wording note: "given at the start of this session" is deliberately
+// channel-neutral. For Claude those rules live in the system prompt
+// (--append-system-prompt-file); for Codex and Gemini they were part of the
+// session's first user message. "First message" would point Claude at the
+// wrong place.
+export function buildResumeReminderInstructions(): string {
+  return 'Reminder: the workspace, private-folder, and structured JSON outcome rules given at the start of this session still apply unchanged.'
+}
+
 export function buildConversationOutcomeInstructions(): string {
   return `Return JSON only. Do not wrap the JSON response in markdown fences, prose, or comments.
 

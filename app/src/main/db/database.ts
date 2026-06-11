@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { randomUUID } from 'node:crypto'
@@ -254,9 +254,16 @@ export type ObservedRunUpsertInput = {
   lastActivityAt?: string | null
   completedAt?: string | null
   inputTokens?: number | null
+  cachedInputTokens?: number | null
   outputTokens?: number | null
   totalTokens?: number | null
+  deltaInputTokens?: number | null
+  deltaCachedInputTokens?: number | null
+  deltaOutputTokens?: number | null
+  deltaTotalTokens?: number | null
   usageSource?: ObservedRunUsageSource
+  usageSemantics?: '' | 'cumulative' | 'invocation'
+  providerSessionRef?: string
   sanitizedInvocation?: Record<string, unknown>
   logRef: string
 }
@@ -272,9 +279,16 @@ export type ObservedRunPatchInput = {
   lastActivityAt?: string | null
   completedAt?: string | null
   inputTokens?: number | null
+  cachedInputTokens?: number | null
   outputTokens?: number | null
   totalTokens?: number | null
+  deltaInputTokens?: number | null
+  deltaCachedInputTokens?: number | null
+  deltaOutputTokens?: number | null
+  deltaTotalTokens?: number | null
   usageSource?: ObservedRunUsageSource
+  usageSemantics?: '' | 'cumulative' | 'invocation'
+  providerSessionRef?: string
   sanitizedInvocation?: Record<string, unknown>
 }
 
@@ -292,6 +306,9 @@ export type ObservedRunEventCreateInput = {
 export type ObservedRunInternal = ObservedRunSnapshot & {
   logRef: string
   sanitizedInvocation: Record<string, unknown>
+  // ADR-037: delta-computation state, not exposed on the public snapshot.
+  usageSemantics: '' | 'cumulative' | 'invocation'
+  providerSessionRef: string
 }
 
 export type QueuedWorkRunResume = {
@@ -1788,6 +1805,33 @@ export class OrdinusDatabase {
     return this.getWorkRun(runId)
   }
 
+  // ADR-037: resolve a plan item's dependsOnRunIds against the destination
+  // request. Only runs that exist AND belong to that request are honored —
+  // anything else (a hallucinated id, a run from another request) is dropped
+  // rather than failing the whole plan, since these bindings are advisory
+  // routing for upstream output, not integrity-critical references.
+  private resolveExistingPlanDependencyRuns(
+    dependsOnRunIds: string[],
+    requestId: string
+  ): WorkRun[] {
+    if (dependsOnRunIds.length === 0) {
+      return []
+    }
+
+    return this.db
+      .select()
+      .from(workRuns)
+      .where(
+        and(
+          inArray(workRuns.id, uniqueValues(dependsOnRunIds)),
+          eq(workRuns.sourceType, workRequestSourceType),
+          eq(workRuns.sourceId, requestId)
+        )
+      )
+      .all()
+      .map(parseWorkRun)
+  }
+
   createWorkRequestPlan(input: WorkboardStartRequestPlanInput): WorkRequest {
     const parsed = WorkboardStartRequestPlanInputSchema.parse(input)
     const plan = WorkboardDraftPlanSchema.parse(parsed.plan)
@@ -1886,8 +1930,21 @@ export class OrdinusDatabase {
           }
           return dependsOnRunId
         })
-        const requiredRunIds = uniqueValues([...contextDependencyRunIds, ...planDependencyRunIds])
-        const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds(contextDependencyRuns)
+        // ADR-037: follow-up items may bind to existing runs of the
+        // destination request (planner dependsOnRunIds or user selection in
+        // plan review); completed ones count as already satisfied.
+        const existingDependencyRuns = destinationRequest
+          ? this.resolveExistingPlanDependencyRuns(item.dependsOnRunIds, requestId)
+          : []
+        const requiredRunIds = uniqueValues([
+          ...contextDependencyRunIds,
+          ...existingDependencyRuns.map((run) => run.id),
+          ...planDependencyRunIds
+        ])
+        const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds([
+          ...contextDependencyRuns,
+          ...existingDependencyRuns
+        ])
         const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
         const providerSessionRef = getContinuationProviderSessionRef(
           parentRun,
@@ -2203,13 +2260,21 @@ export class OrdinusDatabase {
           return dependsOnRunId
         })
         const shouldDependOnAnchor = shouldUseAnchorDependency(anchorRun, item.dependsOnTempIds)
+        // ADR-037: follow-up items may also bind to existing runs of this
+        // request via dependsOnRunIds.
+        const existingDependencyRuns = this.resolveExistingPlanDependencyRuns(
+          item.dependsOnRunIds,
+          request.id
+        )
         const requiredRunIds = uniqueValues([
           ...(shouldDependOnAnchor && anchorRun ? [anchorRun.id] : []),
+          ...existingDependencyRuns.map((run) => run.id),
           ...dependentRunIds
         ])
-        const satisfiedRequiredRunIds = anchorRun
-          ? getSatisfiedRequiredRunIds([anchorRun])
-          : new Set<string>()
+        const satisfiedRequiredRunIds = getSatisfiedRequiredRunIds([
+          ...(anchorRun ? [anchorRun] : []),
+          ...existingDependencyRuns
+        ])
         const status = getInitialWorkRunStatus(requiredRunIds, satisfiedRequiredRunIds)
         const providerSessionRef =
           anchorRun &&
@@ -3404,7 +3469,8 @@ export class OrdinusDatabase {
           resultSummary: parsedRun.resultSummary,
           resultContent: parsedRun.resultContent,
           artifactRefs: parsedRun.artifactRefs,
-          changedFiles: parsedRun.changedFiles
+          changedFiles: parsedRun.changedFiles,
+          providerSessionRef: parsedRun.providerSessionRef ?? ''
         })
       })
   }
@@ -3454,9 +3520,16 @@ export class OrdinusDatabase {
       lastActivityAt: input.lastActivityAt ?? null,
       completedAt: input.completedAt ?? null,
       inputTokens: input.inputTokens ?? null,
+      cachedInputTokens: input.cachedInputTokens ?? null,
       outputTokens: input.outputTokens ?? null,
       totalTokens: input.totalTokens ?? null,
+      deltaInputTokens: input.deltaInputTokens ?? null,
+      deltaCachedInputTokens: input.deltaCachedInputTokens ?? null,
+      deltaOutputTokens: input.deltaOutputTokens ?? null,
+      deltaTotalTokens: input.deltaTotalTokens ?? null,
       usageSource: input.usageSource ?? 'unavailable',
+      usageSemantics: input.usageSemantics ?? '',
+      providerSessionRef: input.providerSessionRef ?? '',
       sanitizedInvocation: JSON.stringify(input.sanitizedInvocation ?? {}),
       logRef: input.logRef,
       updatedAt: now
@@ -3495,9 +3568,18 @@ export class OrdinusDatabase {
     if (input.lastActivityAt !== undefined) row.lastActivityAt = input.lastActivityAt
     if (input.completedAt !== undefined) row.completedAt = input.completedAt
     if (input.inputTokens !== undefined) row.inputTokens = input.inputTokens
+    if (input.cachedInputTokens !== undefined) row.cachedInputTokens = input.cachedInputTokens
     if (input.outputTokens !== undefined) row.outputTokens = input.outputTokens
     if (input.totalTokens !== undefined) row.totalTokens = input.totalTokens
+    if (input.deltaInputTokens !== undefined) row.deltaInputTokens = input.deltaInputTokens
+    if (input.deltaCachedInputTokens !== undefined) {
+      row.deltaCachedInputTokens = input.deltaCachedInputTokens
+    }
+    if (input.deltaOutputTokens !== undefined) row.deltaOutputTokens = input.deltaOutputTokens
+    if (input.deltaTotalTokens !== undefined) row.deltaTotalTokens = input.deltaTotalTokens
     if (input.usageSource !== undefined) row.usageSource = input.usageSource
+    if (input.usageSemantics !== undefined) row.usageSemantics = input.usageSemantics
+    if (input.providerSessionRef !== undefined) row.providerSessionRef = input.providerSessionRef
     if (input.sanitizedInvocation !== undefined) {
       row.sanitizedInvocation = JSON.stringify(input.sanitizedInvocation)
     }
@@ -3587,6 +3669,52 @@ export class OrdinusDatabase {
       .orderBy(desc(observedRuns.updatedAt))
       .all()
       .map(parseObservedRunSnapshot)
+  }
+
+  // ADR-037: baseline for cumulative usage reporters. The latest prior run on
+  // the same provider session/thread carries the cumulative counters as they
+  // stood before this run; the difference is this run's true cost.
+  getObservedRunUsageBaseline(
+    providerSessionRef: string,
+    excludeRunId: string
+  ): {
+    inputTokens: number
+    cachedInputTokens: number
+    outputTokens: number
+    totalTokens: number
+  } | null {
+    if (!providerSessionRef) {
+      return null
+    }
+
+    const row = this.db
+      .select({
+        inputTokens: observedRuns.inputTokens,
+        cachedInputTokens: observedRuns.cachedInputTokens,
+        outputTokens: observedRuns.outputTokens,
+        totalTokens: observedRuns.totalTokens
+      })
+      .from(observedRuns)
+      .where(
+        and(
+          eq(observedRuns.providerSessionRef, providerSessionRef),
+          ne(observedRuns.id, excludeRunId),
+          isNotNull(observedRuns.inputTokens)
+        )
+      )
+      .orderBy(desc(observedRuns.lastActivityAt))
+      .get()
+
+    if (!row) {
+      return null
+    }
+
+    return {
+      inputTokens: row.inputTokens ?? 0,
+      cachedInputTokens: row.cachedInputTokens ?? 0,
+      outputTokens: row.outputTokens ?? 0,
+      totalTokens: row.totalTokens ?? 0
+    }
   }
 
   getObservedRunBySource(
@@ -5432,7 +5560,12 @@ function parseObservedRunInternal(value: unknown): ObservedRunInternal {
   return {
     ...parseObservedRunSnapshot(value),
     logRef: value.logRef,
-    sanitizedInvocation: parseJsonObjectSafe(value.sanitizedInvocation)
+    sanitizedInvocation: parseJsonObjectSafe(value.sanitizedInvocation),
+    usageSemantics:
+      value.usageSemantics === 'cumulative' || value.usageSemantics === 'invocation'
+        ? value.usageSemantics
+        : '',
+    providerSessionRef: value.providerSessionRef
   }
 }
 
@@ -5462,8 +5595,13 @@ function parseObservedRunBase(value: unknown): Record<string, unknown> {
     lastActivityAt: value.lastActivityAt,
     completedAt: value.completedAt,
     inputTokens: value.inputTokens,
+    cachedInputTokens: value.cachedInputTokens,
     outputTokens: value.outputTokens,
     totalTokens: value.totalTokens,
+    deltaInputTokens: value.deltaInputTokens,
+    deltaCachedInputTokens: value.deltaCachedInputTokens,
+    deltaOutputTokens: value.deltaOutputTokens,
+    deltaTotalTokens: value.deltaTotalTokens,
     usageSource: value.usageSource,
     updatedAt: value.updatedAt
   }
@@ -5490,9 +5628,16 @@ function isDatabaseObservedRun(value: unknown): value is {
   lastActivityAt: string | null
   completedAt: string | null
   inputTokens: number | null
+  cachedInputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
+  deltaInputTokens: number | null
+  deltaCachedInputTokens: number | null
+  deltaOutputTokens: number | null
+  deltaTotalTokens: number | null
   usageSource: string
+  usageSemantics: string
+  providerSessionRef: string
   sanitizedInvocation: string
   logRef: string
   updatedAt: string

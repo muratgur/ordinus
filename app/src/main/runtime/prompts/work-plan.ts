@@ -69,6 +69,15 @@ export const workboardDraftPlanJsonSchema = {
               maxLength: 80
             }
           },
+          dependsOnRunIds: {
+            type: 'array',
+            maxItems: 16,
+            items: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 80
+            }
+          },
           priority: {
             type: 'integer',
             minimum: -100,
@@ -82,6 +91,7 @@ export const workboardDraftPlanJsonSchema = {
           'expectedOutput',
           'assignedAgentId',
           'dependsOnTempIds',
+          'dependsOnRunIds',
           'priority'
         ]
       }
@@ -115,6 +125,7 @@ Return a single JSON object with this exact shape:
       "expectedOutput": "...",
       "assignedAgentId": "...",
       "dependsOnTempIds": [],
+      "dependsOnRunIds": [],
       "priority": 0
     }
   ]
@@ -123,6 +134,7 @@ Return a single JSON object with this exact shape:
 Field notes:
 - tempId: must match ^item-[0-9]+$, sequential starting at item-1, no gaps.
 - dependsOnTempIds: always an array. Use [] when there are no dependencies. Never null, never omitted.
+- dependsOnRunIds: always an array, [] in most plans. Only when planning INTO an existing Work Request: list the "Work Run" ids (wrk-...) of existing Work Items whose output this new item needs. The referenced run's result (summary and produced text) is delivered to the assigned agent inline at execution time, exactly like a dependsOnTempIds handoff. Never invent run ids - use only ids shown in the "Existing Work Items in this Work Request" manifest.
 - priority: 0 = normal, 1 = should start first when no dependency forces order, -1 = lowest. Default to 0 unless you have a clear reason.
 
 ============================================================
@@ -182,6 +194,11 @@ DEPENDENCY TEST
 Add a dependency ONLY if the dependent item's instruction cannot be written concretely right now without the predecessor's output.
 
 Concrete test: if you can fully write both instructions at this moment, they are independent - even if they relate to the same topic or file.
+
+Dependencies on EXISTING work (follow-up planning into an existing Work Request):
+- When the user's follow-up operates on the output of an already-completed Work Item ("translate the report", "summarize the findings", "turn it into HTML"), bind the new item to that existing work via dependsOnRunIds with the run id from the manifest. This is how the new agent receives the prior result - without the binding it cannot see that output.
+- The manifest shows only a short output snippet per existing item; the bound agent receives the full result at execution time, so do not copy the snippet into the instruction as if it were the whole output.
+- Apply the same dependency test: bind only when the new item genuinely consumes that output.
 
 ============================================================
 DEPENDENT ITEM INSTRUCTIONS

@@ -89,6 +89,9 @@ export function compileWorkflowDesign(design: WorkflowDesign): CompiledWorkflowD
       expectedOutput,
       assignedAgentId,
       dependsOnTempIds,
+      // Workflow designs compile to fresh Work Requests; there are no
+      // existing runs to bind to (ADR-037).
+      dependsOnRunIds: [],
       priority: node.priority
     }
   })

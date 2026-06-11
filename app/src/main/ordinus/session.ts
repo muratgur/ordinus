@@ -248,7 +248,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
             args: [],
             cwd: workspace.workspaceRoot,
             startedAt: new Date().toISOString()
-          }
+          },
+          providerSessionRef: conversation.providerSessionRef
         })
 
         // Only inject the assembled system prompt for the FIRST turn of a

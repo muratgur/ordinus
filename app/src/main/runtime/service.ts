@@ -262,9 +262,11 @@ export function createRuntimeService(): RuntimeService {
           logRef: input.logRef,
           eventLogPath: input.eventLogPath,
           lastMessagePath: input.lastMessagePath,
-          observability: input.observability
+          observability: input.observability,
+          additionalMcpServers: input.additionalMcpServers
         },
-        context
+        context,
+        () => buildWorkRunMessage({ ...input, providerSessionRef: null })
       )
     },
     cancelConversationTurn(turnId) {
@@ -317,7 +319,12 @@ function applyExtraDirectoriesPolicy(
 async function sendConversationTurnWithFreshSessionFallback(
   adapter: ReturnType<typeof getProviderAdapter>,
   input: RuntimeConversationTurnInput,
-  context: ProviderRuntimeContext
+  context: ProviderRuntimeContext,
+  // ADR-037: resumed work-run messages omit content the session already holds
+  // (working-folder rules, same-session upstream results). A fresh-session
+  // retry has no such history, so the caller can rebuild the message for a
+  // session-less run before the retry goes out.
+  rebuildMessageForFreshSession?: () => string
 ): Promise<RuntimeConversationTurnResult> {
   if (!adapter.sendConversationTurn) {
     throw new Error(`Direct conversations are not available for ${adapter.label} yet.`)
@@ -345,7 +352,8 @@ async function sendConversationTurnWithFreshSessionFallback(
     const retried = await adapter.sendConversationTurn(
       {
         ...filtered,
-        providerSessionRef: null
+        providerSessionRef: null,
+        message: rebuildMessageForFreshSession?.() ?? filtered.message
       },
       context
     )
@@ -357,19 +365,26 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
   return [
     `Work Item: ${input.title}`,
     '',
-    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
-    '',
+    // ADR-037: a resumed session already received the working-folder rules on
+    // its first run (and the ADR-013 fresh-session fallback re-adds them via
+    // the adapter's new-session prompt builder), so they are only spelled out
+    // for fresh sessions.
+    ...(input.providerSessionRef
+      ? []
+      : [buildWorkspaceWorkingFolderInstructions(input.workingRoot), '']),
     'Instruction:',
     input.instruction,
     '',
     'Expected output:',
     input.expectedOutput || 'Provide a concise result summary for this Work Item.',
     '',
-    formatRequiredInputs(input.requiredInputs),
+    formatRequiredInputs(input.requiredInputs, input.providerSessionRef),
     '',
     'Same-agent prior Work Items in this Work Request may already be in this provider session. Treat session memory as orientation only; artifacts and workspace files are authoritative.',
     '',
     'Upstream textual results are provided inline above (summary and, when present, full result). Read upstream workspace files only for genuine file deliverables (code, HTML, PDFs, spreadsheets, images) that you need in full.',
+    '',
+    'A digest.md file in the working folder records completed work in this Work Request (run ids and summaries). To fetch the full output of a prior run that is not inlined above, call the get_work_run_result tool with its run id.',
     ...formatResumeMessage(input.resumeMessage),
     '',
     'When you complete the Work Item, make the final content easy to review in the Workboard drawer.',
@@ -387,7 +402,10 @@ function buildWorkRunMessage(input: RuntimeWorkRunInput): string {
 // degrades to summary-only.
 const requiredInputsContentBudget = 100_000
 
-function formatRequiredInputs(inputs: RuntimeWorkRunInput['requiredInputs']): string {
+function formatRequiredInputs(
+  inputs: RuntimeWorkRunInput['requiredInputs'],
+  resumedSessionRef: string | null
+): string {
   if (inputs.length === 0) {
     return 'Upstream work available: none'
   }
@@ -404,8 +422,18 @@ function formatRequiredInputs(inputs: RuntimeWorkRunInput['requiredInputs']): st
         `Summary: ${item.resultSummary}`
       ]
 
+      // ADR-037: when the producing run lives in the very session this run
+      // resumes, its full content is already in session history — re-inlining
+      // it would be pure duplication.
+      const producedInThisSession =
+        Boolean(resumedSessionRef) && item.providerSessionRef === resumedSessionRef
+
       const content = item.resultContent.trim()
-      if (content) {
+      if (content && producedInThisSession) {
+        lines.push(
+          'Full result: produced earlier in this session by you; see your own prior output above in this conversation.'
+        )
+      } else if (content) {
         if (content.length <= remainingContentBudget) {
           remainingContentBudget -= content.length
           lines.push('Full result:', content)

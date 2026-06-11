@@ -8,6 +8,10 @@ Presentation of the Workboard diagnostics surface is refined by ADR-036 (run
 inspector bottom sheet); the pipeline, sanitization, and opt-in diagnostics
 principles here are unchanged.
 
+Extended by ADR-037 (token efficiency and work visibility): the observability
+pipeline now also captures provider token usage per run (raw cumulative
+counters plus per-session deltas with cached-input split) into `observed_runs`.
+
 ## Date
 
 2026-05-14

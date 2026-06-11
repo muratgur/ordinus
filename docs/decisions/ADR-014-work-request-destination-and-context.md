@@ -13,6 +13,11 @@ Work Item) and the **Continue** entry path remain. Multi-item continuation conte
 inline database-backed results (ADR-030) and/or by pointing a new request at the same Existing
 folder, rather than through filesystem context references.
 
+Amended by ADR-037 (token efficiency and work visibility): follow-up planning into an existing
+Work Request can now bind new Work Items to existing completed runs via `dependsOnRunIds` —
+automatically by the planner, with manual review/override in the plan review surface, which lists
+the destination request's existing runs and their bindings.
+
 ## Date
 
 2026-05-16

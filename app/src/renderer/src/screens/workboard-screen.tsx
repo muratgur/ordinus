@@ -714,6 +714,7 @@ export function WorkboardScreen({
         target={draftContext?.target ?? watchedOp?.target ?? newWorkComposerTarget}
         plan={draftPlan}
         agents={enabledAgents}
+        runs={data.runs}
         selectedItem={selectedDraftItem}
         selectedItemId={selectedDraftId}
         busy={busy}
@@ -2392,6 +2393,7 @@ function PlanReviewDialog({
   target,
   plan,
   agents,
+  runs,
   selectedItem,
   selectedItemId,
   busy,
@@ -2410,6 +2412,7 @@ function PlanReviewDialog({
   target: WorkComposerTarget
   plan: WorkboardDraftPlan | null
   agents: Agent[]
+  runs: WorkboardRun[]
   selectedItem: WorkboardDraftItem | null
   selectedItemId: string
   busy: string
@@ -2426,6 +2429,18 @@ function PlanReviewDialog({
   const levels = useMemo(() => (plan ? buildDraftLevels(plan.items) : []), [plan])
   const stageById = useMemo(() => buildDraftStageMap(levels), [levels])
   const isContinuation = Boolean(target.destinationRequestId)
+  // ADR-037: existing runs of the destination request, offered as dependency
+  // bindings (dependsOnRunIds) so a follow-up item can receive a prior item's
+  // output. Newest first; only continuation plans have any.
+  const existingRuns = useMemo(
+    () =>
+      target.destinationRequestId
+        ? runs
+            .filter((run) => run.requestId === target.destinationRequestId)
+            .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+        : [],
+    [runs, target.destinationRequestId]
+  )
   const targetRequestTitle = target.destinationRequestTitle ?? ''
   const isWaiting = !plan && watching !== null
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
@@ -2576,6 +2591,7 @@ function PlanReviewDialog({
                     item={selectedItem}
                     items={plan.items}
                     agents={agents}
+                    existingRuns={existingRuns}
                     stageById={stageById}
                     onChange={(patch) => onUpdateItem(selectedItem.tempId, patch)}
                   />
@@ -2702,7 +2718,7 @@ function DraftStageItemButton({
   selected: boolean
   onSelect: () => void
 }): React.JSX.Element {
-  const dependencyCount = item.dependsOnTempIds.length
+  const dependencyCount = item.dependsOnTempIds.length + item.dependsOnRunIds.length
 
   return (
     <button
@@ -2737,12 +2753,14 @@ function DraftItemEditor({
   item,
   items,
   agents,
+  existingRuns,
   stageById,
   onChange
 }: {
   item: WorkboardDraftItem
   items: WorkboardDraftItem[]
   agents: Agent[]
+  existingRuns: WorkboardRun[]
   stageById: Map<string, number>
   onChange: (patch: Partial<WorkboardDraftItem>) => void
 }): React.JSX.Element {
@@ -2761,7 +2779,62 @@ function DraftItemEditor({
         stageById={stageById}
         onChange={onChange}
       />
+      {existingRuns.length > 0 ? (
+        <DraftExistingRunChecklist item={item} existingRuns={existingRuns} onChange={onChange} />
+      ) : null}
       <DraftDependencyMap item={item} items={items} stageById={stageById} />
+    </div>
+  )
+}
+
+// ADR-037 — bindings to existing Work Items of the destination request. The
+// bound run's result (summary and produced text) is delivered to this item's
+// agent at execution time; without a binding the agent cannot see that output.
+function DraftExistingRunChecklist({
+  item,
+  existingRuns,
+  onChange
+}: {
+  item: WorkboardDraftItem
+  existingRuns: WorkboardRun[]
+  onChange: (patch: Partial<WorkboardDraftItem>) => void
+}): React.JSX.Element {
+  function updateRunDependency(runId: string, selected: boolean): void {
+    onChange({
+      dependsOnRunIds: selected
+        ? [...item.dependsOnRunIds, runId]
+        : item.dependsOnRunIds.filter((id) => id !== runId)
+    })
+  }
+
+  return (
+    <div className="grid gap-2">
+      <p className="text-xs font-medium text-muted-foreground">Uses output from existing work</p>
+      {existingRuns.map((run) => {
+        const checked = item.dependsOnRunIds.includes(run.id)
+        const hasOutput = run.status === 'completed'
+
+        return (
+          <label
+            key={run.id}
+            className="flex min-w-0 items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm"
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4"
+              checked={checked}
+              onChange={(event) => updateRunDependency(run.id, event.target.checked)}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{run.title}</span>
+              <span className="text-xs text-muted-foreground">
+                {run.agentName}
+                {hasOutput ? '' : ' - waits until this item finishes'}
+              </span>
+            </span>
+          </label>
+        )
+      })}
     </div>
   )
 }

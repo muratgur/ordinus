@@ -10,6 +10,11 @@ ADR-007 (workboard request planning), ADR-013 (provider session validity and fre
 fallback), ADR-017 (background plan generation), and ADR-027 (agent home 1:1 chat).
 Coexists with ADR-027 — Ordinus is not a replacement for agent 1:1 chat.
 
+Amended by ADR-037 (token efficiency and work visibility): the assistant-only tool boundary is
+refined. Workboard worker agents gain a minimal scoped read-only subset of the Ordinus tool
+catalog (`getWorkRunResult`, `getRequestDigest`, scoped to their own Work Request). The full
+catalog — including destructive and privileged tools — remains exclusive to the in-app assistant.
+
 ## Date
 
 2026-06-07

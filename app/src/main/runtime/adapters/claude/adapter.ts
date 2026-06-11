@@ -38,6 +38,7 @@ import {
 import {
   agentTurnOutcomeJsonSchema,
   buildConversationOutcomeInstructions,
+  buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
 import {
@@ -310,18 +311,9 @@ function buildClaudeConversationPrompt(input: RuntimeConversationTurnInput): str
 }
 
 function buildClaudeResumePrompt(input: RuntimeConversationTurnInput): string {
-  return [
-    buildWorkspaceWorkingFolderInstructions(input.workingRoot),
-    '',
-    buildAgentPrivateFolderInstructions(input.agentHomePath),
-    '',
-    buildExtraDirectoriesInstructions(input.extraDirectories),
-    '',
-    buildConversationOutcomeInstructions(),
-    '',
-    'User message:',
-    input.message
-  ].join('\n')
+  // ADR-037: the resumed session already holds the full rules from its first
+  // turn; the outcome shape is enforced by --json-schema regardless.
+  return [buildResumeReminderInstructions(), '', 'User message:', input.message].join('\n')
 }
 
 async function generateClaudeAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft> {
@@ -749,7 +741,9 @@ function observeClaudeStdoutLine(line: string): RuntimeObservation[] {
       claudeObservation({
         kind: 'message',
         phase: 'running',
-        summary: 'Claude returned a result.'
+        summary: 'Claude returned a result.',
+        sessionRef: getStringValue(parsed.session_id) || undefined,
+        usage: readClaudeUsage(parsed)
       })
     ]
   }
@@ -768,6 +762,7 @@ function observeClaudeSystemEvent(event: Record<string, unknown>): RuntimeObserv
       kind: 'status',
       phase: 'starting',
       summary: 'Claude session started.',
+      sessionRef: getStringValue(event.session_id) || undefined,
       payload: {
         sessionId: getStringValue(event.session_id),
         model: getStringValue(event.model)
@@ -862,7 +857,7 @@ function observeClaudeUserEvent(event: Record<string, unknown>): RuntimeObservat
 
 function claudeObservation(
   event: Pick<RuntimeObservation, 'kind' | 'phase' | 'summary'> &
-    Pick<Partial<RuntimeObservation>, 'payload'>
+    Pick<Partial<RuntimeObservation>, 'payload' | 'sessionRef' | 'usage'>
 ): RuntimeObservation {
   return {
     source: 'provider',
@@ -870,6 +865,38 @@ function claudeObservation(
     lifecycleStatus: 'running',
     ...event
   }
+}
+
+// ADR-037 — Claude reports PER-INVOCATION usage on the result event. Its
+// input_tokens EXCLUDES cache reads/writes, so the stored inputTokens is the
+// sum (total input presented to the model) to match the Codex convention
+// where input_tokens already includes cached input.
+function readClaudeUsage(event: Record<string, unknown>): RuntimeObservation['usage'] {
+  const usage = isRecord(event.usage) ? event.usage : null
+  if (!usage) {
+    return undefined
+  }
+
+  const freshInput = readClaudeUsageNumber(usage.input_tokens)
+  const cacheRead = readClaudeUsageNumber(usage.cache_read_input_tokens)
+  const cacheCreation = readClaudeUsageNumber(usage.cache_creation_input_tokens)
+  const outputTokens = readClaudeUsageNumber(usage.output_tokens)
+  if (freshInput === null && outputTokens === null) {
+    return undefined
+  }
+
+  return {
+    semantics: 'invocation',
+    inputTokens: (freshInput ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0),
+    cachedInputTokens: cacheRead ?? 0,
+    outputTokens: outputTokens ?? 0
+  }
+}
+
+function readClaudeUsageNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null
 }
 
 function getClaudeToolLabel(name: string, input: Record<string, unknown>): string {
