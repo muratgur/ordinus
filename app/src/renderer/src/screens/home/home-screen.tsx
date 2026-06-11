@@ -50,6 +50,8 @@ import {
 import { Input } from '@renderer/components/ui/input'
 import { notify } from '@renderer/lib/notifications'
 import { useLiveTurnActivity } from '@renderer/hooks/use-live-turn-activity'
+import { useRunInspector } from '@renderer/hooks/use-run-inspector'
+import { RunInspectorSheet } from '@renderer/components/run-inspector-sheet'
 import { QuestionPanel } from '@renderer/components/question-panel'
 import { HomeConfirmationPanel } from './home-confirmation-panel'
 import { HomeConversationList } from './home-conversation-list'
@@ -103,6 +105,7 @@ function turnToMessage(turn: OrdinusConversationTurn): HomeMessage {
         resultContent: turn.resultContent,
         artifactRefs: turn.artifactRefs,
         changedFiles: turn.changedFiles,
+        turnId: turn.turnId,
         at: turn.createdAt
       }
     case 'error':
@@ -337,6 +340,9 @@ export function HomeScreen(): React.JSX.Element {
   // (event phrase + elapsed timer + quiet/stalled softening). Falls back to
   // the opening "thinking" label before the first snapshot arrives.
   const { label: liveActivityLabel } = useLiveTurnActivity(activeId, activeTurnBusy, activeStopping)
+
+  // ADR-036 — run inspector bottom sheet (shared turn-scoped state machine).
+  const inspector = useRunInspector(activeId)
   // The "thinking" row is derived from busy state (reconciled from the backend),
   // so the indicator survives navigating away and back while a turn is still in
   // flight. ADR-034: the label itself is the live activity line; the row is
@@ -995,6 +1001,8 @@ export function HomeScreen(): React.JSX.Element {
                 rememberingMessageId={rememberingMessageId}
                 onRememberMessage={(messageId, text) => void handleRememberMessage(messageId, text)}
                 onRevealFile={(messageId, path) => void handleRevealFile(messageId, path)}
+                onOpenInspector={inspector.openLive}
+                onInspectMessage={(turnId) => void inspector.openTurn(turnId)}
               />
             </div>
             {/* ADR-029 §7 — frozen conversations replace the input with a
@@ -1063,6 +1071,33 @@ export function HomeScreen(): React.JSX.Element {
             fresh tour from step 1. */}
         {welcomeOpen ? <HomeWelcomePanel onDismiss={handleDismissWelcome} /> : null}
       </section>
+
+      {/* ADR-036 — shared run inspector bottom sheet, here observing the
+          active conversation's latest Ordinus turn. */}
+      {inspector.open ? (
+        <RunInspectorSheet
+          observedRun={inspector.run}
+          meta={{
+            agentName: inspector.run?.assignedAgentName || 'Ordinus',
+            agentRole: inspector.run?.assignedAgentRole ?? '',
+            providerId: inspector.run?.providerId ?? activeConversation?.providerId ?? '',
+            model: inspector.run?.model ?? '',
+            sandbox: null,
+            sessionRef: null,
+            createdAt: inspector.run?.queuedAt ?? null,
+            startedAt: inspector.run?.startedAt ?? null
+          }}
+          busy={inspector.live && activeTurnBusy}
+          heading="Behind the scenes"
+          subheading={
+            activeConversation
+              ? `How Ordinus ${inspector.live ? 'is working' : 'worked'} on “${activeConversation.title}”.`
+              : 'How Ordinus approached this turn.'
+          }
+          openingLabel={THINKING_LABEL}
+          onClose={inspector.close}
+        />
+      ) : null}
 
       {/* ADR-029 §6 / M8 — Memory panel. Rendered at the screen root (not
           inside the section) so the Dialog overlay covers the full Home

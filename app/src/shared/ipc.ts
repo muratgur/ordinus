@@ -117,6 +117,7 @@ export const ipcChannels = {
   workflowRun: 'workflow:run',
   observabilityListWorkboard: 'observability:list-workboard',
   observabilityListConversation: 'observability:list-conversation',
+  observabilityGetTurnRun: 'observability:get-turn-run',
   observabilityListEvents: 'observability:list-events',
   observabilityGetDiagnostics: 'observability:get-diagnostics',
   observabilityRunChanged: 'observability:run-changed',

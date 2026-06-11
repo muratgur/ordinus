@@ -7,6 +7,8 @@ import type {
   InteractionAnswer
 } from '@shared/contracts'
 import { useLiveTurnActivity } from '../hooks/use-live-turn-activity'
+import { useRunInspector } from '../hooks/use-run-inspector'
+import { InspectGutterButton, LiveStatusRow, RunInspectorSheet } from './run-inspector-sheet'
 import { AgentAvatar } from './agent-avatar'
 import { MarkdownContent } from './markdown-content'
 import { FilesTouched } from './files-touched'
@@ -176,6 +178,11 @@ export function AgentRoom({
     { openingLabel: `${agent.name} is thinking…` }
   )
 
+  // ADR-036 — run inspector bottom sheet (shared turn-scoped state machine).
+  // Observed runs are keyed by the conversation turn id here, so finished
+  // turns resolve via openTurn(turn.id) directly.
+  const inspector = useRunInspector(conversationId || null)
+
   async function handleSend(): Promise<void> {
     if (composerBlocked || !detail) {
       return
@@ -309,6 +316,12 @@ export function AgentRoom({
               remembering={rememberingId === turn.id}
               onRemember={() => void handleRemember(turn.id, turn.content)}
               onReveal={(path) => void handleReveal(turn.id, path)}
+              onOpenLiveInspector={turn.status === 'running' ? inspector.openLive : undefined}
+              onInspect={
+                turn.speaker !== 'user' && turn.status === 'completed'
+                  ? () => void inspector.openTurn(turn.id)
+                  : undefined
+              }
             />
           ))}
 
@@ -345,6 +358,28 @@ export function AgentRoom({
         onSend={() => void handleSend()}
         onCancel={() => void handleCancel()}
       />
+
+      {/* ADR-036 — shared run inspector bottom sheet, turn-scoped. */}
+      {inspector.open ? (
+        <RunInspectorSheet
+          observedRun={inspector.run}
+          meta={{
+            agentName: agent.name,
+            agentRole: agent.role,
+            providerId: inspector.run?.providerId ?? agent.providerId,
+            model: inspector.run?.model ?? agent.model,
+            sandbox: null,
+            sessionRef: null,
+            createdAt: inspector.run?.queuedAt ?? null,
+            startedAt: inspector.run?.startedAt ?? null
+          }}
+          busy={inspector.live && Boolean(runningTurn)}
+          heading="Behind the scenes"
+          subheading={`How ${agent.name} ${inspector.live ? 'is working' : 'worked'} on this turn.`}
+          openingLabel={`${agent.name} is thinking…`}
+          onClose={inspector.close}
+        />
+      ) : null}
     </div>
   )
 }
@@ -430,7 +465,9 @@ function TranscriptTurn({
   remembered,
   remembering,
   onRemember,
-  onReveal
+  onReveal,
+  onOpenLiveInspector,
+  onInspect
 }: {
   turn: ConversationTurn
   liveActivityLabel: string | null
@@ -438,6 +475,8 @@ function TranscriptTurn({
   remembering: boolean
   onRemember: () => void
   onReveal: (path: string) => void
+  onOpenLiveInspector?: () => void
+  onInspect?: () => void
 }): React.JSX.Element {
   if (turn.speaker === 'user') {
     return (
@@ -456,13 +495,12 @@ function TranscriptTurn({
   return (
     <>
       {turn.sessionReset ? <SessionResetNote /> : null}
-      <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="group relative flex min-w-0 flex-col gap-1.5">
+        {onInspect ? <InspectGutterButton onClick={onInspect} /> : null}
         {isRunning && turn.content.trim().length === 0 ? (
           // ADR-034 — live activity line instead of a static "Thinking…".
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {liveActivityLabel ?? 'Thinking…'}
-          </span>
+          // ADR-036: clicking it opens the run inspector for this turn.
+          <LiveStatusRow label={liveActivityLabel ?? 'Thinking…'} onClick={onOpenLiveInspector} />
         ) : isFailed ? (
           <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
             <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">

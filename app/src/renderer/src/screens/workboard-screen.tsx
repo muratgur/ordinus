@@ -42,8 +42,6 @@ import type {
   Agent,
   InteractionAnswer,
   InteractionQuestion,
-  ObservedRunDiagnostics,
-  ObservedRunEvent,
   ObservedRunSnapshot,
   WorkRunInputRequestStatus,
   WorkboardContextReferenceInput,
@@ -59,12 +57,7 @@ import type {
 import { appRoutePaths } from '@renderer/app/routes'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
-import { DiagnosticBlock } from '@renderer/components/observability-details'
-import {
-  formatLivenessHealth,
-  formatObservedPhase,
-  mergeDiagnostics
-} from '@renderer/components/observability-diagnostics'
+import { RunInspectorSheet } from '@renderer/components/run-inspector-sheet'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { RequestFileList } from '@renderer/components/file-reference-list'
@@ -769,7 +762,6 @@ export function WorkboardScreen({
 
       <RunDetailDrawer
         run={selectedRun}
-        dependencies={data.dependencies}
         runs={data.runs}
         observedRun={selectedRun ? (observedRunByWorkRunId.get(selectedRun.id) ?? null) : null}
         inputRequest={getVisibleWorkRunInputRequest(data.inputRequests, selectedRun?.id)}
@@ -2922,7 +2914,6 @@ function DraftDependencyMapGroup({
 
 function RunDetailDrawer({
   run,
-  dependencies,
   runs,
   observedRun,
   inputRequest,
@@ -2939,7 +2930,6 @@ function RunDetailDrawer({
   onError
 }: {
   run: WorkboardRun | null
-  dependencies: WorkboardData['dependencies']
   runs: WorkboardRun[]
   observedRun: ObservedRunSnapshot | null
   inputRequest?: WorkRunInputRequest
@@ -2966,11 +2956,6 @@ function RunDetailDrawer({
 
   if (!run) return null
   const activeRun = run
-
-  const waitsFor = dependencies
-    .filter((dependency) => dependency.runId === activeRun.id)
-    .map((dependency) => runs.find((candidate) => candidate.id === dependency.dependsOnRunId))
-    .filter((item): item is WorkboardRun => Boolean(item))
 
   async function submitAnswers(): Promise<void> {
     if (!inputRequest) return
@@ -3023,6 +3008,7 @@ function RunDetailDrawer({
           canGoBack={canGoBack}
           onBack={onBack}
           onClose={onClose}
+          onOpenInspect={() => setInspectOpen(true)}
           onSelectRun={onSelectRun}
           onRevealPath={(path) => void revealPath(path)}
           onOpenFile={onOpenFile}
@@ -3061,11 +3047,22 @@ function RunDetailDrawer({
       </aside>
 
       {inspectOpen ? (
-        <RunInspectOverlay
-          run={run}
+        <RunInspectorSheet
           observedRun={observedRun}
-          waitsFor={waitsFor}
-          onSelectRun={onSelectRun}
+          meta={{
+            agentName: run.agentName,
+            agentRole: run.agentRole,
+            providerId: run.providerId,
+            model: run.model,
+            sandbox: run.sandbox,
+            sessionRef: run.providerSessionRef || null,
+            createdAt: run.createdAt,
+            startedAt: run.startedAt
+          }}
+          busy={run.status === 'running' || run.status === 'waiting_for_user'}
+          heading="Behind the scenes"
+          subheading={`How ${run.agentName} approached “${run.title}”.`}
+          openingLabel={`${run.agentName} is thinking…`}
           onClose={() => setInspectOpen(false)}
         />
       ) : null}
@@ -3080,6 +3077,7 @@ function RunDetailHeader({
   canGoBack,
   onBack,
   onClose,
+  onOpenInspect,
   onSelectRun,
   onRevealPath,
   onOpenFile
@@ -3090,6 +3088,7 @@ function RunDetailHeader({
   canGoBack: boolean
   onBack: () => void
   onClose: () => void
+  onOpenInspect: () => void
   onSelectRun: (runId: string) => void
   onRevealPath: (path: string) => void
   onOpenFile: (path: string) => void
@@ -3149,10 +3148,22 @@ function RunDetailHeader({
               </button>
             ) : null}
           </div>
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
-            <XCircle />
-            <span className="sr-only">Close</span>
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground"
+              title="Inspect how this work happened"
+              onClick={onOpenInspect}
+            >
+              <TerminalSquare />
+              <span className="sr-only">Inspect how this work happened</span>
+            </Button>
+            <Button variant="ghost" size="icon" onClick={onClose}>
+              <XCircle />
+              <span className="sr-only">Close</span>
+            </Button>
+          </div>
         </div>
         {files.length > 0 ? (
           <div className="mt-2 grid max-h-[4.75rem] gap-1 overflow-y-auto pr-2 ordinus-scrollbar">
@@ -3409,26 +3420,29 @@ function RunDetailReport({
   onOpenInspect: () => void
   onOpenResult: (run: WorkboardRun) => void
 }): React.JSX.Element {
+  // ADR-036: the brief lives in the modal. The agent's message is what the
+  // user reads first — when there is output, the brief sits below it,
+  // collapsed; when there is none (running/cancelled/queued…), the brief is
+  // the content and leads, expanded.
+  const hasOutput = Boolean(run.resultSummary)
+
   return (
     <div className="grid min-w-0 gap-4">
+      {!hasOutput ? <RunContextSection run={run} defaultOpen /> : null}
       <RunOutputSection
         run={run}
         inputRequest={inputRequest}
         answers={answers}
         onAnswerChange={onAnswerChange}
         onSubmitAnswers={onSubmitAnswers}
+        onOpenInspect={onOpenInspect}
         onOpenResult={onOpenResult}
       />
-      <div className="border-t pt-3">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          onClick={onOpenInspect}
-        >
-          <TerminalSquare className="size-3.5" />
-          Inspect how this work happened
-        </button>
-      </div>
+      {hasOutput ? (
+        <div className="border-t pt-1">
+          <RunContextSection run={run} />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -3445,59 +3459,26 @@ function RunContextSection({
       title="What you asked for"
       defaultOpen={defaultOpen || run.status === 'blocked'}
     >
-      <div className="grid gap-3">
-        <CopyableTextBlock label="Asked to" value={run.instruction} />
-        <CopyableTextBlock label="Expected" value={run.expectedOutput || 'Not specified'} />
+      <div className="grid gap-4">
+        <PlainTextBlock label="Asked to" value={run.instruction} />
+        <PlainTextBlock label="Expected" value={run.expectedOutput || 'Not specified'} />
       </div>
     </CollapsibleReportSection>
   )
 }
 
-function RunInspectOverlay({
-  run,
-  observedRun,
-  waitsFor,
-  onSelectRun,
-  onClose
-}: {
-  run: WorkboardRun
-  observedRun: ObservedRunSnapshot | null
-  waitsFor: WorkboardRun[]
-  onSelectRun: (runId: string) => void
-  onClose: () => void
-}): React.JSX.Element {
+function PlainTextBlock({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
-    <div className="fixed inset-0 z-50">
-      <button
-        type="button"
-        className="absolute inset-0 bg-foreground/20"
-        aria-label="Close inspector"
-        onClick={onClose}
-      />
-      <aside className="absolute inset-y-0 right-0 z-10 flex w-full flex-col border-l bg-card shadow-2xl sm:w-[440px]">
-        <header className="flex items-center justify-between gap-3 border-b px-5 py-4">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">Behind the scenes</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              How {run.agentName} approached this work.
-            </p>
-          </div>
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
-            <XCircle />
-            <span className="sr-only">Close inspector</span>
-          </Button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2 ordinus-scrollbar">
-          <RunContextSection run={run} defaultOpen />
-          <RunActivitySection run={run} observedRun={observedRun} defaultOpen />
-          {waitsFor.length > 0 ? (
-            <CollapsibleReportSection title="Depends on" defaultOpen>
-              <DependencyWorkItemList items={waitsFor} onSelectRun={onSelectRun} />
-            </CollapsibleReportSection>
-          ) : null}
-          <TechnicalDetailsSection run={run} observedRun={observedRun} />
-        </div>
-      </aside>
+    <div className="group min-w-0">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
+        <span className="opacity-0 transition-opacity group-hover:opacity-100">
+          <CopyButton value={value} label={`Copy ${label}`} />
+        </span>
+      </div>
+      <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+        {value}
+      </div>
     </div>
   )
 }
@@ -3508,6 +3489,7 @@ function RunOutputSection({
   answers,
   onAnswerChange,
   onSubmitAnswers,
+  onOpenInspect,
   onOpenResult
 }: {
   run: WorkboardRun
@@ -3515,6 +3497,7 @@ function RunOutputSection({
   answers: Record<string, InteractionAnswer>
   onAnswerChange: (answer: InteractionAnswer) => void
   onSubmitAnswers: () => void
+  onOpenInspect: () => void
   onOpenResult: (run: WorkboardRun) => void
 }): React.JSX.Element {
   return (
@@ -3549,7 +3532,7 @@ function RunOutputSection({
       ) : run.status === 'failed' ? (
         <EmptyDetailState>This agent stopped before it could finish the work.</EmptyDetailState>
       ) : (
-        <RunOutputPending run={run} />
+        <RunOutputPending run={run} onOpenInspect={onOpenInspect} />
       )}
       {run.error ? (
         <div className="mt-3 rounded-lg border border-status-failed/30 bg-status-failed/5 p-3">
@@ -3567,37 +3550,6 @@ function RunOutputSection({
         />
       ) : null}
     </section>
-  )
-}
-
-function DependencyWorkItemList({
-  items,
-  onSelectRun
-}: {
-  items: WorkboardRun[]
-  onSelectRun: (runId: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="grid min-w-0 gap-2">
-      {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          className="flex min-w-0 items-center justify-between gap-3 rounded-md border bg-card px-2 py-2 text-left transition-colors hover:bg-accent"
-          onClick={() => onSelectRun(item.id)}
-        >
-          <span className="min-w-0">
-            <span className="block break-words text-sm font-medium [overflow-wrap:anywhere]">
-              {item.title}
-            </span>
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-              {item.agentName}
-            </span>
-          </span>
-          <Badge variant={statusBadgeVariant(item.status)}>{formatRunStatus(item.status)}</Badge>
-        </button>
-      ))}
-    </div>
   )
 }
 
@@ -3644,127 +3596,6 @@ function WorkInputRequestPanel({
   )
 }
 
-function RunActivitySection({
-  run,
-  observedRun,
-  defaultOpen = false
-}: {
-  run: WorkboardRun
-  observedRun: ObservedRunSnapshot | null
-  defaultOpen?: boolean
-}): React.JSX.Element | null {
-  const [events, setEvents] = useState<ObservedRunEvent[]>([])
-  const [error, setError] = useState('')
-  const observedRunId = observedRun?.id
-
-  useEffect(() => {
-    let mounted = true
-    if (!observedRunId) {
-      return
-    }
-    const activeObservedRunId = observedRunId
-
-    async function loadEvents(): Promise<void> {
-      try {
-        const nextEvents = await window.ordinus.observability.listEvents({
-          observedRunId: activeObservedRunId
-        })
-        if (!mounted) return
-        setEvents(nextEvents)
-        setError('')
-      } catch (loadError) {
-        if (!mounted) return
-        setError(loadError instanceof Error ? loadError.message : 'Activity could not be loaded.')
-      }
-    }
-
-    void loadEvents()
-    const timer = window.setInterval(() => void loadEvents(), 2000)
-    return () => {
-      mounted = false
-      window.clearInterval(timer)
-    }
-  }, [observedRunId, observedRun?.updatedAt])
-
-  if (!observedRun) return null
-
-  return (
-    <CollapsibleReportSection
-      title="How it went"
-      defaultOpen={defaultOpen || run.status === 'running'}
-    >
-      <div className="rounded-lg border bg-card p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Current activity</p>
-            <p className="mt-1 truncate text-sm font-medium">
-              {observedRun.latestActivity || 'No activity yet.'}
-            </p>
-          </div>
-          <Badge variant={observedRun.livenessHealth === 'stalled' ? 'attention' : 'outline'}>
-            {formatLivenessHealth(observedRun.livenessHealth)}
-          </Badge>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {formatObservedPhase(observedRun.currentPhase)} · {formatElapsedMs(observedRun.elapsedMs)}
-        </p>
-      </div>
-      {error ? <CopyableTextBlock label="Activity error" value={error} tone="error" /> : null}
-      {events.length > 0 ? (
-        <div className="grid gap-2">
-          {events.slice(0, 5).map((event) => (
-            <div key={event.id} className="flex min-w-0 gap-3 rounded-lg border bg-card p-3">
-              <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary/70" />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">
-                    {event.summary}
-                  </p>
-                  <Badge variant="secondary">{event.kind}</Badge>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {new Date(event.timestamp).toLocaleTimeString()} · {event.source} ·{' '}
-                  {event.confidence}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyDetailState>No timeline events yet.</EmptyDetailState>
-      )}
-    </CollapsibleReportSection>
-  )
-}
-
-function TechnicalDetailsSection({
-  run,
-  observedRun
-}: {
-  run: WorkboardRun
-  observedRun: ObservedRunSnapshot | null
-}): React.JSX.Element {
-  return (
-    <CollapsibleReportSection title="Technical record">
-      <CopyableTextBlock
-        label="Agent"
-        value={`${run.agentName}${run.agentRole ? ` - ${run.agentRole}` : ''}`}
-      />
-      <CopyableTextBlock label="Provider" value={`${run.providerId} / ${run.model}`} />
-      <CopyableTextBlock label="Sandbox" value={run.sandbox} />
-      <CopyableTextBlock label="Session" value={run.providerSessionRef || 'Not started'} />
-      <DetailGrid
-        items={[
-          { label: 'Created', value: formatOptionalDate(run.createdAt) },
-          { label: 'Started', value: formatOptionalDate(run.startedAt) },
-          { label: 'Completed', value: formatOptionalDate(run.completedAt) }
-        ]}
-      />
-      <RunDiagnosticsPanel observedRun={observedRun} />
-    </CollapsibleReportSection>
-  )
-}
-
 function CollapsibleReportSection({
   title,
   defaultOpen = false,
@@ -3777,7 +3608,7 @@ function CollapsibleReportSection({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <section className="min-w-0 overflow-hidden border-t">
+    <section className="min-w-0 overflow-hidden">
       <button
         type="button"
         className="flex w-full items-center justify-between gap-3 py-3 text-left"
@@ -3797,47 +3628,6 @@ function CollapsibleReportSection({
       </button>
       {open ? <div className="grid gap-3 pb-4 pt-1">{children}</div> : null}
     </section>
-  )
-}
-
-function CopyableTextBlock({
-  label,
-  value,
-  tone = 'normal'
-}: {
-  label: string
-  value: string
-  tone?: 'normal' | 'error'
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        'min-w-0 overflow-hidden rounded-lg border bg-background p-3',
-        tone === 'error' ? 'border-status-failed/30 bg-status-failed/10' : ''
-      )}
-    >
-      <BlockHeader label={label} copyValue={value} />
-      <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">
-        {value}
-      </div>
-    </div>
-  )
-}
-
-function BlockHeader({
-  label,
-  copyValue
-}: {
-  label: string
-  copyValue: string
-}): React.JSX.Element {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-2">
-      <p className="min-w-0 break-words text-xs font-medium uppercase text-muted-foreground [overflow-wrap:anywhere]">
-        {label}
-      </p>
-      <CopyButton value={copyValue} label={`Copy ${label}`} />
-    </div>
   )
 }
 
@@ -3865,126 +3655,6 @@ function CopyButton({ value, label }: { value: string; label: string }): React.J
       {copied ? <Check /> : <Copy />}
       <span className="sr-only">{label}</span>
     </Button>
-  )
-}
-
-function DetailGrid({
-  items
-}: {
-  items: Array<{ label: string; value: string }>
-}): React.JSX.Element {
-  return (
-    <div className="grid min-w-0 gap-2 sm:grid-cols-3">
-      {items.map((item) => (
-        <div
-          key={item.label}
-          className="min-w-0 overflow-hidden rounded-lg border bg-background p-3"
-        >
-          <p className="text-xs font-medium uppercase text-muted-foreground">{item.label}</p>
-          <p className="mt-1 break-words text-sm [overflow-wrap:anywhere]">{item.value}</p>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function RunDiagnosticsPanel({
-  observedRun
-}: {
-  observedRun: ObservedRunSnapshot | null
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [diagnostics, setDiagnostics] = useState<ObservedRunDiagnostics | null>(null)
-  const [error, setError] = useState('')
-  const observedRunId = observedRun?.id
-
-  useEffect(() => {
-    if (!open || !observedRunId) {
-      return
-    }
-
-    let mounted = true
-    const activeObservedRunId = observedRunId
-
-    async function loadDiagnostics(): Promise<void> {
-      try {
-        const nextDiagnostics = await window.ordinus.observability.getDiagnostics({
-          observedRunId: activeObservedRunId,
-          stdoutOffset: diagnostics?.stdout.nextOffset,
-          stderrOffset: diagnostics?.stderr.nextOffset
-        })
-        if (!mounted) return
-        setDiagnostics((current) => mergeDiagnostics(current, nextDiagnostics))
-        setError('')
-      } catch (loadError) {
-        if (!mounted) return
-        setError(
-          loadError instanceof Error ? loadError.message : 'Diagnostics could not be loaded.'
-        )
-      }
-    }
-
-    void loadDiagnostics()
-    const timer = window.setInterval(() => void loadDiagnostics(), 2000)
-    return () => {
-      mounted = false
-      window.clearInterval(timer)
-    }
-  }, [open, observedRunId, diagnostics?.stdout.nextOffset, diagnostics?.stderr.nextOffset])
-
-  if (!observedRun) {
-    return (
-      <EmptyDetailState>Diagnostics are available after this Work Item starts.</EmptyDetailState>
-    )
-  }
-
-  return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium uppercase text-muted-foreground">Diagnostics</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Inspect sanitized provider invocation and recent output.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setOpen((value) => !value)}
-        >
-          <TerminalSquare />
-          {open ? 'Hide' : 'Inspect'}
-        </Button>
-      </div>
-
-      {open ? (
-        <div className="mt-3 grid gap-3">
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          {diagnostics ? (
-            <>
-              <DiagnosticBlock label="Invocation">
-                {[
-                  `Provider: ${diagnostics.invocation.provider || observedRun.providerId}`,
-                  `Executable: ${diagnostics.invocation.executable || observedRun.providerId}`,
-                  `Args: ${diagnostics.invocation.args.join(' ') || 'Not available'}`,
-                  `Cwd: ${diagnostics.invocation.cwd || 'Not available'}`,
-                  `Started: ${diagnostics.invocation.startedAt || 'Not available'}`
-                ].join('\n')}
-              </DiagnosticBlock>
-              <DiagnosticBlock label="stdout">
-                {diagnostics.stdout.text || 'No stdout output yet.'}
-              </DiagnosticBlock>
-              <DiagnosticBlock label="stderr">
-                {diagnostics.stderr.text || 'No stderr output yet.'}
-              </DiagnosticBlock>
-            </>
-          ) : (
-            <EmptyDetailState>Loading diagnostics...</EmptyDetailState>
-          )}
-        </div>
-      ) : null}
-    </div>
   )
 }
 
@@ -4337,14 +4007,6 @@ function getWorkRunInputBadge(
   return badgeByStatus[inputRequest.status] ?? null
 }
 
-function formatOptionalDate(value: string | null): string {
-  if (!value) {
-    return 'Not available'
-  }
-
-  return new Date(value).toLocaleString()
-}
-
 function getHeaderDurationLabel(
   run: WorkboardRun,
   observedRun: ObservedRunSnapshot | null
@@ -4411,7 +4073,13 @@ const runningOutputMessages = [
   'Making steady progress…'
 ]
 
-function RunOutputPending({ run }: { run: WorkboardRun }): React.JSX.Element {
+function RunOutputPending({
+  run,
+  onOpenInspect
+}: {
+  run: WorkboardRun
+  onOpenInspect: () => void
+}): React.JSX.Element {
   if (run.status === 'blocked') {
     return (
       <PendingOutputCard
@@ -4437,12 +4105,12 @@ function RunOutputPending({ run }: { run: WorkboardRun }): React.JSX.Element {
     )
   }
   if (!isTerminalRunStatus(run.status)) {
-    return <RunningOutputState />
+    return <RunningOutputState onOpenInspect={onOpenInspect} />
   }
   return <EmptyDetailState>No output yet.</EmptyDetailState>
 }
 
-function RunningOutputState(): React.JSX.Element {
+function RunningOutputState({ onOpenInspect }: { onOpenInspect: () => void }): React.JSX.Element {
   const [index, setIndex] = useState(0)
 
   useEffect(() => {
@@ -4452,8 +4120,15 @@ function RunningOutputState(): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [])
 
+  // ADR-036: the in-flight progress box is the "what is it doing right now?"
+  // question — clicking it opens the run inspector.
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
+    <button
+      type="button"
+      className="block w-full overflow-hidden rounded-lg text-left ordinus-thinking-field"
+      onClick={onOpenInspect}
+      title="Inspect how this work is happening"
+    >
       <div className="flex items-center gap-3 px-4 py-4">
         <WorkingDots />
         <p
@@ -4463,10 +4138,7 @@ function RunningOutputState(): React.JSX.Element {
           {runningOutputMessages[index]}
         </p>
       </div>
-      <div className="h-1 w-full bg-border/60">
-        <div className="h-full w-2/5 animate-pulse rounded-full bg-primary/50" />
-      </div>
-    </div>
+    </button>
   )
 }
 

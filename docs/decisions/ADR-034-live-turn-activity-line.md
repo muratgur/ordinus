@@ -10,6 +10,10 @@ observability pipeline (`ObservedRunSnapshot` / `ObservedRunEvent`,
 single reactive presence) and the Electron security boundary (raw command text
 stays in the main process).
 
+Extended by ADR-036: the Workboard run inspector adopts `useLiveTurnActivity`
+as the header line of its bottom sheet, replacing the Workboard's bespoke
+event polling.
+
 ## Date
 
 2026-06-11

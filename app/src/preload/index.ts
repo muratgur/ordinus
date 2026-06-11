@@ -94,6 +94,7 @@ import type {
   ObservedRunDiagnostics,
   ObservedRunDiagnosticsInput,
   ObservedRunEvent,
+  ObservedTurnRunInput,
   ObservedRunListEventsInput,
   ObservedRunSnapshot,
   ProviderActionInput,
@@ -407,6 +408,8 @@ const ordinus = {
       input: ObservedConversationRunsInput
     ): Promise<ObservedRunSnapshot[]> =>
       ipcRenderer.invoke(ipcChannels.observabilityListConversation, input),
+    getTurnRun: async (input: ObservedTurnRunInput): Promise<ObservedRunSnapshot | null> =>
+      ipcRenderer.invoke(ipcChannels.observabilityGetTurnRun, input),
     listEvents: async (input: ObservedRunListEventsInput): Promise<ObservedRunEvent[]> =>
       ipcRenderer.invoke(ipcChannels.observabilityListEvents, input),
     getDiagnostics: async (input: ObservedRunDiagnosticsInput): Promise<ObservedRunDiagnostics> =>

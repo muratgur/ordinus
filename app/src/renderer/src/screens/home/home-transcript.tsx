@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Loader2, AlertCircle, Bookmark, Check, ChevronDown, ChevronRight } from 'lucide-react'
 import { MarkdownContent } from '@renderer/components/markdown-content'
 import { FilesTouched } from '@renderer/components/files-touched'
+import { InspectGutterButton, LiveStatusRow } from '@renderer/components/run-inspector-sheet'
 import type { HomeMessage } from './types'
 
 export type HomeTranscriptProps = {
@@ -32,6 +33,23 @@ export type HomeTranscriptProps = {
   // ADR-035: reveal a file referenced by an assistant message (messageId is
   // the persisted turn row id the main process validates against).
   onRevealFile?: (messageId: string, relativePath: string) => void
+  // ADR-036: clicking the live status row opens the run inspector sheet for
+  // the in-flight turn; hovering a finished assistant message reveals a
+  // terminal icon that opens the inspector for that turn (by its runtime
+  // turn id — see HomeMessage.turnId).
+  onOpenInspector?: () => void
+  onInspectMessage?: (turnId: string) => void
+}
+
+// The inspect affordance exists only for assistant messages that carry a
+// runtime turn id (rows persisted before turn ids were recorded have none).
+function getInspectHandler(
+  message: HomeMessage,
+  onInspectMessage?: (turnId: string) => void
+): (() => void) | undefined {
+  if (!onInspectMessage || message.kind !== 'assistant' || !message.turnId) return undefined
+  const { turnId } = message
+  return () => onInspectMessage(turnId)
 }
 
 export function HomeTranscript({
@@ -39,7 +57,9 @@ export function HomeTranscript({
   rememberedMessageIds,
   rememberingMessageId,
   onRememberMessage,
-  onRevealFile
+  onRevealFile,
+  onOpenInspector,
+  onInspectMessage
 }: HomeTranscriptProps): React.JSX.Element {
   // Anchor at the bottom every time messages change. We track our own scroll
   // container ref instead of using the shadcn ScrollArea — radix's
@@ -66,6 +86,8 @@ export function HomeTranscript({
                 : undefined
             }
             onRevealFile={onRevealFile ? (path) => onRevealFile(message.id, path) : undefined}
+            onOpenInspector={onOpenInspector}
+            onInspect={getInspectHandler(message, onInspectMessage)}
           />
         ))}
         <div ref={bottomRef} />
@@ -79,13 +101,17 @@ function TranscriptItem({
   remembered,
   remembering,
   onRemember,
-  onRevealFile
+  onRevealFile,
+  onOpenInspector,
+  onInspect
 }: {
   message: HomeMessage
   remembered: boolean
   remembering: boolean
   onRemember?: () => void
   onRevealFile?: (relativePath: string) => void
+  onOpenInspector?: () => void
+  onInspect?: () => void
 }): React.JSX.Element {
   switch (message.kind) {
     case 'user':
@@ -125,7 +151,8 @@ function TranscriptItem({
       )
     case 'assistant':
       return (
-        <div className="flex flex-col gap-1">
+        <div className="group relative flex flex-col gap-1">
+          {onInspect ? <InspectGutterButton onClick={onInspect} /> : null}
           <MarkdownContent content={message.text} />
           {message.resultContent.trim() ? (
             <AssistantFullResponse content={message.resultContent} />
@@ -140,12 +167,9 @@ function TranscriptItem({
         </div>
       )
     case 'status':
-      return (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>{message.label}</span>
-        </div>
-      )
+      // ADR-036: the live line doubles as the entry point to the run
+      // inspector — it IS the "what is Ordinus doing right now?" question.
+      return <LiveStatusRow label={message.label} onClick={onOpenInspector} />
     case 'cancelled':
       // ADR-034: permanent, deliberately quiet — explains a truncated reply
       // without the alarm of an error block.

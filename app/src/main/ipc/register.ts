@@ -63,6 +63,7 @@ import {
   ObservedConversationRunsInputSchema,
   ObservedRunDiagnosticsInputSchema,
   ObservedRunListEventsInputSchema,
+  ObservedTurnRunInputSchema,
   OrchestrationPlanSchema,
   ProviderActionInputSchema,
   ProviderConnectInputSchema,
@@ -929,6 +930,10 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.observabilityListConversation, (_event, payload) => {
     const input = ObservedConversationRunsInputSchema.parse(payload)
     return observability.listConversationRuns(input.conversationId)
+  })
+  ipcMain.handle(ipcChannels.observabilityGetTurnRun, (_event, payload) => {
+    const input = ObservedTurnRunInputSchema.parse(payload)
+    return observability.getTurnRun(input.turnId)
   })
   ipcMain.handle(ipcChannels.observabilityListEvents, (_event, payload) => {
     const input = ObservedRunListEventsInputSchema.parse(payload)

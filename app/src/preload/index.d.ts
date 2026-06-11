@@ -92,6 +92,7 @@ import type {
   ObservedRunDiagnostics,
   ObservedRunDiagnosticsInput,
   ObservedRunEvent,
+  ObservedTurnRunInput,
   ObservedRunListEventsInput,
   ObservedRunSnapshot,
   ProviderActionInput,
@@ -267,6 +268,7 @@ export type OrdinusApi = {
   observability: {
     listWorkboard: () => Promise<ObservedRunSnapshot[]>
     listConversation: (input: ObservedConversationRunsInput) => Promise<ObservedRunSnapshot[]>
+    getTurnRun: (input: ObservedTurnRunInput) => Promise<ObservedRunSnapshot | null>
     listEvents: (input: ObservedRunListEventsInput) => Promise<ObservedRunEvent[]>
     getDiagnostics: (input: ObservedRunDiagnosticsInput) => Promise<ObservedRunDiagnostics>
     onRunChanged: (callback: (snapshot: ObservedRunSnapshot) => void) => () => void

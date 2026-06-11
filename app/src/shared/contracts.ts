@@ -1636,6 +1636,14 @@ export const ObservedConversationRunsInputSchema = z.object({
   conversationId: z.string().min(1)
 })
 
+// ADR-036: look up the observed run behind one conversation turn. The turn id
+// is the runtime turn id observability records runs under (carried on the
+// transcript row as `turnId` — NOT the transcript row id itself). Null when
+// the turn was never observed (pre-observability records).
+export const ObservedTurnRunInputSchema = z.object({
+  turnId: z.string().min(1)
+})
+
 export const ObservedRunDiagnosticsInputSchema = z.object({
   observedRunId: z.string().min(1),
   stdoutOffset: z.number().int().nonnegative().optional(),
@@ -2096,6 +2104,7 @@ export type ObservedRunSnapshot = z.infer<typeof ObservedRunSnapshotSchema>
 export type ObservedRunEvent = z.infer<typeof ObservedRunEventSchema>
 export type ObservedRunListEventsInput = z.infer<typeof ObservedRunListEventsInputSchema>
 export type ObservedConversationRunsInput = z.infer<typeof ObservedConversationRunsInputSchema>
+export type ObservedTurnRunInput = z.infer<typeof ObservedTurnRunInputSchema>
 export type ObservedRunDiagnosticsInput = z.infer<typeof ObservedRunDiagnosticsInputSchema>
 export type ObservedRunDiagnostics = z.infer<typeof ObservedRunDiagnosticsSchema>
 export type WorkboardAnswerInputRequestInput = z.infer<

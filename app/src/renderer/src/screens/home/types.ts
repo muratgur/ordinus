@@ -29,6 +29,11 @@ export type HomeMessage =
       // "files touched" row, same as agent rooms.
       artifactRefs: string[]
       changedFiles: string[]
+      // ADR-036: the runtime turn id observability records run under (the
+      // row id above is the transcript row, a different id). Null for rows
+      // persisted before turn ids were recorded — the inspect affordance is
+      // hidden for those.
+      turnId: string | null
       at: string
     }
   | {

@@ -4,6 +4,10 @@
 
 Proposed
 
+Presentation of the Workboard diagnostics surface is refined by ADR-036 (run
+inspector bottom sheet); the pipeline, sanitization, and opt-in diagnostics
+principles here are unchanged.
+
 ## Date
 
 2026-05-14

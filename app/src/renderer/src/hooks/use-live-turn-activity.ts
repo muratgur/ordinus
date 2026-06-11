@@ -71,6 +71,13 @@ export type LiveTurnActivityOptions = {
    * "<agent name> is thinking…".
    */
   openingLabel?: string
+  /**
+   * ADR-036: match snapshots by observed-run id instead of conversation id.
+   * Workboard runs have no conversation; the run inspector passes the
+   * snapshot id it is already showing. When set, `conversationId` is ignored
+   * for matching (pass any non-null key so the hook runs).
+   */
+  observedRunId?: string
 }
 
 export function useLiveTurnActivity(
@@ -91,12 +98,16 @@ export function useLiveTurnActivity(
       stateRef.current.snapshot = null
       return undefined
     }
+    const observedRunId = options?.observedRunId
     const off = window.ordinus.observability.onRunChanged((snapshot) => {
-      if (snapshot.conversationId !== conversationId) return
+      const matches = observedRunId
+        ? snapshot.id === observedRunId
+        : snapshot.conversationId === conversationId
+      if (!matches) return
       stateRef.current.snapshot = isTerminal(snapshot) ? null : snapshot
     })
     return off
-  }, [conversationId, busy])
+  }, [conversationId, busy, options?.observedRunId])
 
   // Tick once per second while busy: compose the line from the latest
   // snapshot + local clocks (elapsed timer, quiet/stalled from idle time).

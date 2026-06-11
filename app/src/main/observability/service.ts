@@ -94,6 +94,7 @@ export type ObservabilityService = {
   markConversationCancelled(turnId: string): void
   listWorkboardRuns(): ObservedRunSnapshot[]
   listConversationRuns(conversationId: string): ObservedRunSnapshot[]
+  getTurnRun(turnId: string): ObservedRunSnapshot | null
   listEvents(observedRunId: string): ObservedRunEvent[]
   getDiagnostics(input: {
     observedRunId: string
@@ -223,6 +224,13 @@ export function createObservabilityService(database: OrdinusDatabase): Observabi
     },
     listConversationRuns(conversationId) {
       return database.listConversationObservedRuns(conversationId).map(withCurrentLiveness)
+    },
+    getTurnRun(turnId) {
+      // ADR-036: both ordinary conversation turns and Ordinus turns register
+      // their observed run on the 'conversation' source surface keyed by the
+      // runtime turn id (ADR-034) — the id transcript rows carry as `turnId`.
+      const run = database.getObservedRunBySource('conversation', turnId)
+      return run ? withCurrentLiveness(run) : null
     },
     listEvents(observedRunId) {
       return database.listObservedRunEvents(observedRunId)
