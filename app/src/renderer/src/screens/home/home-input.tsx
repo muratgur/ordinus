@@ -1,9 +1,10 @@
 // ADR-029 §8 / M5 — Ordinus input box with slash-command autocomplete.
 //
-// Bottom-pinned textarea + send. Status indicator (when busy) sits ABOVE the
-// input as a separate row — not inside the transcript — per ADR §8. The
-// slash-command autocomplete panel (M5) hangs above the input on the same
-// principle: focused floating UI that doesn't pollute the transcript.
+// Bottom-pinned textarea + send. ADR-034: while a turn is in flight the Send
+// button becomes Stop and the live activity indicator lives ONLY in the
+// transcript (the old duplicate status row above the input was removed). The
+// slash-command autocomplete panel (M5) hangs above the input: focused
+// floating UI that doesn't pollute the transcript.
 //
 // Keyboard model:
 //   Enter (no slash panel open) → send
@@ -14,7 +15,7 @@
 //   Shift+Enter → newline (never sends)
 
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import { Send, Loader2 } from 'lucide-react'
+import { Send, Square } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 import { filterSlashCommands, type SlashCommandDefinition } from './slash-commands'
 import { SlashAutocomplete } from './slash-autocomplete'
@@ -29,8 +30,13 @@ export type HomeInputHandle = {
 export type HomeInputProps = {
   onSend: (text: string) => void
   busy: boolean
-  /** When set, renders a small "doing X" line above the input. */
-  statusLabel?: string
+  /**
+   * ADR-034: while busy the Send button becomes Stop, wired to this handler.
+   * The text area stays editable; sending waits for the turn to settle.
+   */
+  onStop?: () => void
+  /** True between pressing Stop and the run actually closing. */
+  stopping?: boolean
   /** Disables the entire input — e.g. while loading singleton config. */
   disabled?: boolean
   placeholder?: string
@@ -167,12 +173,6 @@ export const HomeInput = forwardRef<HomeInputHandle, HomeInputProps>(
     return (
       <div className={outerClass}>
         <div className="mx-auto w-full max-w-3xl">
-          {props.statusLabel ? (
-            <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>{props.statusLabel}</span>
-            </div>
-          ) : null}
           {showAutocomplete ? (
             <SlashAutocomplete
               matches={matches}
@@ -200,16 +200,36 @@ export const HomeInput = forwardRef<HomeInputHandle, HomeInputProps>(
               disabled={props.disabled}
               spellCheck
             />
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleSend}
-              disabled={!canSend}
-              className={variant === 'hero' ? 'h-9 shrink-0 gap-1 px-4' : 'h-8 shrink-0 gap-1 px-3'}
-            >
-              <Send className="h-3.5 w-3.5" />
-              Send
-            </Button>
+            {props.busy && props.onStop ? (
+              // ADR-034: Stop replaces Send for the whole turn (not only when
+              // stalled) — control is what restores trust during long waits.
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={props.onStop}
+                disabled={props.stopping}
+                className={
+                  variant === 'hero' ? 'h-9 shrink-0 gap-1 px-4' : 'h-8 shrink-0 gap-1 px-3'
+                }
+              >
+                <Square className="h-3 w-3 fill-current" />
+                {props.stopping ? 'Stopping…' : 'Stop'}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSend}
+                disabled={!canSend}
+                className={
+                  variant === 'hero' ? 'h-9 shrink-0 gap-1 px-4' : 'h-8 shrink-0 gap-1 px-3'
+                }
+              >
+                <Send className="h-3.5 w-3.5" />
+                Send
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -78,6 +78,8 @@ import {
   OrdinusCreateConversationInputSchema,
   OrdinusAnswerInputRequestInputSchema,
   OrdinusCancelInputRequestInputSchema,
+  OrdinusCancelTurnInputSchema,
+  OrdinusRevealPathInputSchema,
   OrdinusDeleteConversationInputSchema,
   OrdinusDeleteMemoryInputSchema,
   OrdinusListTurnsInputSchema,
@@ -167,6 +169,7 @@ import { connectConnector, disconnectConnector, listConnectors } from '../integr
 import {
   ensureWorkspaceRelativeDirectory,
   filterExistingWorkspacePaths,
+  getOrdinusWorkingRoot,
   resolveReportedWorkspaceFileRefs,
   resolveWorkspaceRelativePath,
   workspaceModuleFolders,
@@ -252,6 +255,28 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.ordinusListRunningConversations, () =>
     ordinusSession.listRunningConversations()
   )
+  // ADR-034 — Stop button. Kills the provider process; the in-flight sendTurn
+  // call records the 'cancelled' transcript row and settles the turn.
+  ipcMain.handle(ipcChannels.ordinusCancelTurn, (_event, payload: unknown) => {
+    const parsed = OrdinusCancelTurnInputSchema.parse(payload)
+    return { cancelled: ordinusSession.cancelTurn(parsed.conversationId) }
+  })
+  // ADR-035 — reveal a transcript file. Same allowlist discipline as the
+  // conversations surface: only paths recorded on the turn row can be shown.
+  ipcMain.handle(ipcChannels.ordinusRevealPath, (_event, payload: unknown) => {
+    const parsed = OrdinusRevealPathInputSchema.parse(payload)
+    const turn = database
+      .listOrdinusTurns(parsed.conversationId)
+      .find((row) => row.id === parsed.turnRowId)
+    if (!turn) {
+      throw new Error('This transcript entry was not found.')
+    }
+    const allowedPaths = new Set([...turn.artifactRefs, ...turn.changedFiles])
+    if (!allowedPaths.has(parsed.relativePath)) {
+      throw new Error('This file is not registered on the selected transcript entry.')
+    }
+    revealWorkspacePath(database, resolveOrdinusRevealPath(database, parsed.relativePath))
+  })
 
   // ADR-029 M6 — destructive-tool confirmation gate.
   ipcMain.handle(ipcChannels.ordinusListPendingConfirmations, () => listPendingConfirmations())
@@ -1088,6 +1113,20 @@ function revealWorkspacePath(database: OrdinusDatabase, relativePath: string): v
   }
 
   shell.showItemInFolder(absolutePath)
+}
+
+function resolveOrdinusRevealPath(database: OrdinusDatabase, relativePath: string): string {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before opening files.')
+  }
+
+  const resolved = resolveReportedWorkspaceFileRefs([relativePath], {
+    workspaceRoot: workspace.workspaceRoot,
+    workingRoot: getOrdinusWorkingRoot()
+  })
+
+  return resolved.existingRefs[0] ?? relativePath
 }
 
 async function openConversationFolder(

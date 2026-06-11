@@ -25,12 +25,23 @@ export type HomeMessage =
       // ADR-030 parity: optional full produced body, surfaced on demand under
       // the summary ("Show full response"). Empty when there is no extra body.
       resultContent: string
+      // ADR-035: files the turn produced/changed — rendered as the collapsed
+      // "files touched" row, same as agent rooms.
+      artifactRefs: string[]
+      changedFiles: string[]
       at: string
     }
   | {
       kind: 'error'
       id: string
       message: string
+      at: string
+    }
+  | {
+      // ADR-034: permanent muted marker left when the user pressed Stop.
+      // Persisted (unlike status), so a truncated reply stays explainable.
+      kind: 'cancelled'
+      id: string
       at: string
     }
   | {

@@ -49,8 +49,9 @@ import {
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
 import { notify } from '@renderer/lib/notifications'
+import { useLiveTurnActivity } from '@renderer/hooks/use-live-turn-activity'
+import { QuestionPanel } from '@renderer/components/question-panel'
 import { HomeConfirmationPanel } from './home-confirmation-panel'
-import { HomeQuestionPanel } from './home-question-panel'
 import { HomeConversationList } from './home-conversation-list'
 import { HomeTranscript } from './home-transcript'
 import { HomeTopStrip } from './home-top-strip'
@@ -100,6 +101,8 @@ function turnToMessage(turn: OrdinusConversationTurn): HomeMessage {
         id: turn.id,
         text: turn.content,
         resultContent: turn.resultContent,
+        artifactRefs: turn.artifactRefs,
+        changedFiles: turn.changedFiles,
         at: turn.createdAt
       }
     case 'error':
@@ -107,6 +110,13 @@ function turnToMessage(turn: OrdinusConversationTurn): HomeMessage {
         kind: 'error',
         id: turn.id,
         message: turn.content,
+        at: turn.createdAt
+      }
+    case 'cancelled':
+      // ADR-034: permanent muted marker for a user-stopped turn.
+      return {
+        kind: 'cancelled',
+        id: turn.id,
         at: turn.createdAt
       }
   }
@@ -123,6 +133,15 @@ export function HomeScreen(): React.JSX.Element {
     useState<PendingTurnMap>({})
   const [freshStartBusyByConversation, setFreshStartBusyByConversation] =
     useState<BusyConversationMap>({})
+  // ADR-034 — between pressing Stop and the run actually closing the composer
+  // shows "Stopping…" and the Stop button disables. Cleared when the turn
+  // settles (the cancelled provider process closes and sendTurn resolves).
+  const [stoppingByConversation, setStoppingByConversation] = useState<BusyConversationMap>({})
+  // Remember affordance (agent-room parity): hover bookmark on user messages
+  // writes the message into Ordinus's own memory store. Page-lifetime state —
+  // re-saving after a restart is harmless (writeMemory upserts by name).
+  const [rememberedMessageIds, setRememberedMessageIds] = useState<Set<string>>(new Set())
+  const [rememberingMessageId, setRememberingMessageId] = useState('')
   const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -312,12 +331,16 @@ export function HomeScreen(): React.JSX.Element {
   const activeArchived = Boolean(activeConversation?.archivedAt)
   const activePendingLabel = activeId ? pendingTurnLabelsByConversation[activeId] : undefined
   const activeTurnBusy = Boolean(activePendingLabel)
+  const activeStopping = activeId ? Boolean(stoppingByConversation[activeId]) : false
+  // ADR-034 — the live activity line. Subscribes to observability run pushes
+  // for the active conversation and composes the single mutating status label
+  // (event phrase + elapsed timer + quiet/stalled softening). Falls back to
+  // the opening "thinking" label before the first snapshot arrives.
+  const { label: liveActivityLabel } = useLiveTurnActivity(activeId, activeTurnBusy, activeStopping)
   // The "thinking" row is derived from busy state (reconciled from the backend),
-  // not just the transient status message appended on a local send. This keeps
-  // the indicator visible after navigating away and back while a turn is still
-  // in flight — the moment the user described as "going blind". We synthesize it
-  // only when no status message is already present (the local-send path appends
-  // its own), so the two paths never double up.
+  // so the indicator survives navigating away and back while a turn is still in
+  // flight. ADR-034: the label itself is the live activity line; the row is
+  // synthesized here (the send path no longer appends its own status message).
   const activeMessages = useMemo(() => {
     const base = activeId ? (messagesByConversation[activeId] ?? []) : []
     if (!activeTurnBusy || base.some((m) => m.kind === 'status')) return base
@@ -326,11 +349,11 @@ export function HomeScreen(): React.JSX.Element {
       {
         kind: 'status' as const,
         id: `status-live-${activeId}`,
-        label: activePendingLabel ?? THINKING_LABEL,
+        label: liveActivityLabel ?? THINKING_LABEL,
         at: ''
       }
     ]
-  }, [activeId, messagesByConversation, activeTurnBusy, activePendingLabel])
+  }, [activeId, messagesByConversation, activeTurnBusy, liveActivityLabel])
   const activeStartFreshBusy = activeId ? Boolean(freshStartBusyByConversation[activeId]) : false
   const busyConversationIds = useMemo(
     () => Object.keys(pendingTurnLabelsByConversation),
@@ -515,6 +538,12 @@ export function HomeScreen(): React.JSX.Element {
           delete next[event.conversationId]
           return next
         })
+        setStoppingByConversation((prev) => {
+          if (!prev[event.conversationId]) return prev
+          const next = { ...prev }
+          delete next[event.conversationId]
+          return next
+        })
         // Pull the freshly-persisted assistant turn (idempotent with the local
         // send's own finally-reload; a needs_input outcome paints via its own
         // event instead).
@@ -568,16 +597,12 @@ export function HomeScreen(): React.JSX.Element {
         at: nowIso()
       })
       touchConversation(conversationId)
+      // ADR-034: no local status append — the live activity row is synthesized
+      // from busy state so it can mutate with observability pushes.
       setPendingTurnLabelsByConversation((prev) => ({
         ...prev,
         [conversationId]: THINKING_LABEL
       }))
-      replaceStatus(conversationId, {
-        kind: 'status',
-        id: newId('s'),
-        label: THINKING_LABEL,
-        at: nowIso()
-      })
 
       try {
         await window.ordinus.ordinus.sendTurn({
@@ -595,6 +620,11 @@ export function HomeScreen(): React.JSX.Element {
         })
       } finally {
         setPendingTurnLabelsByConversation((prev) => {
+          const next = { ...prev }
+          delete next[conversationId]
+          return next
+        })
+        setStoppingByConversation((prev) => {
           const next = { ...prev }
           delete next[conversationId]
           return next
@@ -628,12 +658,6 @@ export function HomeScreen(): React.JSX.Element {
         ...prev,
         [conversationId]: THINKING_LABEL
       }))
-      replaceStatus(conversationId, {
-        kind: 'status',
-        id: newId('s'),
-        label: THINKING_LABEL,
-        at: nowIso()
-      })
       try {
         await window.ordinus.ordinus.answerInputRequest({ requestId, answers })
       } catch (err) {
@@ -659,6 +683,76 @@ export function HomeScreen(): React.JSX.Element {
     },
     [appendMessage, inputRequests, reloadConversation, replaceStatus]
   )
+
+  // Remember (agent-room parity): save a user message into Ordinus memory as
+  // a note. The name doubles as the dedupe key in the memory store.
+  const handleRememberMessage = useCallback(
+    async (messageId: string, text: string) => {
+      const body = text.trim()
+      if (!body || rememberingMessageId || rememberedMessageIds.has(messageId)) return
+      setRememberingMessageId(messageId)
+      try {
+        await window.ordinus.ordinus.writeMemory({
+          type: 'note',
+          name: createOrdinusConversationTitleFromMessage(body),
+          body: body.slice(0, 2000)
+        })
+        setRememberedMessageIds((prev) => new Set(prev).add(messageId))
+      } catch (err) {
+        notify.error({
+          title: 'Could not save that to memory',
+          description: err instanceof Error ? err.message : String(err)
+        })
+      } finally {
+        setRememberingMessageId('')
+      }
+    },
+    [rememberedMessageIds, rememberingMessageId]
+  )
+
+  // ADR-035 — reveal a transcript file in Finder. The main process validates
+  // the path against the turn row's recorded references.
+  const handleRevealFile = useCallback(
+    async (messageId: string, relativePath: string) => {
+      if (!activeId) return
+      try {
+        await window.ordinus.ordinus.revealPath({
+          conversationId: activeId,
+          turnRowId: messageId,
+          relativePath
+        })
+      } catch (err) {
+        notify.error({
+          title: 'Could not show that file',
+          description: err instanceof Error ? err.message : String(err)
+        })
+      }
+    },
+    [activeId]
+  )
+
+  // ADR-034 — Stop button. Marks the conversation as stopping (composer shows
+  // "Stopping…") and asks main to kill the provider process. The interrupted
+  // sendTurn resolves through its normal finally path, which clears busy and
+  // reloads the transcript (now containing the 'cancelled' marker row).
+  const handleStopTurn = useCallback(async () => {
+    if (!activeId) return
+    const conversationId = activeId
+    setStoppingByConversation((prev) => ({ ...prev, [conversationId]: true }))
+    try {
+      await window.ordinus.ordinus.cancelTurn({ conversationId })
+    } catch (err) {
+      setStoppingByConversation((prev) => {
+        const next = { ...prev }
+        delete next[conversationId]
+        return next
+      })
+      notify.error({
+        title: 'Could not stop the response',
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }, [activeId])
 
   const handleCancelInputRequest = useCallback(async (requestId: string) => {
     setInputRequests((prev) => prev.filter((r) => r.requestId !== requestId))
@@ -895,7 +989,13 @@ export function HomeScreen(): React.JSX.Element {
                 transcript take over its own scroll without pushing the
                 docked input out of the viewport. */}
             <div className="min-h-0 flex-1 overflow-hidden">
-              <HomeTranscript messages={activeMessages} />
+              <HomeTranscript
+                messages={activeMessages}
+                rememberedMessageIds={rememberedMessageIds}
+                rememberingMessageId={rememberingMessageId}
+                onRememberMessage={(messageId, text) => void handleRememberMessage(messageId, text)}
+                onRevealFile={(messageId, path) => void handleRevealFile(messageId, path)}
+              />
             </div>
             {/* ADR-029 §7 — frozen conversations replace the input with a
                 banner explaining why and offering a single forward action.
@@ -926,18 +1026,29 @@ export function HomeScreen(): React.JSX.Element {
                 {/* ADR-029 — needs_input questions surface here as a panel
                     (NOT inline in the transcript). Scoped to the active
                     conversation; rehydrated from the DB after a restart. */}
-                <HomeQuestionPanel
-                  request={
-                    inputRequests.find((request) => request.conversationId === activeId) ?? null
-                  }
+                <QuestionPanel
+                  request={(() => {
+                    const pending =
+                      inputRequests.find((request) => request.conversationId === activeId) ?? null
+                    return pending
+                      ? {
+                          requestId: pending.requestId,
+                          title: pending.title,
+                          detail: pending.detail,
+                          questions: pending.questions
+                        }
+                      : null
+                  })()}
                   busy={activeTurnBusy}
+                  accentLabel="Ordinus needs a moment"
                   onAnswer={handleAnswerInputRequest}
                   onCancel={handleCancelInputRequest}
                 />
                 <HomeInput
                   onSend={handleSend}
                   busy={activeTurnBusy}
-                  statusLabel={activePendingLabel}
+                  onStop={() => void handleStopTurn()}
+                  stopping={activeStopping}
                 />
               </>
             )}

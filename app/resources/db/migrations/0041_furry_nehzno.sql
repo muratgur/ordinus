@@ -1,0 +1,2 @@
+ALTER TABLE `ordinus_conversation_turns` ADD `artifact_refs` text DEFAULT '[]' NOT NULL;--> statement-breakpoint
+ALTER TABLE `ordinus_conversation_turns` ADD `changed_files` text DEFAULT '[]' NOT NULL;

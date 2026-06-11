@@ -288,6 +288,13 @@
       "when": 1781116182147,
       "tag": "0040_real_swarm",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1781135905707,
+      "tag": "0041_furry_nehzno",
+      "breakpoints": true
     }
   ]
 }

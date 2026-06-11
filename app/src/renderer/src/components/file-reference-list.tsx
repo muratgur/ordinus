@@ -21,11 +21,18 @@ import { formatRelativeTime } from './file-reference-utils'
 export function FileReferenceList({
   files,
   onRevealPath,
-  onOpenFile
+  onOpenFile,
+  variant = 'card'
 }: {
   files: FileReference[]
   onRevealPath: (path: string) => void
   onOpenFile?: (path: string) => void
+  /**
+   * 'card' renders each row as a bordered card (panel surfaces). 'plain'
+   * renders a flat divided list — for transcript surfaces (ADR-035) where the
+   * rows would otherwise nest a card inside a card.
+   */
+  variant?: 'card' | 'plain'
 }): JSX.Element {
   const [copiedPath, setCopiedPath] = useState('')
 
@@ -40,11 +47,14 @@ export function FileReferenceList({
   }
 
   return (
-    <div className="grid min-w-0 gap-2">
+    <div className={cn('min-w-0', variant === 'card' ? 'grid gap-2' : 'divide-y divide-border/60')}>
       {files.map((file) => (
         <div
           key={normalizeFileReferenceKey(file.path)}
-          className="flex min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border bg-card px-2 py-1.5"
+          className={cn(
+            'flex min-w-0 items-center justify-between gap-2 overflow-hidden',
+            variant === 'card' ? 'rounded-md border bg-card px-2 py-1.5' : 'py-1'
+          )}
         >
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <code className="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]">

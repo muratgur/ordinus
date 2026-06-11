@@ -467,6 +467,11 @@ export const ordinusConversationTurns = sqliteTable(
     // transcript ("Show full response"). Empty for user/error turns and for
     // assistant turns whose deliverable was a file rather than text.
     resultContent: text('result_content').notNull().default(''),
+    // ADR-030/ADR-035 parity with conversation turns: JSON-encoded arrays of
+    // workspace-relative paths the turn produced/changed, so Home can render
+    // the "files touched" row like agent rooms do.
+    artifactRefs: text('artifact_refs').notNull().default('[]'),
+    changedFiles: text('changed_files').notNull().default('[]'),
     // The runtime turnId (`ot-...`) when the turn was the assistant's reply or
     // an error within a sendTurn cycle. Null for the user-message turn that
     // initiated the cycle, since the runtime turnId is only minted in the

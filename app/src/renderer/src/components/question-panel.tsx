@@ -1,29 +1,25 @@
-// ADR-029 — Ordinus needs_input question panel.
+// Shared needs_input question panel (ADR-029 origin, generalized for the
+// agent-room transcript refactor).
 //
-// Unlike agent conversations (which render questions inline in the transcript),
-// Ordinus surfaces clarifying questions as a panel that emerges from the input
-// area (project_ordinus_home_design — questions stay OUT of the transcript;
-// the panel is where the user acts). It floats just above HomeInput, mirroring
-// the position of HomeConfirmationPanel so the focus path is "see questions →
-// answer → keep going."
+// Questions stay OUT of the transcript; the panel emerges from the input area
+// (project_ordinus_home_design). Originally Home-only (home-question-panel);
+// now provider-agnostic: it takes the request fields directly so both the
+// Ordinus surface (OrdinusPendingInputRequest) and agent rooms
+// (ConversationInputRequest) can feed it.
 //
-// One request at a time, and within a request ONE QUESTION AT A TIME: the panel
-// is a compact wizard. The user answers the current question (choice/boolean
-// selections auto-advance), can step Back, and submits on the last step. The
-// answers become a normal user turn (in the transcript) and Ordinus resumes.
-// The user can also dismiss the request entirely. Keeping a single question on
-// screen keeps the panel short so it never overflows the docked input.
+// One request at a time, and within a request ONE QUESTION AT A TIME: the
+// panel is a compact wizard. The user answers the current question
+// (choice/boolean selections auto-advance), can step Back, and submits on the
+// last step. The user can also dismiss the request entirely. Keeping a single
+// question on screen keeps the panel short so it never overflows the docked
+// input.
 
 import { useMemo, useState } from 'react'
 import { ArrowLeft, Check, X } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { cn } from '@renderer/lib/utils'
-import type {
-  InteractionAnswer,
-  InteractionQuestion,
-  OrdinusPendingInputRequest
-} from '@shared/contracts'
+import type { InteractionAnswer, InteractionQuestion } from '@shared/contracts'
 
 const CUSTOM_OPTION_VALUE = '__custom__'
 
@@ -33,9 +29,18 @@ type QuestionDraft =
   | { kind: 'text'; text: string }
   | { kind: 'boolean'; value: boolean | null }
 
-export type HomeQuestionPanelProps = {
-  request: OrdinusPendingInputRequest | null
+export type QuestionPanelRequest = {
+  requestId: string
+  title: string
+  detail?: string
+  questions: InteractionQuestion[]
+}
+
+export type QuestionPanelProps = {
+  request: QuestionPanelRequest | null
   busy: boolean
+  /** Small accent caption next to the title, e.g. "Ordinus needs a moment". */
+  accentLabel: string
   onAnswer: (requestId: string, answers: InteractionAnswer[]) => void
   onCancel: (requestId: string) => void
 }
@@ -70,12 +75,13 @@ function isAnswered(question: InteractionQuestion, draft: QuestionDraft): boolea
   return false
 }
 
-export function HomeQuestionPanel({
+export function QuestionPanel({
   request,
   busy,
+  accentLabel,
   onAnswer,
   onCancel
-}: HomeQuestionPanelProps): React.JSX.Element | null {
+}: QuestionPanelProps): React.JSX.Element | null {
   // Keyed by request id so switching requests resets the draft.
   const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({})
   const [stepByRequest, setStepByRequest] = useState<Record<string, number>>({})
@@ -166,13 +172,13 @@ export function HomeQuestionPanel({
   }
 
   return (
-    <div className="border-t bg-[#ff7a18]/5 px-4 py-2.5">
+    <div className="border-t bg-primary/5 px-4 py-2.5">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2" key={questionKey}>
         <div className="flex min-w-0 items-baseline justify-between gap-2">
           <div className="flex min-w-0 items-baseline gap-2">
             <span className="truncate text-sm font-semibold">{request.title}</span>
-            <span className="shrink-0 text-[11px] uppercase tracking-wide text-[#ff7a18]">
-              Ordinus needs a moment
+            <span className="shrink-0 text-[11px] uppercase tracking-wide text-primary">
+              {accentLabel}
             </span>
           </div>
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
@@ -194,11 +200,7 @@ export function HomeQuestionPanel({
                   onClick={() => setStep(index)}
                   className={cn(
                     'h-1 flex-1 rounded-full transition-colors',
-                    index === stepIndex
-                      ? 'bg-[#ff7a18]'
-                      : answered
-                        ? 'bg-[#ff7a18]/40'
-                        : 'bg-border'
+                    index === stepIndex ? 'bg-primary' : answered ? 'bg-primary/40' : 'bg-border'
                   )}
                 />
               )
@@ -250,7 +252,6 @@ export function HomeQuestionPanel({
             <Button
               type="button"
               size="sm"
-              className="bg-[#ff7a18] text-white hover:bg-[#ff7a18]/90"
               onClick={() => {
                 if (answers) onAnswer(request.requestId, answers)
               }}
@@ -337,7 +338,7 @@ function QuestionField({
               size="sm"
               disabled={disabled}
               className={cn(
-                draft.value === option.value && 'border-[#ff7a18] bg-[#ff7a18]/10 text-[#ff7a18]'
+                draft.value === option.value && 'border-primary bg-primary/10 text-primary'
               )}
               onClick={() => {
                 onChange({ kind: 'boolean', value: option.value })
@@ -384,14 +385,14 @@ function ChoiceField({
             }}
             className={cn(
               'flex flex-col items-start gap-0.5 rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors',
-              'hover:border-[#ff7a18]/60 disabled:cursor-not-allowed disabled:opacity-60',
-              selected ? 'border-[#ff7a18] bg-[#ff7a18]/10' : 'border-border bg-background/60'
+              'hover:border-primary/60 disabled:cursor-not-allowed disabled:opacity-60',
+              selected ? 'border-primary bg-primary/10' : 'border-border bg-background/60'
             )}
           >
             <span className="flex items-center gap-2 font-medium">
               {option.label}
               {question.recommendedOptionId === option.id ? (
-                <span className="rounded bg-[#ff7a18]/15 px-1 py-px text-[9px] uppercase tracking-wide text-[#ff7a18]">
+                <span className="rounded bg-primary/15 px-1 py-px text-[9px] uppercase tracking-wide text-primary">
                   Recommended
                 </span>
               ) : null}
@@ -411,9 +412,9 @@ function ChoiceField({
             onClick={() => onChange({ ...choice, optionId: CUSTOM_OPTION_VALUE })}
             className={cn(
               'rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors',
-              'hover:border-[#ff7a18]/60 disabled:cursor-not-allowed disabled:opacity-60',
+              'hover:border-primary/60 disabled:cursor-not-allowed disabled:opacity-60',
               choice.optionId === CUSTOM_OPTION_VALUE
-                ? 'border-[#ff7a18] bg-[#ff7a18]/10'
+                ? 'border-primary bg-primary/10'
                 : 'border-border bg-background/60'
             )}
           >

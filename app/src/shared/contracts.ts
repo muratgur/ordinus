@@ -350,8 +350,23 @@ export const OrdinusSetConversationPinnedInputSchema = z.object({
   pinned: z.boolean()
 })
 
-// ADR-029 M4.5: persisted transcript turn shape.
-export const OrdinusConversationTurnKindSchema = z.enum(['user', 'assistant', 'error'])
+// ADR-034: stop a running Ordinus turn from the composer's Stop button.
+export const OrdinusCancelTurnInputSchema = z.object({
+  conversationId: z.string().min(1)
+})
+
+// ADR-035: reveal a file referenced by an Ordinus transcript turn. The main
+// process re-checks the path against the turn's recorded references.
+export const OrdinusRevealPathInputSchema = z.object({
+  conversationId: z.string().min(1),
+  turnRowId: z.string().min(1),
+  relativePath: z.string().min(1)
+})
+
+// ADR-029 M4.5: persisted transcript turn shape. ADR-034 adds 'cancelled' —
+// a permanent muted marker left when the user stops a running turn, so a
+// truncated response is explainable when re-reading the conversation.
+export const OrdinusConversationTurnKindSchema = z.enum(['user', 'assistant', 'error', 'cancelled'])
 
 export const OrdinusConversationTurnSchema = z.object({
   id: z.string(),
@@ -361,6 +376,10 @@ export const OrdinusConversationTurnSchema = z.object({
   // ADR-030 parity: optional full produced body, shown on demand in the
   // transcript ("Show full response"). Empty when there is no extra body.
   resultContent: z.string().default(''),
+  // ADR-035: files the turn produced/changed, so Home renders the same
+  // "files touched" row as agent rooms.
+  artifactRefs: z.array(z.string()).default([]),
+  changedFiles: z.array(z.string()).default([]),
   turnId: z.string().nullable(),
   createdAt: z.string()
 })
@@ -1584,7 +1603,15 @@ export const ObservedRunSnapshotSchema = z.object({
   outputTokens: z.number().int().nonnegative().nullable(),
   totalTokens: z.number().int().nonnegative().nullable(),
   usageSource: ObservedRunUsageSourceSchema,
-  updatedAt: z.string()
+  updatedAt: z.string(),
+  // ADR-034: live-activity decoration. Populated in-memory by the
+  // observability service (not persisted): the conversation this run belongs
+  // to (when known) and the latest provider event reduced to a kind + calm
+  // label the renderer can phrase. Command labels are blanked in the main
+  // process so raw shell text never reaches the renderer.
+  conversationId: z.string().nullable().default(null),
+  latestEventKind: ObservedRunEventKindSchema.nullable().default(null),
+  latestEventLabel: z.string().nullable().default(null)
 })
 
 export const ObservedRunEventSchema = z.object({
@@ -1896,6 +1923,8 @@ export type OrdinusUpdateConversationTitleInput = z.infer<
 export type OrdinusSetConversationPinnedInput = z.infer<
   typeof OrdinusSetConversationPinnedInputSchema
 >
+export type OrdinusCancelTurnInput = z.infer<typeof OrdinusCancelTurnInputSchema>
+export type OrdinusRevealPathInput = z.infer<typeof OrdinusRevealPathInputSchema>
 export type OrdinusMemoryEntry = z.infer<typeof OrdinusMemoryEntrySchema>
 export type OrdinusWriteMemoryInput = z.infer<typeof OrdinusWriteMemoryInputSchema>
 export type OrdinusDeleteMemoryInput = z.infer<typeof OrdinusDeleteMemoryInputSchema>

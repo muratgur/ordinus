@@ -67,6 +67,8 @@ import type {
   OrdinusConversationSummary,
   OrdinusAnswerInputRequestInput,
   OrdinusCancelInputRequestInput,
+  OrdinusCancelTurnInput,
+  OrdinusRevealPathInput,
   OrdinusConversationTurn,
   OrdinusCreateConversationInput,
   OrdinusDeleteConversationInput,
@@ -151,6 +153,8 @@ export type OrdinusApi = {
     sendTurn: (input: OrdinusSendTurnInput) => Promise<OrdinusTurnOutcome>
     listTurns: (input: OrdinusListTurnsInput) => Promise<OrdinusConversationTurn[]>
     listRunningConversations: () => Promise<string[]>
+    cancelTurn: (input: OrdinusCancelTurnInput) => Promise<{ cancelled: boolean }>
+    revealPath: (input: OrdinusRevealPathInput) => Promise<void>
     onActionEvent: (callback: (event: OrdinusActionEvent) => void) => () => void
     listPendingConfirmations: () => Promise<OrdinusPendingConfirmation[]>
     resolveConfirmation: (input: OrdinusResolveConfirmationInput) => Promise<{ resolved: boolean }>

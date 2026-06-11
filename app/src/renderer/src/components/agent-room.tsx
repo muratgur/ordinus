@@ -1,26 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, Bookmark, Check, ChevronDown, ChevronRight, Loader2, Square } from 'lucide-react'
+import { ArrowUp, Bookmark, Check, Loader2, Square } from 'lucide-react'
 import type {
   Agent,
   ConversationDetail,
-  ConversationInputRequest,
   ConversationTurn,
-  InteractionAnswer,
-  InteractionQuestion
+  InteractionAnswer
 } from '@shared/contracts'
+import { useLiveTurnActivity } from '../hooks/use-live-turn-activity'
 import { AgentAvatar } from './agent-avatar'
 import { MarkdownContent } from './markdown-content'
-import { FileReferenceList } from './file-reference-list'
-import { getFileReferences } from './file-reference-utils'
+import { FilesTouched } from './files-touched'
+import { QuestionPanel } from './question-panel'
 import { Button } from './ui/button'
-import { cn } from '../lib/utils'
 
 /**
  * The agent's 1:1 home room (ADR-027, Phase 2). A bare, single-participant chat
- * over the existing conversation engine: send/stream/cancel, inline agent
- * questions, and a collapsed per-turn "what did they do?" detail. Multi-agent
- * chrome (mentions, routing, orchestration) is intentionally absent — that
- * lives in the Conversations group surface.
+ * over the existing conversation engine: send/stream/cancel, agent questions
+ * as a panel above the composer (shared QuestionPanel), and a collapsed
+ * per-turn "what did they do?" detail. Multi-agent chrome (mentions, routing,
+ * orchestration) is intentionally absent — that lives in the Conversations
+ * group surface.
+ *
+ * Rendering follows the Home transcript language (ADR-029 §8): the agent is
+ * doing work, not trading chat bubbles. User messages are right-aligned soft
+ * cards; agent replies are flat full-width Markdown. The agent's identity
+ * (avatar, name) lives in the room chrome, not on every message. The running
+ * turn renders the ADR-034 live activity line.
  */
 // A friendly user-side opener for a brand-new teammate. The agent replies in
 // its own voice (persona comes from its instructions/role), which also
@@ -156,8 +161,20 @@ export function AgentRoom({
     followRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
   }
 
-  const composerBlocked =
-    !detail || Boolean(runningTurn) || Boolean(pendingRequest) || sending || !message.trim()
+  // 4a (transcript refactor): a pending question no longer locks the composer —
+  // the panel above it is the answer path, but a plain message stays possible,
+  // mirroring Home.
+  const composerBlocked = !detail || Boolean(runningTurn) || sending || !message.trim()
+
+  // ADR-034 — live activity line for the running turn. Agent conversation
+  // turns are observed (startConversationTurn), so snapshots arrive decorated
+  // with this conversation's id.
+  const { label: liveActivityLabel } = useLiveTurnActivity(
+    conversationId || null,
+    Boolean(runningTurn),
+    cancelling,
+    { openingLabel: `${agent.name} is thinking…` }
+  )
 
   async function handleSend(): Promise<void> {
     if (composerBlocked || !detail) {
@@ -202,16 +219,13 @@ export function AgentRoom({
     }
   }
 
-  async function handleAnswer(answers: InteractionAnswer[]): Promise<void> {
-    if (!pendingRequest) {
-      return
-    }
+  async function handleAnswer(requestId: string, answers: InteractionAnswer[]): Promise<void> {
     try {
       setAnswering(true)
       setError('')
       followRef.current = true
       const next = await window.ordinus.conversations.answerInputRequest({
-        requestId: pendingRequest.id,
+        requestId,
         answers
       })
       setDetail(next)
@@ -220,6 +234,17 @@ export function AgentRoom({
       setError(getErrorMessage(answerError, 'Your answer could not be sent.'))
     } finally {
       setAnswering(false)
+    }
+  }
+
+  async function handleCancelRequest(requestId: string): Promise<void> {
+    try {
+      setError('')
+      const next = await window.ordinus.conversations.cancelInputRequest({ requestId })
+      setDetail(next)
+      onRoomChanged?.()
+    } catch (cancelError) {
+      setError(getErrorMessage(cancelError, 'The question could not be dismissed.'))
     }
   }
 
@@ -276,24 +301,38 @@ export function AgentRoom({
           {isEmpty ? <RoomEmptyState agent={agent} /> : null}
 
           {detail.turns.map((turn) => (
-            <TurnBubble
+            <TranscriptTurn
               key={turn.id}
               turn={turn}
-              agent={agent}
-              inputRequest={turn.status === 'waiting_for_user' ? pendingRequest : null}
-              answering={answering}
+              liveActivityLabel={turn.status === 'running' ? liveActivityLabel : null}
               remembered={rememberedTurnIds.has(turn.id)}
               remembering={rememberingId === turn.id}
               onRemember={() => void handleRemember(turn.id, turn.content)}
-              onAnswer={handleAnswer}
               onReveal={(path) => void handleReveal(turn.id, path)}
             />
           ))}
 
-          {pending ? <UserBubble content={pending} /> : null}
+          {pending ? <UserMessage content={pending} /> : null}
           {error && !pending ? <p className="px-1 text-xs text-status-attention">{error}</p> : null}
         </div>
       </div>
+
+      <QuestionPanel
+        request={
+          pendingRequest
+            ? {
+                requestId: pendingRequest.id,
+                title: pendingRequest.title,
+                detail: pendingRequest.detail,
+                questions: pendingRequest.questions
+              }
+            : null
+        }
+        busy={answering}
+        accentLabel={`${agent.name} needs a moment`}
+        onAnswer={(requestId, answers) => void handleAnswer(requestId, answers)}
+        onCancel={(requestId) => void handleCancelRequest(requestId)}
+      />
 
       <Composer
         agent={agent}
@@ -331,8 +370,10 @@ function Composer({
   onSend: () => void
   onCancel: () => void
 }): React.JSX.Element {
+  // The question panel above is the primary answer path, but the composer
+  // stays usable (Home parity) — the placeholder only hints at the question.
   const placeholder = waitingForInput
-    ? 'Answer the question above to continue…'
+    ? `Answer above, or message ${agent.name}…`
     : `Message ${agent.name}…`
 
   return (
@@ -343,7 +384,6 @@ function Composer({
           placeholder={placeholder}
           rows={1}
           value={value}
-          disabled={waitingForInput}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -381,30 +421,27 @@ function Composer({
   )
 }
 
-function TurnBubble({
+// Transcript row (Home language): user = right-aligned soft card, agent =
+// flat full-width Markdown. No avatar/name per message — identity lives in
+// the room chrome.
+function TranscriptTurn({
   turn,
-  agent,
-  inputRequest,
-  answering,
+  liveActivityLabel,
   remembered,
   remembering,
   onRemember,
-  onAnswer,
   onReveal
 }: {
   turn: ConversationTurn
-  agent: Agent
-  inputRequest: ConversationInputRequest | null
-  answering: boolean
+  liveActivityLabel: string | null
   remembered: boolean
   remembering: boolean
   onRemember: () => void
-  onAnswer: (answers: InteractionAnswer[]) => void
   onReveal: (path: string) => void
 }): React.JSX.Element {
   if (turn.speaker === 'user') {
     return (
-      <UserBubble
+      <UserMessage
         content={turn.content}
         remembered={remembered}
         remembering={remembering}
@@ -419,36 +456,33 @@ function TurnBubble({
   return (
     <>
       {turn.sessionReset ? <SessionResetNote /> : null}
-      <div className="flex min-w-0 max-w-full gap-2.5">
-        <AgentAvatar avatar={agent.avatar} size={28} className="mt-0.5 shrink-0" />
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <p className="text-xs font-semibold text-muted-foreground">{agent.name}</p>
-          <div className="min-w-0 rounded-lg rounded-tl-sm border bg-surface-subtle/70 px-3.5 py-2.5 dark:bg-surface-subtle/55">
-            {isRunning && turn.content.trim().length === 0 ? (
-              <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" />
-                Thinking…
-              </span>
-            ) : isFailed ? (
-              <p className="select-text text-sm text-status-attention [overflow-wrap:anywhere]">
-                {turn.error || 'This turn failed.'}
-              </p>
-            ) : (
-              <MarkdownContent content={turn.content} />
-            )}
-            {turn.truncated ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Long output was shortened for this view.
-              </p>
-            ) : null}
+      <div className="flex min-w-0 flex-col gap-1.5">
+        {isRunning && turn.content.trim().length === 0 ? (
+          // ADR-034 — live activity line instead of a static "Thinking…".
+          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {liveActivityLabel ?? 'Thinking…'}
+          </span>
+        ) : isFailed ? (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {turn.error || 'This turn failed.'}
+            </p>
           </div>
+        ) : (
+          <MarkdownContent content={turn.content} />
+        )}
+        {turn.truncated ? (
+          <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
+        ) : null}
 
-          {inputRequest ? (
-            <InlineInputRequest request={inputRequest} answering={answering} onAnswer={onAnswer} />
-          ) : null}
-
-          {turn.status === 'completed' ? <TurnDetail turn={turn} onReveal={onReveal} /> : null}
-        </div>
+        {turn.status === 'completed' ? (
+          <FilesTouched
+            artifactRefs={turn.artifactRefs}
+            changedFiles={turn.changedFiles}
+            onReveal={onReveal}
+          />
+        ) : null}
       </div>
     </>
   )
@@ -462,7 +496,9 @@ function SessionResetNote(): React.JSX.Element {
   )
 }
 
-function UserBubble({
+// Home-language user message: right-aligned soft card (token tint, no border),
+// with the hover "Remember" bookmark kept from the bubble era.
+function UserMessage({
   content,
   remembered,
   remembering,
@@ -474,7 +510,7 @@ function UserBubble({
   onRemember?: () => void
 }): React.JSX.Element {
   return (
-    <div className="group ml-auto flex w-fit max-w-[88%] flex-col items-end gap-1">
+    <div className="group ml-auto flex w-fit max-w-[85%] flex-col items-end gap-1">
       <div className="flex items-center gap-1.5">
         {onRemember && !remembered ? (
           <button
@@ -492,11 +528,9 @@ function UserBubble({
             )}
           </button>
         ) : null}
-        <div className="min-w-0 rounded-lg rounded-tr-sm border border-primary/20 bg-primary-soft/70 px-3.5 py-2.5 dark:border-primary/30 dark:bg-primary-soft/45">
-          <p className="min-w-0 select-text whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
-            {content}
-          </p>
-        </div>
+        <p className="min-w-0 select-text whitespace-pre-wrap break-words rounded-2xl bg-primary/10 px-3.5 py-2 text-sm text-foreground/90 [overflow-wrap:anywhere]">
+          {content}
+        </p>
       </div>
       {remembered ? (
         <span className="flex items-center gap-1 pr-1 text-[11px] text-muted-foreground">
@@ -508,218 +542,6 @@ function UserBubble({
 }
 
 // Collapsed "what did they do?" — files the turn touched. Bare by default;
-// deeper observability stays in the Conversations surface.
-function TurnDetail({
-  turn,
-  onReveal
-}: {
-  turn: ConversationTurn
-  onReveal: (path: string) => void
-}): React.JSX.Element | null {
-  const [open, setOpen] = useState(false)
-  const files = getFileReferences(turn.artifactRefs, turn.changedFiles)
-
-  if (files.length === 0) {
-    return null
-  }
-
-  return (
-    <div className="ml-0.5">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        {files.length} file{files.length === 1 ? '' : 's'} touched
-      </button>
-      {open ? (
-        <div className="mt-1.5 rounded-md border bg-card p-2.5">
-          <FileReferenceList files={files} onRevealPath={onReveal} />
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function InlineInputRequest({
-  request,
-  answering,
-  onAnswer
-}: {
-  request: ConversationInputRequest
-  answering: boolean
-  onAnswer: (answers: InteractionAnswer[]) => void
-}): React.JSX.Element {
-  const [drafts, setDrafts] = useState<Record<string, InteractionAnswer>>({})
-
-  function setAnswer(answer: InteractionAnswer): void {
-    setDrafts((current) => ({ ...current, [answer.questionId]: answer }))
-  }
-
-  const allAnswered = request.questions.every((question) => {
-    const answer = drafts[question.id]
-    if (!answer) {
-      return question.required === false
-    }
-    if (answer.type === 'text' || answer.type === 'custom') {
-      return answer.text.trim().length > 0
-    }
-    return true
-  })
-
-  const answers = request.questions
-    .map((question) => drafts[question.id])
-    .filter((answer): answer is InteractionAnswer => Boolean(answer))
-
-  return (
-    <div className="grid gap-3 rounded-lg border border-status-blocked/30 bg-status-blocked/5 p-3.5">
-      <div>
-        <p className="text-sm font-semibold">{request.title}</p>
-        {request.detail ? (
-          <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            {request.detail}
-          </p>
-        ) : null}
-      </div>
-      {request.questions.map((question) => (
-        <QuestionField
-          key={question.id}
-          question={question}
-          answer={drafts[question.id]}
-          disabled={answering}
-          onSet={setAnswer}
-        />
-      ))}
-      <div>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!allAnswered || answering}
-          onClick={() => onAnswer(answers)}
-        >
-          {answering ? <Loader2 className="animate-spin" /> : null}
-          Send answer
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function QuestionField({
-  question,
-  answer,
-  disabled,
-  onSet
-}: {
-  question: InteractionQuestion
-  answer: InteractionAnswer | undefined
-  disabled: boolean
-  onSet: (answer: InteractionAnswer) => void
-}): React.JSX.Element {
-  return (
-    <div className="grid gap-1.5">
-      <p className="text-sm font-medium text-foreground">{question.label}</p>
-      {question.detail ? (
-        <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{question.detail}</p>
-      ) : null}
-
-      {question.kind === 'text' ? (
-        <textarea
-          className="ordinus-scrollbar min-h-16 resize-y rounded-md border bg-card p-2.5 text-sm leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          placeholder={question.placeholder || 'Type your answer'}
-          disabled={disabled}
-          value={answer?.type === 'text' ? answer.text : ''}
-          onChange={(event) =>
-            onSet({ questionId: question.id, type: 'text', text: event.target.value })
-          }
-        />
-      ) : null}
-
-      {question.kind === 'boolean' ? (
-        <div className="flex gap-2">
-          {[
-            { value: true, label: question.trueLabel },
-            { value: false, label: question.falseLabel }
-          ].map((option) => (
-            <OptionChip
-              key={String(option.value)}
-              label={option.label}
-              active={answer?.type === 'boolean' && answer.value === option.value}
-              disabled={disabled}
-              onClick={() =>
-                onSet({ questionId: question.id, type: 'boolean', value: option.value })
-              }
-            />
-          ))}
-        </div>
-      ) : null}
-
-      {question.kind === 'choice' ? (
-        <div className="grid gap-2">
-          <div className="flex flex-wrap gap-2">
-            {question.options.map((option) => (
-              <OptionChip
-                key={option.id}
-                label={option.label}
-                hint={option.id === question.recommendedOptionId ? 'Recommended' : undefined}
-                active={answer?.type === 'option' && answer.optionId === option.id}
-                disabled={disabled}
-                onClick={() =>
-                  onSet({ questionId: question.id, type: 'option', optionId: option.id })
-                }
-              />
-            ))}
-          </div>
-          {question.allowCustom ? (
-            <input
-              type="text"
-              className="rounded-md border bg-card px-2.5 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              placeholder="Or type your own answer"
-              disabled={disabled}
-              value={answer?.type === 'custom' ? answer.text : ''}
-              onChange={(event) =>
-                onSet({ questionId: question.id, type: 'custom', text: event.target.value })
-              }
-            />
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function OptionChip({
-  label,
-  hint,
-  active,
-  disabled,
-  onClick
-}: {
-  label: string
-  hint?: string
-  active: boolean
-  disabled: boolean
-  onClick: () => void
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50',
-        active
-          ? 'border-primary bg-primary-soft text-foreground'
-          : 'text-muted-foreground hover:border-foreground/30 hover:text-foreground'
-      )}
-    >
-      {label}
-      {hint ? <span className="text-[10px] text-muted-foreground">· {hint}</span> : null}
-    </button>
-  )
-}
-
 function RoomEmptyState({ agent }: { agent: Agent }): React.JSX.Element {
   return (
     <div className="mx-auto mt-10 flex max-w-sm flex-col items-center gap-2 text-center">

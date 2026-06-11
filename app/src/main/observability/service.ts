@@ -7,6 +7,7 @@ import {
   type ConversationTurn,
   type ObservedRunDiagnostics,
   type ObservedRunEvent,
+  type ObservedRunEventKind,
   type ObservedRunLivenessHealth,
   type ObservedRunPhase,
   type ObservedRunSnapshot,
@@ -27,12 +28,24 @@ const quietThresholdMs = 90_000
 const stalledThresholdMs = 180_000
 const diagnosticsTailBytes = 64 * 1024
 
+// ADR-034 — live-activity decoration. Kept in memory only: snapshots in the
+// DB stay as-is, and the renderer's live line is fed by decorating snapshots
+// at broadcast/list time. Entries are dropped when a run reaches a terminal
+// lifecycle, so the map only ever holds in-flight runs.
+type LiveActivityDecoration = {
+  conversationId: string | null
+  latestEventKind: ObservedRunEventKind | null
+  latestEventLabel: string | null
+}
+
+const liveActivityByRunId = new Map<string, LiveActivityDecoration>()
+
 type StartObservedRunInput = {
   sourceSurface: ObservedRunSourceSurface
   sourceItemId: string
   sourceItemTitle: string
   queuedAt: string
-  agent: Agent
+  agent: Pick<Agent, 'id' | 'name' | 'role'>
   providerId: WorkRun['providerId']
   model: string
   logRef: string
@@ -52,6 +65,22 @@ export type ObservabilityService = {
     conversationId: string
     conversationTitle: string
     agent: Agent
+    logRef: string
+    invocation: SanitizedInvocationSummary
+  }): RuntimeObservationSink
+  /**
+   * ADR-034 — Ordinus Home turns. Ordinus is a phantom agent (no Agent row,
+   * no ConversationTurn row), so this takes the raw identifiers instead.
+   * Uses the 'conversation' source surface with the turn id as the source
+   * item, which keeps markConversation*(turnId) working unchanged.
+   */
+  startOrdinusTurn(input: {
+    conversationId: string
+    conversationTitle: string
+    turnId: string
+    queuedAt: string
+    providerId: WorkRun['providerId']
+    model: string
     logRef: string
     invocation: SanitizedInvocationSummary
   }): RuntimeObservationSink
@@ -103,6 +132,23 @@ export function createObservabilityService(database: OrdinusDatabase): Observabi
         eventPayload: {
           conversationId: input.conversationId,
           turnId: input.turn.id
+        }
+      })
+    },
+    startOrdinusTurn(input) {
+      return startObservedRun(database, {
+        sourceSurface: 'conversation',
+        sourceItemId: input.turnId,
+        sourceItemTitle: input.conversationTitle || 'Ordinus conversation',
+        queuedAt: input.queuedAt,
+        agent: { id: 'ordinus', name: 'Ordinus', role: 'In-app personal assistant' },
+        providerId: input.providerId,
+        model: input.model,
+        logRef: input.logRef,
+        invocation: input.invocation,
+        eventPayload: {
+          conversationId: input.conversationId,
+          turnId: input.turnId
         }
       })
     },
@@ -223,6 +269,14 @@ function startObservedRun(
     sanitizedInvocation: input.invocation,
     logRef: input.logRef
   })
+  // ADR-034: remember which conversation (if any) this run belongs to so the
+  // renderer's live-activity hook can match push updates without new queries.
+  const conversationId = input.eventPayload.conversationId
+  liveActivityByRunId.set(observedRun.id, {
+    conversationId: typeof conversationId === 'string' ? conversationId : null,
+    latestEventKind: null,
+    latestEventLabel: null
+  })
   appendAndBroadcast(database, observedRun.id, {
     kind: 'status',
     source: 'runtime',
@@ -320,6 +374,7 @@ function updateActivity(
   const now = new Date().toISOString()
   const summary = sanitizeActivityDetail(event.summary, 240) || 'Run activity.'
   const current = database.getObservedRunInternal(observedRunId)
+  updateLiveActivityDecoration(observedRunId, event)
 
   database.patchObservedRun({
     id: observedRunId,
@@ -337,6 +392,12 @@ function updateActivity(
     summary,
     payload: compactPayload(event.payload)
   })
+  // Drop the decoration only after the terminal snapshot has been broadcast,
+  // so the renderer still sees conversationId on the final push and can clear
+  // its live line.
+  if (isTerminalLifecycle(event.lifecycleStatus)) {
+    liveActivityByRunId.delete(observedRunId)
+  }
 }
 
 function appendAndBroadcast(
@@ -395,7 +456,78 @@ function broadcast(snapshot: ObservedRunSnapshot): void {
   }
 }
 
+// ADR-034 — reduce a runtime observation to the live-line decoration. The
+// renderer phrases the line from kind + label; the label is the only detail
+// that crosses the boundary, so this is where the product's "calm" rule is
+// enforced: command labels are dropped entirely (raw shell text never reaches
+// the renderer — diagnostics keep the full fidelity on their own channel),
+// and other labels are reduced to a short human object (file basename, tool
+// name) rather than full paths or arguments.
+function updateLiveActivityDecoration(observedRunId: string, event: RuntimeObservation): void {
+  const meaningfulKinds: ObservedRunEventKind[] = ['tool', 'command', 'file', 'message']
+  if (!meaningfulKinds.includes(event.kind)) {
+    return
+  }
+
+  const decoration = liveActivityByRunId.get(observedRunId)
+  if (!decoration) {
+    return
+  }
+
+  const nextLabel = event.kind === 'command' ? null : deriveCalmEventLabel(event.payload)
+  // Completion echoes ("Tool completed.") arrive without a label; don't let
+  // them downgrade a specific phrase ("Editing report.md…") to a generic one
+  // while the kind hasn't changed.
+  if (nextLabel === null && decoration.latestEventKind === event.kind) {
+    return
+  }
+
+  decoration.latestEventKind = event.kind
+  decoration.latestEventLabel = nextLabel
+}
+
+function deriveCalmEventLabel(payload: Record<string, unknown> | undefined): string | null {
+  if (!payload) {
+    return null
+  }
+
+  const name = typeof payload.name === 'string' ? payload.name : ''
+  const label = typeof payload.label === 'string' ? payload.label : ''
+  // Adapter labels look like "<tool-name> <detail>" (e.g. "Read /a/b/c.ts").
+  // Prefer the detail's last path segment; fall back to a humanized tool name.
+  const detail = name && label.startsWith(name) ? label.slice(name.length).trim() : label
+  if (detail) {
+    const firstToken = detail.split(/\s+/)[0]
+    const segments = firstToken.split('/').filter(Boolean)
+    const candidate = segments.length > 0 ? segments[segments.length - 1] : firstToken
+    if (candidate && candidate.length <= 60) {
+      return candidate
+    }
+  }
+
+  if (name) {
+    // MCP tool ids read as mcp__<server>__<tool>; surface "<tool>" plainly.
+    const cleaned = name
+      .replace(/^mcp__[^_]+(?:__)?/, '')
+      .replace(/[_-]+/g, ' ')
+      .trim()
+    return cleaned ? cleaned.slice(0, 60) : null
+  }
+
+  return null
+}
+
 function withCurrentLiveness(snapshot: ObservedRunSnapshot): ObservedRunSnapshot {
+  const decoration = liveActivityByRunId.get(snapshot.id)
+  if (decoration) {
+    snapshot = {
+      ...snapshot,
+      conversationId: decoration.conversationId,
+      latestEventKind: decoration.latestEventKind,
+      latestEventLabel: decoration.latestEventLabel
+    }
+  }
+
   if (isTerminalLifecycle(snapshot.lifecycleStatus) || !snapshot.lastActivityAt) {
     return snapshot
   }

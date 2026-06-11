@@ -69,6 +69,8 @@ import type {
   OrdinusConversationSummary,
   OrdinusAnswerInputRequestInput,
   OrdinusCancelInputRequestInput,
+  OrdinusCancelTurnInput,
+  OrdinusRevealPathInput,
   OrdinusConversationTurn,
   OrdinusCreateConversationInput,
   OrdinusDeleteConversationInput,
@@ -161,6 +163,12 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.ordinusListTurns, input),
     listRunningConversations: async (): Promise<string[]> =>
       ipcRenderer.invoke(ipcChannels.ordinusListRunningConversations),
+    // ADR-034: Stop button — cancel this conversation's in-flight turn.
+    cancelTurn: async (input: OrdinusCancelTurnInput): Promise<{ cancelled: boolean }> =>
+      ipcRenderer.invoke(ipcChannels.ordinusCancelTurn, input),
+    // ADR-035: reveal a file referenced by a transcript turn.
+    revealPath: async (input: OrdinusRevealPathInput): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.ordinusRevealPath, input),
     // ADR-029 M5: subscribe to Ordinus action events (workboard plan ready,
     // schedule/workflow created, confirmation requested/resolved). Returns
     // an unsubscribe function.

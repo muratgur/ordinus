@@ -33,7 +33,11 @@ import type {
 import { ensureOrdinusMcpServer } from '../ordinus-mcp/lifecycle'
 import { ORDINUS_MCP_SERVER_ID } from '../ordinus-mcp/materialize'
 import { buildKnowledgePrompt } from '../ordinus-knowledge'
-import { ensureWorkspaceRelativeDirectory, getOrdinusWorkingRoot } from '../workspace/path-policy'
+import {
+  ensureWorkspaceRelativeDirectory,
+  getOrdinusWorkingRoot,
+  resolveReportedWorkspaceFileRefs
+} from '../workspace/path-policy'
 import { buildOrdinusTurnLogDir, buildOrdinusTurnLogRef, getOrdinusHomePath } from './paths'
 
 export type OrdinusSessionDeps = {
@@ -98,11 +102,24 @@ export type OrdinusSessionService = {
   /** Conversation ids with an in-flight turn. Lets a (re)mounted renderer
    * rehydrate the "thinking" indicator after navigating back to Home. */
   listRunningConversations(): string[]
+  /**
+   * ADR-034 — Stop button. Kills the in-flight provider process for this
+   * conversation (if any). The interrupted sendTurn call observes the
+   * cancellation, records a permanent 'cancelled' transcript row, and
+   * resolves without an error bubble. Returns false when nothing was running.
+   */
+  cancelTurn(conversationId: string): boolean
 }
 
 export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSessionService {
   const { database, observability, runtime } = deps
   const runningConversationIds = new Set<string>()
+  // ADR-034 — conversationId → in-flight turnId, so the Stop button (keyed by
+  // conversation in the renderer) can reach the runtime's process map (keyed
+  // by turn). Cancellation requests are remembered so sendTurn can tell a
+  // user-initiated stop apart from a provider failure.
+  const runningTurnIdByConversation = new Map<string, string>()
+  const cancelRequestedConversationIds = new Set<string>()
   // `deps.events` is referenced via the closure below (passed into the
   // MCP tool context). Not destructured here so the read site is explicit.
 
@@ -157,6 +174,15 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
       return Array.from(runningConversationIds)
     },
 
+    cancelTurn(conversationId) {
+      const turnId = runningTurnIdByConversation.get(conversationId)
+      if (!turnId) {
+        return false
+      }
+      cancelRequestedConversationIds.add(conversationId)
+      return runtime.cancelConversationTurn(turnId)
+    },
+
     async sendTurn(input) {
       if (runningConversationIds.has(input.conversationId)) {
         throw new Error('Ordinus is already working on this conversation.')
@@ -203,6 +229,27 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         const turnId = `ot-${randomUUID()}`
         const logRef = buildOrdinusTurnLogRef(conversation.id, turnId)
         const logDir = buildOrdinusTurnLogDir(conversation.id, turnId)
+        runningTurnIdByConversation.set(conversation.id, turnId)
+
+        // ADR-034 — observe this turn so Home's live activity line has data.
+        // The invocation summary is intentionally coarse (no args): Ordinus
+        // turns are diagnosed through their event log, not the args echo.
+        const observationSink = observability.startOrdinusTurn({
+          conversationId: conversation.id,
+          conversationTitle: conversation.title,
+          turnId,
+          queuedAt: new Date().toISOString(),
+          providerId: conversation.providerId as RuntimeConversationTurnInput['providerId'],
+          model: conversation.model,
+          logRef,
+          invocation: {
+            provider: conversation.providerId,
+            executable: conversation.providerId,
+            args: [],
+            cwd: workspace.workspaceRoot,
+            startedAt: new Date().toISOString()
+          }
+        })
 
         // Only inject the assembled system prompt for the FIRST turn of a
         // conversation. Subsequent turns rely on --resume so the CLI's session
@@ -251,6 +298,7 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           logRef,
           eventLogPath: join(logDir, 'events.jsonl'),
           lastMessagePath: join(logDir, 'last-message.txt'),
+          observability: observationSink,
           additionalMcpServers: [
             {
               id: ORDINUS_MCP_SERVER_ID,
@@ -268,6 +316,32 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         try {
           result = await runtime.sendConversationTurn(runtimeInput)
         } catch (err) {
+          // ADR-034 — user-initiated stop. The adapter rejects when the killed
+          // process closes; we translate that into a permanent muted marker
+          // instead of an error bubble, and resolve normally so the renderer's
+          // send path doesn't paint a failure.
+          if (cancelRequestedConversationIds.has(conversation.id)) {
+            database.appendOrdinusTurn({
+              conversationId: conversation.id,
+              kind: 'cancelled',
+              content: 'You stopped this response.',
+              turnId
+            })
+            observability.markConversationCancelled(turnId)
+            return {
+              conversationId: conversation.id,
+              turnId,
+              providerSessionRef: conversation.providerSessionRef ?? '',
+              outcome: {
+                outcome: 'final_response',
+                summary: 'You stopped this response.',
+                content: '',
+                artifactRefs: [],
+                changedFiles: []
+              },
+              sessionReset: false
+            }
+          }
           // ADR-029 M4.5 — Persist the failure so the user sees what happened
           // when they come back to this conversation. The runtime layer is the
           // one that owns "what went wrong" detail; we just stringify here.
@@ -294,6 +368,12 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         // persist the request so the panel rehydrates after an app restart,
         // then publish an event so any open window paints it immediately.
         if (result.outcome.outcome === 'final_response') {
+          const fileRefs = resolveOrdinusFileRefs({
+            workspaceRoot: workspace.workspaceRoot,
+            workingRoot,
+            artifactRefs: result.outcome.artifactRefs,
+            changedFiles: result.outcome.changedFiles
+          })
           database.appendOrdinusTurn({
             conversationId: conversation.id,
             kind: 'assistant',
@@ -302,6 +382,9 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
             // on demand ("Show full response") in the transcript.
             content: result.outcome.summary,
             resultContent: result.outcome.content,
+            // ADR-035: persist file references so Home renders "files touched".
+            artifactRefs: fileRefs.artifactRefs,
+            changedFiles: fileRefs.changedFiles,
             turnId
           })
         } else {
@@ -324,6 +407,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         }
       } finally {
         runningConversationIds.delete(conversation.id)
+        runningTurnIdByConversation.delete(conversation.id)
+        cancelRequestedConversationIds.delete(conversation.id)
         deps.events.publish({ kind: 'turn_settled', conversationId: conversation.id })
       }
     },
@@ -344,5 +429,23 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         displayMessage: answerSummary
       })
     }
+  }
+}
+
+function resolveOrdinusFileRefs(input: {
+  workspaceRoot: string
+  workingRoot: string
+  artifactRefs: string[]
+  changedFiles: string[]
+}): {
+  artifactRefs: string[]
+  changedFiles: string[]
+} {
+  const artifactRefs = resolveReportedWorkspaceFileRefs(input.artifactRefs, input)
+  const changedFiles = resolveReportedWorkspaceFileRefs(input.changedFiles, input)
+
+  return {
+    artifactRefs: artifactRefs.existingRefs,
+    changedFiles: changedFiles.existingRefs
   }
 }

@@ -13,6 +13,10 @@ export const ipcChannels = {
   // mount to rehydrate it after navigating back to Home, and keeps it live via
   // the turn_started / turn_settled action events.
   ordinusListRunningConversations: 'ordinus:list-running-conversations',
+  // ADR-034: Stop button — cancel the in-flight turn of one conversation.
+  ordinusCancelTurn: 'ordinus:cancel-turn',
+  // ADR-035: reveal a file referenced by a transcript turn.
+  ordinusRevealPath: 'ordinus:reveal-path',
   // ADR-029 M5: broadcast from main to renderer when an Ordinus action tool
   // completes (workboard plan ready, schedule created, workflow created).
   // One channel, discriminated payload — see OrdinusActionEventSchema.

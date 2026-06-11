@@ -672,6 +672,8 @@ export class OrdinusDatabase {
     kind: string
     content: string
     resultContent: string
+    artifactRefs: string[]
+    changedFiles: string[]
     turnId: string | null
     createdAt: string
   }> {
@@ -687,6 +689,8 @@ export class OrdinusDatabase {
       kind: row.kind,
       content: row.content,
       resultContent: row.resultContent,
+      artifactRefs: parseJsonStringArray(row.artifactRefs),
+      changedFiles: parseJsonStringArray(row.changedFiles),
       turnId: row.turnId,
       createdAt: row.createdAt
     }))
@@ -694,9 +698,11 @@ export class OrdinusDatabase {
 
   appendOrdinusTurn(input: {
     conversationId: string
-    kind: 'user' | 'assistant' | 'error'
+    kind: 'user' | 'assistant' | 'error' | 'cancelled'
     content: string
     resultContent?: string
+    artifactRefs?: string[]
+    changedFiles?: string[]
     turnId?: string | null
   }): {
     id: string
@@ -704,6 +710,8 @@ export class OrdinusDatabase {
     kind: string
     content: string
     resultContent: string
+    artifactRefs: string[]
+    changedFiles: string[]
     turnId: string | null
     createdAt: string
   } {
@@ -725,6 +733,8 @@ export class OrdinusDatabase {
           kind: input.kind,
           content: input.content,
           resultContent: input.resultContent ?? '',
+          artifactRefs: JSON.stringify(input.artifactRefs ?? []),
+          changedFiles: JSON.stringify(input.changedFiles ?? []),
           turnId: input.turnId ?? null,
           createdAt: now
         })
@@ -742,6 +752,8 @@ export class OrdinusDatabase {
       kind: input.kind,
       content: input.content,
       resultContent: input.resultContent ?? '',
+      artifactRefs: input.artifactRefs ?? [],
+      changedFiles: input.changedFiles ?? [],
       turnId: input.turnId ?? null,
       createdAt: now
     }

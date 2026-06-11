@@ -724,6 +724,47 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
 
   const itemType = getStringPath(item, ['type'])
   const label = getCodexActivityItemLabel(item)
+  if (type === 'item.started' || type === 'item.completed') {
+    // ADR-034: item types that the command/tool heuristics below miss but
+    // that carry most of a real turn's work — file writes and web research.
+    // Without these the live line sticks on a stale phrase while Codex does
+    // the bulk of the job.
+    if (itemType === 'file_change') {
+      const path = getCodexFirstChangePath(item)
+      return [
+        codexObservation({
+          kind: 'file',
+          phase: 'editing',
+          summary: type === 'item.started' ? 'Editing files.' : 'File changes applied.',
+          payload: { label: path }
+        })
+      ]
+    }
+
+    if (itemType === 'web_search') {
+      return [
+        codexObservation({
+          kind: 'tool',
+          phase: 'running',
+          summary: 'Searching the web.',
+          payload: { name: 'web_search', label: 'web search' }
+        })
+      ]
+    }
+
+    if (itemType === 'reasoning') {
+      // Refreshes activity (keeps liveness healthy) without claiming a tool
+      // is running — the 'status' kind doesn't change the live-line phrase.
+      return [
+        codexObservation({
+          kind: 'status',
+          phase: 'running',
+          summary: 'Thinking.'
+        })
+      ]
+    }
+  }
+
   if (type === 'item.started') {
     if (isCommandLikeItem(itemType, item)) {
       return [
@@ -822,6 +863,23 @@ function getCodexActivityItemLabel(item: Record<string, unknown>): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 180)
+}
+
+// file_change items carry a `changes` array of { path, kind } records; the
+// first path is enough for the live line (the service reduces it to a
+// basename before it reaches the renderer).
+function getCodexFirstChangePath(item: Record<string, unknown>): string {
+  const changes = item.changes
+  if (!Array.isArray(changes)) {
+    return ''
+  }
+  for (const change of changes) {
+    const path = getStringPath(change, ['path'])
+    if (path) {
+      return path
+    }
+  }
+  return ''
 }
 
 function getToolPhase(label: string): RuntimeObservation['phase'] {
