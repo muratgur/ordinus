@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { Moon, RefreshCcw, Settings, Sun } from 'lucide-react'
+import { Moon, Settings, Sun } from 'lucide-react'
 import type { DbStatus, SetupStatus } from '@shared/contracts'
 import { appNavigation, ordinusHomeNavItem } from './routes'
 import { appRoutePaths } from './routes'
@@ -11,20 +11,13 @@ import { notify } from '@renderer/lib/notifications'
 type AppShellProps = {
   dbStatus: DbStatus | null
   setupStatus: SetupStatus | null
-  loading: boolean
   workboardPlanReady: boolean
   planQueue?: React.ReactNode
-  onRefreshStatus: () => void
 }
 
 type ThemeMode = 'light' | 'dark'
 
-export function AppShell({
-  loading,
-  workboardPlanReady,
-  planQueue,
-  onRefreshStatus
-}: AppShellProps): React.JSX.Element {
+export function AppShell({ workboardPlanReady, planQueue }: AppShellProps): React.JSX.Element {
   // ADR-029: Home leads the nav. The kill-switch flag was retired after M8
   // ship — Ordinus is unconditionally enabled.
   const navItems = [ordinusHomeNavItem, ...appNavigation]
@@ -86,9 +79,9 @@ export function AppShell({
     <main className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-20 border-b border-border bg-background/92 backdrop-blur-md">
         <div className="mx-auto flex h-12 w-full max-w-screen-2xl items-stretch px-5">
-          {/* Logo */}
+          {/* Logo — the front door is Home (ADR-029), not Workboard. */}
           <NavLink
-            to={appRoutePaths.workboard}
+            to={appRoutePaths.home}
             className="mr-6 flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
             aria-label="Ordinus home"
           >
@@ -122,7 +115,7 @@ export function AppShell({
                   cn(
                     'relative flex shrink-0 items-center gap-1.5 px-3 text-[12.5px] font-medium transition-colors',
                     isActive
-                      ? 'text-foreground after:absolute after:bottom-0 after:left-3 after:right-3 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
+                      ? 'text-foreground after:absolute after:bottom-0 after:left-3 after:right-3 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""] motion-safe:after:animate-in motion-safe:after:fade-in motion-safe:after:zoom-in-75 motion-safe:after:duration-200'
                       : 'text-muted-foreground hover:text-foreground'
                   )
                 }
@@ -155,16 +148,6 @@ export function AppShell({
             >
               <Settings className="size-3.5" />
             </NavLink>
-
-            <button
-              type="button"
-              onClick={onRefreshStatus}
-              disabled={loading}
-              aria-label="Refresh status"
-              className="flex size-[30px] items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground disabled:opacity-40"
-            >
-              <RefreshCcw className={cn('size-3.5', loading && 'animate-spin')} />
-            </button>
 
             <button
               type="button"

@@ -167,8 +167,8 @@ export const HomeInput = forwardRef<HomeInputHandle, HomeInputProps>(
     const outerClass = variant === 'docked' ? 'border-t px-4 py-3' : ''
     const inputBoxClass =
       variant === 'docked'
-        ? 'flex items-end gap-2 rounded-md border bg-background px-3 py-2 shadow-sm focus-within:ring-1 focus-within:ring-ring'
-        : 'flex items-end gap-2 rounded-2xl border bg-background px-4 py-3 shadow-lg focus-within:ring-2 focus-within:ring-ring/60'
+        ? 'flex items-end gap-2 rounded-md border bg-background px-3 py-2 shadow-sm transition-shadow duration-150 focus-within:ring-1 focus-within:ring-ring'
+        : 'flex items-end gap-2 rounded-2xl border bg-background px-4 py-3 shadow-lg transition-shadow duration-150 focus-within:ring-2 focus-within:ring-ring/60'
 
     return (
       <div className={outerClass}>

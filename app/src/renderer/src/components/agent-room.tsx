@@ -8,8 +8,10 @@ import type {
 } from '@shared/contracts'
 import { useLiveTurnActivity } from '../hooks/use-live-turn-activity'
 import { useRunInspector } from '../hooks/use-run-inspector'
+import { cn } from '../lib/utils'
 import { InspectGutterButton, LiveStatusRow, RunInspectorSheet } from './run-inspector-sheet'
 import { AgentAvatar } from './agent-avatar'
+import { CopyButton } from './copy-button'
 import { MarkdownContent } from './markdown-content'
 import { FilesTouched } from './files-touched'
 import { QuestionPanel } from './question-panel'
@@ -276,21 +278,26 @@ export function AgentRoom({
           {isEmpty ? <RoomEmptyState agent={agent} /> : null}
 
           {detail.turns.map((turn) => (
-            <TranscriptTurn
+            // Polish pass: turns settle in with a short fade-up on mount.
+            <div
               key={turn.id}
-              turn={turn}
-              liveActivityLabel={turn.status === 'running' ? liveActivityLabel : null}
-              remembered={rememberedTurnIds.has(turn.id)}
-              remembering={rememberingId === turn.id}
-              onRemember={() => void handleRemember(turn.id, turn.content)}
-              onReveal={(path) => void handleReveal(turn.id, path)}
-              onOpenLiveInspector={turn.status === 'running' ? inspector.openLive : undefined}
-              onInspect={
-                turn.speaker !== 'user' && turn.status === 'completed'
-                  ? () => void inspector.openTurn(turn.id)
-                  : undefined
-              }
-            />
+              className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300"
+            >
+              <TranscriptTurn
+                turn={turn}
+                liveActivityLabel={turn.status === 'running' ? liveActivityLabel : null}
+                remembered={rememberedTurnIds.has(turn.id)}
+                remembering={rememberingId === turn.id}
+                onRemember={() => void handleRemember(turn.id, turn.content)}
+                onReveal={(path) => void handleReveal(turn.id, path)}
+                onOpenLiveInspector={turn.status === 'running' ? inspector.openLive : undefined}
+                onInspect={
+                  turn.speaker !== 'user' && turn.status === 'completed'
+                    ? () => void inspector.openTurn(turn.id)
+                    : undefined
+                }
+              />
+            </div>
           ))}
 
           {pending ? <UserMessage content={pending} /> : null}
@@ -465,6 +472,18 @@ function TranscriptTurn({
       {turn.sessionReset ? <SessionResetNote /> : null}
       <div className="group relative flex min-w-0 flex-col gap-1.5">
         {onInspect ? <InspectGutterButton onClick={onInspect} /> : null}
+        {/* Copy shares the inspect gutter, stacked below it when both show. */}
+        {!isRunning && !isFailed && turn.content.trim().length > 0 ? (
+          <CopyButton
+            text={turn.content}
+            label="Copy message"
+            className={cn(
+              'absolute -left-7 opacity-0 transition-all duration-150 group-hover:opacity-100 motion-safe:scale-90 motion-safe:group-hover:scale-100',
+              onInspect ? 'top-7' : 'top-1'
+            )}
+            iconClassName="size-4"
+          />
+        ) : null}
         {isRunning && turn.content.trim().length === 0 ? (
           // ADR-034 — live activity line instead of a static "Thinking…".
           // ADR-036: clicking it opens the run inspector for this turn.
@@ -518,6 +537,11 @@ function UserMessage({
   return (
     <div className="group ml-auto flex w-fit max-w-[85%] flex-col items-end gap-1">
       <div className="flex items-center gap-1.5">
+        <CopyButton
+          text={content}
+          label="Copy message"
+          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+        />
         {onRemember && !remembered ? (
           <button
             type="button"
@@ -539,7 +563,7 @@ function UserMessage({
         </p>
       </div>
       {remembered ? (
-        <span className="flex items-center gap-1 pr-1 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1 pr-1 text-[11px] text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-300">
           <Check className="size-3" /> Added to memory
         </span>
       ) : null}

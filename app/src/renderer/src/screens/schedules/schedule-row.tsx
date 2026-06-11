@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, MoreHorizontal, Play, Power, Trash2 } from 'lucide-react'
 import type { AgentSchedule } from '@shared/contracts'
 import { Button } from '@renderer/components/ui/button'
+import { CopyButton } from '@renderer/components/copy-button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -65,7 +66,9 @@ export function ScheduleRow({
       ref={ref}
       data-row-id={schedule.id}
       className={cn(
-        'group border-t border-border/30 transition-colors duration-200 first:border-t-0',
+        // box-shadow joins the transition so the highlight ring fades out
+        // instead of snapping off when the pulse timeout clears it.
+        'group border-t border-border/30 transition-[background-color,box-shadow] duration-300 first:border-t-0',
         'hover:bg-muted/30',
         isPaused && 'opacity-60',
         pulse && 'ring-2 ring-primary/40'
@@ -164,12 +167,21 @@ export function ScheduleRow({
       </button>
 
       {expanded ? (
-        <div className="border-t border-border/30 bg-muted/20 px-3 py-2 pl-[1.65rem]">
-          <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Prompt
+        <div className="border-t border-border/30 bg-muted/20 px-3 py-2 pl-[1.65rem] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              Prompt
+            </span>
+            {promptText ? (
+              <CopyButton
+                text={promptText}
+                label="Copy prompt"
+                className="opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+              />
+            ) : null}
           </div>
           {promptText ? (
-            <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/80">
+            <p className="select-text whitespace-pre-wrap text-xs leading-relaxed text-foreground/80">
               {promptText}
             </p>
           ) : (

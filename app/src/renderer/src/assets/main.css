@@ -246,6 +246,67 @@ a {
     background: transparent;
   }
 
+  /* Live status text shimmer (polish pass): a soft emphasis band sweeps
+     through status text while work is in flight ("Reading agenda.md… · 12s").
+     Token-driven — surfaces can retint via the two CSS vars (e.g. rail
+     running labels use primary). The band occupies ~25% of the cycle, so most
+     of the time the text rests at its base color. Reduced motion falls back
+     to static base-colored text. */
+  @keyframes ordinus-text-shimmer {
+    0% {
+      background-position: 175% 0;
+    }
+    100% {
+      background-position: -75% 0;
+    }
+  }
+
+  .ordinus-text-shimmer {
+    --shimmer-base: hsl(var(--muted-foreground));
+    --shimmer-hi: hsl(var(--foreground));
+    background-image: linear-gradient(
+      105deg,
+      var(--shimmer-base) 40%,
+      var(--shimmer-hi) 50%,
+      var(--shimmer-base) 60%
+    );
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: ordinus-text-shimmer 2.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ordinus-text-shimmer {
+      animation: none;
+      background-image: none;
+      color: var(--shimmer-base);
+    }
+  }
+
+  /* Presence glow for the "working" agent dot: a calm ring that swells out
+     and fades, instead of the flat opacity pulse. */
+  @keyframes ordinus-presence-glow {
+    0% {
+      box-shadow: 0 0 0 0 hsl(var(--status-running) / 0.4);
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 4px hsl(var(--status-running) / 0);
+    }
+  }
+
+  .ordinus-presence-glow {
+    animation: ordinus-presence-glow 2.4s ease-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ordinus-presence-glow {
+      animation: none;
+    }
+  }
+
   /* Indeterminate progress shimmer for the onboarding install rows. The
      element should be sized as a fraction of its container; the keyframe
      slides it across, wrapping. See ADR-028. */

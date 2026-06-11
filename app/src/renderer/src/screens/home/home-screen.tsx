@@ -466,14 +466,17 @@ export function HomeScreen(): React.JSX.Element {
     })
   }, [])
 
-  const touchConversation = useCallback((conversationId: string) => {
+  const touchConversation = useCallback((conversationId: string, preview?: string) => {
     const updatedAt = nowIso()
     setConversations((prev) => {
       const next = prev.map((conversation) => {
         if (conversation.id !== conversationId) return conversation
         return {
           ...conversation,
-          updatedAt
+          updatedAt,
+          // Optimistic rail meta — the authoritative value lands with the
+          // next listConversations reload after the turn settles.
+          lastPreview: preview ?? conversation.lastPreview
         }
       })
       return next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -602,7 +605,7 @@ export function HomeScreen(): React.JSX.Element {
         text: displayText,
         at: nowIso()
       })
-      touchConversation(conversationId)
+      touchConversation(conversationId, displayText)
       // ADR-034: no local status append — the live activity row is synthesized
       // from busy state so it can mutate with observability pushes.
       setPendingTurnLabelsByConversation((prev) => ({

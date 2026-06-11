@@ -22,7 +22,6 @@ import {
   Clock3,
   Columns3,
   CornerDownRight,
-  Copy,
   FileText,
   Files,
   Folder,
@@ -58,6 +57,7 @@ import type {
 import { appRoutePaths } from '@renderer/app/routes'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
+import { CopyButton as SharedCopyButton } from '@renderer/components/copy-button'
 import { RunInspectorSheet } from '@renderer/components/run-inspector-sheet'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
@@ -1482,7 +1482,7 @@ function ExistingFolderBrowser({
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           disabled={currentPath === ''}
           onClick={() => setCurrentPath(parentPath)}
         >
@@ -2200,7 +2200,14 @@ function RunCardActivity({
             >
               <Loader2 className={cn('size-3', activity.spinning && 'animate-spin')} />
             </span>
-            <p className="min-w-0 truncate text-xs font-medium leading-5 text-foreground">
+            <p
+              className={cn(
+                'min-w-0 truncate text-xs font-medium leading-5 text-foreground',
+                // The phase title breathes while the agent is actively moving.
+                activity.spinning &&
+                  'ordinus-text-shimmer [--shimmer-base:hsl(var(--foreground))] [--shimmer-hi:hsl(var(--muted-foreground))]'
+              )}
+            >
               {activity.title}
             </p>
           </div>
@@ -2831,7 +2838,7 @@ function DraftExistingRunChecklist({
         return (
           <label
             key={run.id}
-            className="flex min-w-0 items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm"
+            className="flex min-w-0 cursor-pointer items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm transition-colors hover:bg-accent/50"
           >
             <input
               type="checkbox"
@@ -2878,7 +2885,7 @@ function DraftDependencyChecklist({
             <label
               key={candidate.tempId}
               className={cn(
-                'flex min-w-0 items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm',
+                'flex min-w-0 cursor-pointer items-start gap-2 rounded-md border bg-background px-2 py-2 text-sm transition-colors hover:bg-accent/50',
                 createsCycle && 'opacity-60'
               )}
               title={createsCycle ? 'This would create a dependency cycle.' : undefined}
@@ -3081,13 +3088,16 @@ function RunDetailDrawer({
 
   return (
     <div className="fixed inset-0 z-40">
+      {/* Polish pass: this hand-rolled overlay mounts with the same entrance
+          grammar as the shadcn dialogs (fade backdrop + zoom-in panel), so
+          opening a card no longer snaps while the composer dialogs animate. */}
       <button
         type="button"
-        className="absolute inset-0 bg-foreground/30 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-[2px] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200"
         aria-label="Close Work Item details"
         onClick={onClose}
       />
-      <aside className="absolute inset-x-4 top-[4vh] bottom-[4vh] z-10 mx-auto flex w-auto max-w-[860px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
+      <aside className="absolute inset-x-4 top-[4vh] bottom-[4vh] z-10 mx-auto flex w-auto max-w-[860px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200">
         <RunDetailHeader
           run={run}
           runs={runs}
@@ -3278,19 +3288,8 @@ function AttachmentChip({
   onRevealPath: (path: string) => void
   onOpenFile: (path: string) => void
 }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
   const name = getFileBasename(file.path)
   const isMarkdown = file.path.toLowerCase().endsWith('.md')
-
-  async function copyPath(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(file.path)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1400)
-    } catch {
-      setCopied(false)
-    }
-  }
 
   return (
     <div className="group flex min-w-0 items-center gap-1.5 text-sm">
@@ -3314,14 +3313,7 @@ function AttachmentChip({
             <FileText className="size-3.5" />
           </button>
         ) : null}
-        <button
-          type="button"
-          className="rounded-full p-1 text-muted-foreground hover:text-foreground"
-          onClick={() => void copyPath()}
-          aria-label="Copy file path"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
+        <SharedCopyButton text={file.path} label="Copy file path" className="rounded-full p-1" />
         <button
           type="button"
           className="rounded-full p-1 text-muted-foreground hover:text-foreground"
@@ -3424,11 +3416,11 @@ function RequestFilesDrawer({
     <div className="fixed inset-0 z-40">
       <button
         type="button"
-        className="absolute inset-0 bg-foreground/30 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-[2px] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200"
         aria-label="Close request files"
         onClick={onClose}
       />
-      <aside className="absolute inset-x-4 top-[4vh] bottom-[4vh] z-10 mx-auto flex w-auto max-w-[620px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
+      <aside className="absolute inset-x-4 top-[4vh] bottom-[4vh] z-10 mx-auto flex w-auto max-w-[620px] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:slide-in-from-bottom-2 motion-safe:duration-200">
         <header className="border-b bg-card px-6 py-5 sm:px-8">
           <div className="mx-auto flex w-full max-w-[480px] items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
@@ -3622,8 +3614,14 @@ function RunOutputSection({
         <RunOutputPending run={run} onOpenInspect={onOpenInspect} />
       )}
       {run.error ? (
-        <div className="mt-3 rounded-lg border border-status-failed/30 bg-status-failed/5 p-3">
-          <p className="text-xs font-medium text-muted-foreground">What went wrong</p>
+        <div className="group/error mt-3 rounded-lg border border-status-failed/30 bg-status-failed/5 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-muted-foreground">What went wrong</p>
+            {/* Errors are the text users most often need to paste somewhere. */}
+            <span className="opacity-0 transition-opacity focus-within:opacity-100 group-hover/error:opacity-100">
+              <CopyButton value={run.error} label="Copy error" />
+            </span>
+          </div>
           <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">
             {run.error}
           </p>
@@ -3718,30 +3716,17 @@ function CollapsibleReportSection({
   )
 }
 
+// Polish pass: delegates to the shared copy affordance so feedback (✓ flash,
+// clipboard fallback) matches the rest of the app, keeping the padded chip
+// hit-area this screen's report sections rely on.
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1400)
-    } catch {
-      setCopied(false)
-    }
-  }
-
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      className="size-7 text-muted-foreground hover:text-foreground"
-      onClick={() => void copy()}
-    >
-      {copied ? <Check /> : <Copy />}
-      <span className="sr-only">{label}</span>
-    </Button>
+    <SharedCopyButton
+      text={value}
+      label={label}
+      className="inline-flex size-7 items-center justify-center rounded-md hover:bg-accent"
+      iconClassName="size-4"
+    />
   )
 }
 
@@ -4323,7 +4308,11 @@ function RunningOutputState({ onOpenInspect }: { onOpenInspect: () => void }): R
           key={index}
           className="text-sm text-foreground duration-700 animate-in fade-in-0 slide-in-from-bottom-1"
         >
-          {runningOutputMessages[index]}
+          {/* Shimmer lives on a nested span: the entrance animation above and
+              the sweep are separate `animation` properties. */}
+          <span className="ordinus-text-shimmer [--shimmer-base:hsl(var(--foreground))] [--shimmer-hi:hsl(var(--muted-foreground))]">
+            {runningOutputMessages[index]}
+          </span>
         </p>
       </div>
     </button>

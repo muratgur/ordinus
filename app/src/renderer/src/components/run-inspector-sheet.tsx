@@ -8,7 +8,7 @@
 // Workboard (work items), Home (Ordinus turns), and Agent Room (agent turns).
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Loader2, TerminalSquare, XCircle } from 'lucide-react'
+import { Check, ChevronRight, Copy, Loader2, TerminalSquare, XCircle } from 'lucide-react'
 import type {
   ObservedRunDiagnostics,
   ObservedRunEvent,
@@ -51,7 +51,7 @@ export function InspectGutterButton({ onClick }: { onClick: () => void }): React
       aria-label="Inspect how this turn happened"
       title="Inspect how this turn happened"
       onClick={onClick}
-      className="absolute -left-7 top-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+      className="absolute -left-7 top-1 text-muted-foreground opacity-0 transition-all duration-150 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 motion-safe:scale-90 motion-safe:group-hover:scale-100"
     >
       <TerminalSquare className="size-4" />
     </button>
@@ -68,10 +68,15 @@ export function LiveStatusRow({
   label: string
   onClick?: () => void
 }): React.JSX.Element {
+  // Polish pass: the label carries a soft shimmer sweep while the turn is in
+  // flight — the same words, just visibly alive. On hover the sweep settles
+  // into solid ink and a small chevron slides in to hint "inspectable".
   const content = (
     <>
       <Loader2 className="h-3 w-3 animate-spin" />
-      <span>{label}</span>
+      <span className="ordinus-text-shimmer group-hover/live:[--shimmer-base:hsl(var(--foreground))]">
+        {label}
+      </span>
     </>
   )
   if (!onClick) {
@@ -80,11 +85,12 @@ export function LiveStatusRow({
   return (
     <button
       type="button"
-      className="flex w-fit items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      className="group/live flex w-fit items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
       title="Inspect how this turn is happening"
       onClick={onClick}
     >
       {content}
+      <ChevronRight className="size-3 -translate-x-0.5 opacity-0 transition-all duration-150 group-hover/live:translate-x-0 group-hover/live:opacity-100" />
     </button>
   )
 }
@@ -123,13 +129,15 @@ export function RunInspectorSheet({
 
   return (
     <div className="fixed inset-0 z-50">
+      {/* Polish pass: the sheet rises from the bottom edge instead of
+          snapping in — same entrance grammar as the app's other overlays. */}
       <button
         type="button"
-        className="absolute inset-0 bg-foreground/20"
+        className="absolute inset-0 bg-foreground/20 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200"
         aria-label="Close inspector"
         onClick={onClose}
       />
-      <section className="absolute inset-x-0 bottom-0 z-10 flex h-[68vh] flex-col rounded-t-2xl border-t bg-card shadow-2xl">
+      <section className="absolute inset-x-0 bottom-0 z-10 flex h-[68vh] flex-col rounded-t-2xl border-t bg-card shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-bottom-8 motion-safe:fade-in-0 motion-safe:duration-300 motion-safe:ease-out">
         <header className="flex items-center justify-between gap-4 border-b px-6 py-3">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold">{heading}</h3>

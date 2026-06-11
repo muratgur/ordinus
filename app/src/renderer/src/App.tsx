@@ -239,12 +239,10 @@ function App(): React.JSX.Element {
             <AppShell
               dbStatus={state.dbStatus}
               setupStatus={state.setupStatus}
-              loading={state.loading}
               workboardPlanReady={Boolean(workboardDraftReview.plan)}
               planQueue={
                 <PlanQueue planOperations={planOperations} onReview={routeOperationIntoReview} />
               }
-              onRefreshStatus={() => void loadStatus()}
             />
           }
         >

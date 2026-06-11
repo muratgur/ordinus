@@ -525,6 +525,7 @@ export class OrdinusDatabase {
     archivedAt: string | null
     pinnedAt: string | null
     frozenReason: string | null
+    lastPreview: string
     createdAt: string
     updatedAt: string
   }> {
@@ -542,9 +543,26 @@ export class OrdinusDatabase {
       archivedAt: row.archivedAt,
       pinnedAt: row.pinnedAt,
       frozenReason: row.frozenReason,
+      lastPreview: this.getOrdinusConversationPreview(row.id),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     }))
+  }
+
+  // Rail meta line: preview of the latest turn (same per-conversation lookup
+  // pattern as listConversations / listAgentRoomSummaries). '' for fresh
+  // conversations — the renderer supplies the "No messages yet" copy.
+  private getOrdinusConversationPreview(conversationId: string): string {
+    const latestTurn = this.db
+      .select({ content: ordinusConversationTurns.content })
+      .from(ordinusConversationTurns)
+      .where(eq(ordinusConversationTurns.conversationId, conversationId))
+      .orderBy(desc(ordinusConversationTurns.createdAt))
+      .get()
+    const previewSource = latestTurn?.content.replace(/\s+/g, ' ').trim() ?? ''
+    return previewSource.length > turnPreviewLimit
+      ? `${previewSource.slice(0, turnPreviewLimit - 3)}...`
+      : previewSource
   }
 
   createOrdinusConversation(input: { title: string; providerId: string; model: string }): {
@@ -556,6 +574,7 @@ export class OrdinusDatabase {
     archivedAt: string | null
     pinnedAt: string | null
     frozenReason: string | null
+    lastPreview: string
     createdAt: string
     updatedAt: string
   } {
@@ -585,6 +604,7 @@ export class OrdinusDatabase {
       archivedAt: null,
       pinnedAt: null,
       frozenReason: null,
+      lastPreview: '',
       createdAt: now,
       updatedAt: now
     }

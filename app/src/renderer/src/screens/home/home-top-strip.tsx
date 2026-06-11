@@ -28,7 +28,7 @@ export function HomeTopStrip({ title, busy, onRename }: HomeTopStripProps): Reac
           <span className="text-muted-foreground/60">·</span>
           <button
             type="button"
-            className="truncate rounded-sm text-left text-sm text-muted-foreground hover:text-foreground"
+            className="truncate rounded-sm text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
             onDoubleClick={onRename}
             title="Double-click to rename"
           >

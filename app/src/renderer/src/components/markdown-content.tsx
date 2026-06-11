@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { CopyButton } from '@renderer/components/copy-button'
 
 const markdownContentClassName = [
   'min-w-0 max-w-full overflow-x-auto select-text text-sm leading-6 text-foreground [overflow-wrap:anywhere]',
@@ -37,13 +39,39 @@ export function MarkdownContent({ content }: { content: string }): React.JSX.Ele
               <span className="font-medium text-primary" title={href}>
                 {children}
               </span>
-            )
+            ),
+          // Polish pass: every fenced code block gets a hover-revealed copy
+          // chip in its top-right corner. `group/code` scopes the reveal to
+          // the block, so nested groups in transcripts don't trigger it.
+          pre: ({ children }) => (
+            <pre className="group/code relative">
+              <span className="absolute right-1.5 top-1.5 flex opacity-0 transition-opacity focus-within:opacity-100 group-hover/code:opacity-100">
+                <CopyButton
+                  text={() => extractNodeText(children)}
+                  label="Copy code"
+                  className="rounded-md border bg-background/95 p-1.5 shadow-sm hover:bg-accent"
+                />
+              </span>
+              {children}
+            </pre>
+          )
         }}
       >
         {content}
       </ReactMarkdown>
     </div>
   )
+}
+
+// Flattens the rendered code block back to plain text for the clipboard.
+function extractNodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(extractNodeText).join('')
+  if (typeof node === 'object' && 'props' in node) {
+    return extractNodeText((node.props as { children?: ReactNode }).children)
+  }
+  return ''
 }
 
 function isSafeMarkdownHref(value: string | undefined): value is string {

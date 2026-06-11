@@ -398,6 +398,10 @@ export const OrdinusConversationSummarySchema = z.object({
   archivedAt: z.string().nullable(),
   pinnedAt: z.string().nullable(),
   frozenReason: z.string().nullable(),
+  // Compact preview of the latest transcript turn for the rail's meta line
+  // (parity with ConversationListItem.lastPreview). Empty for fresh rooms —
+  // the renderer falls back to "No messages yet".
+  lastPreview: z.string(),
   createdAt: z.string(),
   updatedAt: z.string()
 })

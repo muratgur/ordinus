@@ -172,7 +172,9 @@ export function QuestionPanel({
   }
 
   return (
-    <div className="border-t bg-primary/5 px-4 py-2.5">
+    // Polish pass: the panel slides in softly when the agent asks something —
+    // it appears mid-conversation, so the entrance keeps it from startling.
+    <div className="border-t bg-primary/5 px-4 py-2.5 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-300">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2" key={questionKey}>
         <div className="flex min-w-0 items-baseline justify-between gap-2">
           <div className="flex min-w-0 items-baseline gap-2">

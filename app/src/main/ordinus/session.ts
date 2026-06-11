@@ -62,6 +62,8 @@ export type OrdinusConversationSummary = {
   archivedAt: string | null
   pinnedAt: string | null
   frozenReason: string | null
+  /** Preview of the latest transcript turn ('' for fresh conversations). */
+  lastPreview: string
   createdAt: string
   updatedAt: string
 }

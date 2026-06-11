@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { CalendarClock } from 'lucide-react'
 import type { Agent, AgentSchedule } from '@shared/contracts'
 import { cn } from '@renderer/lib/utils'
 import { humanizeRelative } from '@renderer/lib/humanize-cadence'
@@ -32,7 +33,8 @@ export function WhatsNextStrip({
 
   if (upcoming.length === 0) {
     return (
-      <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        <CalendarClock className="size-3.5 shrink-0 opacity-60" aria-hidden />
         Quiet — nothing scheduled in the next 24 hours.
       </div>
     )

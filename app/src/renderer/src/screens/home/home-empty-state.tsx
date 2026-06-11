@@ -53,7 +53,7 @@ export function HomeEmptyState(props: HomeEmptyStateProps): React.JSX.Element {
       {/* Optically balanced — the hero stack sits slightly ABOVE true vertical
           center, which reads as intentional/classy rather than machine-centered
           (ADR-029 §8). */}
-      <div className="-mt-[6vh] flex w-full max-w-2xl flex-col items-stretch gap-7">
+      <div className="-mt-[6vh] flex w-full max-w-2xl flex-col items-stretch gap-7 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500">
         {/* Presence anchor — the animated Ordinus mark (concentric ring), the
             emotional center of the welcoming stage. Breathes while idle. */}
         <div className="flex flex-col items-center gap-4">
@@ -91,7 +91,7 @@ export function HomeEmptyState(props: HomeEmptyStateProps): React.JSX.Element {
               type="button"
               disabled={props.busy || props.disabled}
               onClick={() => inputRef.current?.prefill(starter.prefill)}
-              className="rounded-full border border-border/70 bg-background/40 px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full border border-border/70 bg-background/40 px-3.5 py-1.5 text-xs text-muted-foreground transition duration-150 hover:border-border hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 motion-safe:active:scale-[0.97]"
             >
               {starter.label}
             </button>

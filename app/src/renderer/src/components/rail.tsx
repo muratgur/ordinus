@@ -67,7 +67,7 @@ const RailIconButton = React.forwardRef<HTMLButtonElement, RailIconButtonProps>(
       title={label}
       aria-label={label}
       className={cn(
-        'relative flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-40',
+        'relative flex size-7 items-center justify-center rounded-md text-muted-foreground transition duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-40 motion-safe:active:scale-95',
         active && 'text-foreground',
         className
       )}
@@ -356,7 +356,11 @@ export function RailItem({
           {running ? (
             <span className="flex items-center gap-1.5 text-[11px] leading-tight text-primary">
               <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-              {runningLabel}
+              {/* Primary-tinted shimmer: the row's status text breathes while
+                  the record is actively working. */}
+              <span className="ordinus-text-shimmer truncate [--shimmer-base:hsl(var(--primary))] [--shimmer-hi:hsl(var(--primary-active))]">
+                {runningLabel}
+              </span>
             </span>
           ) : meta ? (
             <span className="truncate text-[11px] leading-tight text-muted-foreground">{meta}</span>
@@ -406,7 +410,7 @@ export function RailItemAction({
       aria-label={label}
       disabled={disabled}
       className={cn(
-        'rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:opacity-40',
+        'rounded p-1 text-muted-foreground transition duration-150 hover:bg-background hover:text-foreground disabled:opacity-40 motion-safe:active:scale-95',
         className
       )}
       onClick={(event) => {

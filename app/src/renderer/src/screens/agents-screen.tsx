@@ -409,7 +409,7 @@ export function AgentsScreen(): React.JSX.Element {
                       className={cn(
                         'relative flex items-center gap-1.5 px-4 py-3 text-[12.5px] font-medium transition-colors',
                         isActive
-                          ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""]'
+                          ? 'text-foreground after:absolute after:bottom-0 after:left-4 after:right-4 after:h-[2px] after:rounded-t-sm after:bg-primary after:content-[""] motion-safe:after:animate-in motion-safe:after:fade-in motion-safe:after:zoom-in-75 motion-safe:after:duration-200'
                           : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
@@ -1500,7 +1500,7 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
             <button
               key={skill.id}
               type="button"
-              className="grid gap-2 rounded-lg border bg-card p-4 text-left transition-colors hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              className="grid gap-2 rounded-lg border bg-card p-4 text-left transition-[border-color,box-shadow] duration-150 hover:border-ring hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               onClick={() => void openEditSkill(skill)}
             >
               <div className="flex min-w-0 items-start justify-between gap-3">
@@ -2267,7 +2267,9 @@ function PresenceDot({
       className={cn(
         'size-2.5 shrink-0 rounded-full',
         presence === 'available' && 'bg-status-completed',
-        presence === 'working' && 'animate-pulse bg-status-running',
+        // Working: the dot stays solid and a calm ring swells out around it,
+        // instead of the flat opacity pulse (polish pass).
+        presence === 'working' && 'ordinus-presence-glow bg-status-running',
         presence === 'needs-setup' && 'bg-status-attention',
         presence === 'off' && 'bg-muted-foreground',
         className

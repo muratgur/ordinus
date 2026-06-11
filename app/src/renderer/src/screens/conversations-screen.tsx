@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -26,6 +25,7 @@ import {
   XCircle
 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
+import { CopyButton } from '@renderer/components/copy-button'
 import { Rail, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
 import { Badge } from '@renderer/components/ui/badge'
 import {
@@ -1173,10 +1173,15 @@ function DiscussionCard({
   const [open, setOpen] = useState(false)
 
   return (
-    <article className="mr-auto grid w-full min-w-0 max-w-full gap-3 overflow-hidden rounded-lg border border-primary/30 bg-primary-soft/40 p-4 sm:max-w-[82%] dark:border-primary/40 dark:bg-primary-soft/30">
+    <article className="group/result mr-auto grid w-full min-w-0 max-w-full gap-3 overflow-hidden rounded-lg border border-primary/30 bg-primary-soft/40 p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 sm:max-w-[82%] dark:border-primary/40 dark:bg-primary-soft/30">
       <div className="flex min-w-0 items-center gap-2">
         <Sparkles className="size-4 shrink-0 text-primary" />
         <p className="truncate text-sm font-semibold">Result</p>
+        <CopyButton
+          text={moderator.content}
+          label="Copy result"
+          className="ml-auto shrink-0 opacity-0 transition-opacity group-hover/result:opacity-100"
+        />
       </div>
       <AgentMarkdown content={moderator.content} />
       {moderator.truncated ? (
@@ -1190,7 +1195,9 @@ function DiscussionCard({
             className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
             aria-expanded={open}
           >
-            {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            <ChevronRight
+              className={cn('size-3.5 transition-transform duration-200', open && 'rotate-90')}
+            />
             {open
               ? 'Hide discussion'
               : `See discussion (${agentTurns.length} ${
@@ -1198,7 +1205,7 @@ function DiscussionCard({
                 })`}
           </button>
           {open ? (
-            <div className="grid gap-3 border-l-2 border-primary/20 pl-3">
+            <div className="grid gap-3 border-l-2 border-primary/20 pl-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200">
               {agentTurns.map((turn) => renderTurnCard(turn))}
             </div>
           ) : null}
@@ -1234,11 +1241,15 @@ function TurnCard({
   const showStatus = shouldShowTurnStatus(turn, inputRequest)
   const showInputRequestAction =
     !isUser && turn.status === 'waiting_for_user' && inputRequest?.status === 'pending'
+  // Polish pass: hover-reveal copy in the header. Failed turns copy the error
+  // (the thing you actually want to paste somewhere); others copy the content.
+  const copyValue = turn.status === 'failed' ? turn.error || '' : turn.content
+  const showCopy = turn.status !== 'running' && copyValue.trim().length > 0
 
   return (
     <article
       className={cn(
-        'grid w-full min-w-0 max-w-full gap-2 overflow-hidden rounded-lg border bg-card p-4',
+        'group/turn grid w-full min-w-0 max-w-full gap-2 overflow-hidden rounded-lg border bg-card p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300',
         isUser
           ? 'ml-auto w-fit border-primary/20 bg-primary-soft/70 sm:max-w-[86%] dark:border-primary/30 dark:bg-primary-soft/45'
           : 'mr-auto border-border bg-surface-subtle/70 border-l-4 border-l-primary/30 sm:max-w-[82%] dark:bg-surface-subtle/55 dark:border-l-primary/45',
@@ -1255,17 +1266,26 @@ function TurnCard({
               : participantName || 'Agent'}
           </p>
         </div>
-        {showInputRequestAction ? (
-          <InputRequestTurnAction
-            request={inputRequest}
-            drafts={inputRequestDrafts}
-            disabled={inputRequestDisabled || answeringInputRequest}
-            answering={answeringInputRequest}
-            onOpen={() => onOpenInputRequest(inputRequest.id)}
-          />
-        ) : showStatus ? (
-          <TurnStatus status={turn.status} />
-        ) : null}
+        <div className="flex shrink-0 items-center gap-2">
+          {showCopy ? (
+            <CopyButton
+              text={copyValue}
+              label={turn.status === 'failed' ? 'Copy error' : 'Copy message'}
+              className="opacity-0 transition-opacity group-hover/turn:opacity-100"
+            />
+          ) : null}
+          {showInputRequestAction ? (
+            <InputRequestTurnAction
+              request={inputRequest}
+              drafts={inputRequestDrafts}
+              disabled={inputRequestDisabled || answeringInputRequest}
+              answering={answeringInputRequest}
+              onOpen={() => onOpenInputRequest(inputRequest.id)}
+            />
+          ) : showStatus ? (
+            <TurnStatus status={turn.status} />
+          ) : null}
+        </div>
       </div>
       {turn.status === 'running' ? null : turn.status === 'failed' ? (
         <p className="select-text rounded-md border border-status-attention/30 bg-status-attention/10 px-3 py-2 text-sm text-status-attention [overflow-wrap:anywhere]">
@@ -1320,7 +1340,7 @@ function InputRequestTurnAction({
 function PendingSendTimeline({ pendingSend }: { pendingSend: PendingSend }): React.JSX.Element {
   return (
     <div className="grid gap-3">
-      <article className="ml-auto grid w-fit max-w-full gap-2 overflow-hidden rounded-lg border border-primary/20 bg-primary-soft/70 p-4 dark:border-primary/30 dark:bg-primary-soft/45 sm:max-w-[86%]">
+      <article className="ml-auto grid w-fit max-w-full gap-2 overflow-hidden rounded-lg border border-primary/20 bg-primary-soft/70 p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 dark:border-primary/30 dark:bg-primary-soft/45 sm:max-w-[86%]">
         <div className="flex min-w-0 items-center gap-2">
           <UserRound className="size-4 shrink-0 text-primary" />
           <p className="truncate text-sm font-semibold">You</p>
@@ -1336,10 +1356,10 @@ function PendingSendTimeline({ pendingSend }: { pendingSend: PendingSend }): Rea
 
 function OrchestratorPlanningRow(): React.JSX.Element {
   return (
-    <div className="mr-auto flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-dashed bg-surface-subtle/60 px-3 py-2 text-xs text-muted-foreground sm:max-w-[82%]">
+    <div className="mr-auto flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-dashed bg-surface-subtle/60 px-3 py-2 text-xs text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 sm:max-w-[82%]">
       <Activity className="size-3.5 shrink-0 text-primary" />
       <span className="shrink-0 font-medium text-foreground">Orchestrator</span>
-      <span className="min-w-0 truncate">is planning the route</span>
+      <span className="ordinus-text-shimmer min-w-0 truncate">is planning the route</span>
       <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-status-running" />
     </div>
   )
@@ -1349,10 +1369,10 @@ function OrchestratorPlanningRow(): React.JSX.Element {
 // speaks next (or concludes), so the discussion never looks idle/finished.
 function ModeratorDeliberatingRow(): React.JSX.Element {
   return (
-    <div className="mr-auto flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-dashed bg-surface-subtle/60 px-3 py-2 text-xs text-muted-foreground sm:max-w-[82%]">
+    <div className="mr-auto flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-dashed bg-surface-subtle/60 px-3 py-2 text-xs text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300 sm:max-w-[82%]">
       <Sparkles className="size-3.5 shrink-0 text-primary" />
       <span className="shrink-0 font-medium text-foreground">Moderator</span>
-      <span className="min-w-0 truncate">is reviewing the discussion</span>
+      <span className="ordinus-text-shimmer min-w-0 truncate">is reviewing the discussion</span>
       <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-status-running" />
     </div>
   )
@@ -1371,11 +1391,13 @@ function TurnFullResponse({ content }: { content: string }): React.JSX.Element {
         className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         aria-expanded={open}
       >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        <ChevronRight
+          className={cn('size-3.5 transition-transform duration-200', open && 'rotate-90')}
+        />
         {open ? 'Hide full response' : 'Show full response'}
       </button>
       {open ? (
-        <div className="border-l-2 border-primary/20 pl-3">
+        <div className="border-l-2 border-primary/20 pl-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200">
           <AgentMarkdown content={content} />
         </div>
       ) : null}
@@ -1400,7 +1422,7 @@ function TurnObservabilityPanel({
     return turnStatus === 'running' ? (
       <div className="flex min-w-0 items-center gap-2 border-t pt-2 text-xs text-muted-foreground">
         <Loader2 className="size-3.5 animate-spin" />
-        <span className="truncate">Thinking</span>
+        <span className="ordinus-text-shimmer truncate">Thinking</span>
       </div>
     ) : null
   }
@@ -1426,11 +1448,18 @@ function TurnObservabilityPanel({
         ) : (
           <Activity className="size-3.5 shrink-0" />
         )}
-        <span className="shrink-0 font-medium text-foreground">
+        <span
+          className={cn(
+            'shrink-0 font-medium text-foreground',
+            running && !showActivityLabel && 'ordinus-text-shimmer'
+          )}
+        >
           {running ? 'Thinking' : formatObservedPhase(observedRun.currentPhase)}
         </span>
         {showActivityLabel ? (
-          <span className="min-w-0 flex-1 truncate">{activityLabel}</span>
+          <span className={cn('min-w-0 flex-1 truncate', running && 'ordinus-text-shimmer')}>
+            {activityLabel}
+          </span>
         ) : null}
       </button>
       <TurnObservationDrawer

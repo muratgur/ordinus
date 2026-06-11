@@ -189,8 +189,10 @@ function sortActiveConversation(
 }
 
 /**
- * Line-2 meta for a conversation: a frozen warning or an anomaly-only provider
- * badge. The timestamp lives in the item's right slot, not here.
+ * Line-2 meta for a conversation: a frozen warning, an anomaly-only provider
+ * badge, or the latest-turn preview (Conversations-rail parity — every row
+ * gets a second line, so the list reads at a consistent rhythm). The
+ * timestamp lives in the item's right slot, not here.
  */
 function conversationMeta(
   conversation: OrdinusConversationSummary,
@@ -215,7 +217,7 @@ function conversationMeta(
       </span>
     )
   }
-  return undefined
+  return conversation.lastPreview || 'No messages yet'
 }
 
 function ConversationMenu({

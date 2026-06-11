@@ -16,10 +16,12 @@
 //     items; M4 only renders user/assistant/status/error.
 
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, AlertCircle, Bookmark, Check, ChevronDown, ChevronRight } from 'lucide-react'
+import { Loader2, AlertCircle, Bookmark, Check, ChevronRight } from 'lucide-react'
+import { CopyButton } from '@renderer/components/copy-button'
 import { MarkdownContent } from '@renderer/components/markdown-content'
 import { FilesTouched } from '@renderer/components/files-touched'
 import { InspectGutterButton, LiveStatusRow } from '@renderer/components/run-inspector-sheet'
+import { cn } from '@renderer/lib/utils'
 import type { HomeMessage } from './types'
 
 export type HomeTranscriptProps = {
@@ -66,29 +68,45 @@ export function HomeTranscript({
   // scrollIntoView interplay was fighting the parent flex sizing in early
   // tests. The plain `overflow-y-auto` + `ordinus-scrollbar` matches what
   // the rest of the app uses (workflows-screen sidebar, etc.).
+  //
+  // Smooth scrolling is ONLY for messages appended within the same thread.
+  // Opening a (different) conversation jumps straight to the bottom — a
+  // smooth scroll there animates through the entire history, which reads as
+  // a glitch on long transcripts. Thread identity is tracked by the first
+  // message id (stable within a thread, different across threads).
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const threadKeyRef = useRef<string | null>(null)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    const threadKey = messages[0]?.id ?? null
+    const sameThread = threadKeyRef.current === threadKey && threadKey !== null
+    threadKeyRef.current = threadKey
+    bottomRef.current?.scrollIntoView({ behavior: sameThread ? 'smooth' : 'auto', block: 'end' })
   }, [messages])
 
   return (
     <div className="ordinus-scrollbar h-full overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-8">
         {messages.map((message) => (
-          <TranscriptItem
+          // Polish pass: each entry settles in with a short fade-up on mount,
+          // so new turns land softly instead of popping.
+          <div
             key={message.id}
-            message={message}
-            remembered={rememberedMessageIds?.has(message.id) ?? false}
-            remembering={rememberingMessageId === message.id}
-            onRemember={
-              onRememberMessage && message.kind === 'user'
-                ? () => onRememberMessage(message.id, message.text)
-                : undefined
-            }
-            onRevealFile={onRevealFile ? (path) => onRevealFile(message.id, path) : undefined}
-            onOpenInspector={onOpenInspector}
-            onInspect={getInspectHandler(message, onInspectMessage)}
-          />
+            className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300"
+          >
+            <TranscriptItem
+              message={message}
+              remembered={rememberedMessageIds?.has(message.id) ?? false}
+              remembering={rememberingMessageId === message.id}
+              onRemember={
+                onRememberMessage && message.kind === 'user'
+                  ? () => onRememberMessage(message.id, message.text)
+                  : undefined
+              }
+              onRevealFile={onRevealFile ? (path) => onRevealFile(message.id, path) : undefined}
+              onOpenInspector={onOpenInspector}
+              onInspect={getInspectHandler(message, onInspectMessage)}
+            />
+          </div>
         ))}
         <div ref={bottomRef} />
       </div>
@@ -123,6 +141,13 @@ function TranscriptItem({
       // saving into Ordinus's own memory.
       return (
         <div className="group flex items-center justify-end gap-1.5">
+          {/* Hover affordances sit to the left of the bubble: copy, then the
+              existing Remember bookmark. Both stay invisible until hover. */}
+          <CopyButton
+            text={message.text}
+            label="Copy message"
+            className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+          />
           {onRemember && !remembered ? (
             <button
               type="button"
@@ -140,7 +165,7 @@ function TranscriptItem({
             </button>
           ) : null}
           {remembered ? (
-            <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-300">
               <Check className="size-3" /> Added to memory
             </span>
           ) : null}
@@ -153,6 +178,17 @@ function TranscriptItem({
       return (
         <div className="group relative flex flex-col gap-1">
           {onInspect ? <InspectGutterButton onClick={onInspect} /> : null}
+          {/* Copy lives in the same left gutter as inspect, stacked below it
+              when both are present. */}
+          <CopyButton
+            text={message.text}
+            label="Copy message"
+            className={cn(
+              'absolute -left-7 opacity-0 transition-all duration-150 group-hover:opacity-100 motion-safe:scale-90 motion-safe:group-hover:scale-100',
+              onInspect ? 'top-7' : 'top-1'
+            )}
+            iconClassName="size-4"
+          />
           <MarkdownContent content={message.text} />
           {message.resultContent.trim() ? (
             <AssistantFullResponse content={message.resultContent} />
@@ -197,11 +233,15 @@ function AssistantFullResponse({ content }: { content: string }): React.JSX.Elem
         className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         aria-expanded={open}
       >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        {/* One chevron that rotates, instead of swapping icons — the motion
+            carries the state change. */}
+        <ChevronRight
+          className={cn('size-3.5 transition-transform duration-200', open && 'rotate-90')}
+        />
         {open ? 'Hide full result' : 'Show full result'}
       </button>
       {open ? (
-        <div className="border-l-2 border-primary/20 pl-3">
+        <div className="border-l-2 border-primary/20 pl-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200">
           <MarkdownContent content={content} />
         </div>
       ) : null}
