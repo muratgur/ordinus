@@ -32,7 +32,9 @@ import type {
   AgentMemoryUpdateInput,
   AgentReflectionSummary,
   ConnectorActionInput,
+  ConnectorSetEnabledToolsInput,
   ConnectorSummary,
+  ConnectorToolsResult,
   AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
@@ -465,7 +467,11 @@ const ordinus = {
     connect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
       ipcRenderer.invoke(ipcChannels.connectorsConnect, input),
     disconnect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
-      ipcRenderer.invoke(ipcChannels.connectorsDisconnect, input)
+      ipcRenderer.invoke(ipcChannels.connectorsDisconnect, input),
+    listTools: async (input: ConnectorActionInput): Promise<ConnectorToolsResult> =>
+      ipcRenderer.invoke(ipcChannels.connectorsListTools, input),
+    setEnabledTools: async (input: ConnectorSetEnabledToolsInput): Promise<ConnectorToolsResult> =>
+      ipcRenderer.invoke(ipcChannels.connectorsSetEnabledTools, input)
   },
   files: {
     read: async (input: FileReadInput): Promise<FileContent> =>

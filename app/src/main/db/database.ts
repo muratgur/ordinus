@@ -164,6 +164,7 @@ import {
   conversationParticipants,
   conversations,
   conversationTurns,
+  localConnectorState,
   observedRunEvents,
   observedRuns,
   ordinusConversations,
@@ -334,6 +335,7 @@ type PreparedContextReference = {
   anchorRun?: WorkRun
 }
 type WorkRequestAgentSession = typeof workRequestAgentSessions.$inferSelect
+export type LocalConnectorStateRow = typeof localConnectorState.$inferSelect
 
 export class OrdinusDatabase {
   private readonly databasePath: string
@@ -354,6 +356,7 @@ export class OrdinusDatabase {
         conversationParticipants,
         conversations,
         conversationTurns,
+        localConnectorState,
         observedRunEvents,
         observedRuns,
         ordinusConversations,
@@ -407,6 +410,58 @@ export class OrdinusDatabase {
     this.reconcileInterruptedConversations()
 
     return this.getStatus()
+  }
+
+  // ADR-041: managed local MCP connector state. Read/write paths are small
+  // and synchronous; the supervisor consumes them through an injected
+  // accessor so it carries no database dependency itself.
+  getLocalConnectorState(connectorId: string): LocalConnectorStateRow | null {
+    return (
+      this.db
+        .select()
+        .from(localConnectorState)
+        .where(eq(localConnectorState.connectorId, connectorId))
+        .get() ?? null
+    )
+  }
+
+  upsertLocalConnectorState(
+    connectorId: string,
+    patch: Partial<Omit<LocalConnectorStateRow, 'connectorId' | 'updatedAt'>>
+  ): LocalConnectorStateRow {
+    const now = new Date().toISOString()
+    const existing = this.getLocalConnectorState(connectorId)
+    if (!existing) {
+      this.db
+        .insert(localConnectorState)
+        .values({
+          connectorId,
+          installedVersion: patch.installedVersion ?? null,
+          toolCatalog: patch.toolCatalog ?? [],
+          enabledTools: patch.enabledTools ?? [],
+          lastHealth: patch.lastHealth ?? 'ok',
+          updatedAt: now
+        })
+        .run()
+    } else {
+      this.db
+        .update(localConnectorState)
+        .set({ ...patch, updatedAt: now })
+        .where(eq(localConnectorState.connectorId, connectorId))
+        .run()
+    }
+    const row = this.getLocalConnectorState(connectorId)
+    if (!row) {
+      throw new Error(`Failed to persist local connector state for ${connectorId}.`)
+    }
+    return row
+  }
+
+  deleteLocalConnectorState(connectorId: string): void {
+    this.db
+      .delete(localConnectorState)
+      .where(eq(localConnectorState.connectorId, connectorId))
+      .run()
   }
 
   // ADR-032: conversation turns run via in-memory drivers (parallel one-shot turns

@@ -537,3 +537,23 @@ export const ordinusInputRequests = sqliteTable(
     )
   })
 )
+
+// ADR-041: managed local MCP connectors. One row per local connector holding
+// install/discovery/permission state. Manifests stay hardcoded in the
+// registry; session data stays on the filesystem under app-data; `connected`
+// remains derived (installed + session present), never stored.
+//   - tool_catalog: JSON [{ name, description }] discovered via tools/list
+//   - enabled_tools: JSON string[] — the user's global per-connector allowlist,
+//     enforced at the loopback proxy
+//   - last_health: 'ok' | 'unhealthy'
+export const localConnectorState = sqliteTable('local_connector_state', {
+  connectorId: text('connector_id').primaryKey(),
+  installedVersion: text('installed_version'),
+  toolCatalog: text('tool_catalog', { mode: 'json' })
+    .$type<Array<{ name: string; description: string }>>()
+    .notNull()
+    .default([]),
+  enabledTools: text('enabled_tools', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  lastHealth: text('last_health').notNull().default('ok'),
+  updatedAt: text('updated_at').notNull()
+})

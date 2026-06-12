@@ -9,6 +9,8 @@ import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
 import { SchedulerService } from './scheduler/service'
 import { shutdownOrdinusMcpServer } from './ordinus-mcp/lifecycle'
+import { initConnectorService } from './integrations/service'
+import { shutdownLocalMcp } from './local-mcp/supervisor'
 
 app.setName('Ordinus')
 
@@ -133,6 +135,9 @@ app.whenReady().then(() => {
   })
 
   database.initialize()
+  // ADR-041: wire durable local-connector state into the connector service
+  // and the local MCP supervisor.
+  initConnectorService(database)
   // ADR-040: refresh the app-shipped skill library on disk so agent CLIs can
   // read it and app updates propagate to every installation.
   try {
@@ -172,7 +177,9 @@ app.on('before-quit', (event) => {
   // We defer the quit until shutdown resolves so the OS-level port release
   // happens before the app process exits — best-effort, but cheap.
   event.preventDefault()
-  void shutdownOrdinusMcpServer().finally(() => {
+  // ADR-041: local connector children must die with the app — same deferred
+  // quit pattern as the internal MCP server.
+  void Promise.allSettled([shutdownOrdinusMcpServer(), shutdownLocalMcp()]).then(() => {
     database.close()
     app.exit(0)
   })

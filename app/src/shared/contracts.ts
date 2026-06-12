@@ -461,6 +461,11 @@ export const ConnectorIdSchema = z
 export const ConnectorTransportSchema = z.enum(['mcp-http', 'mcp-stdio', 'api'])
 export const ConnectorAuthMethodSchema = z.enum(['oauth', 'api-key', 'none'])
 
+// ADR-041: connectors are either remote (vault-backed mcp-http) or local
+// (curated servers run by the main process, exposed over a loopback proxy).
+export const ConnectorKindSchema = z.enum(['remote', 'local'])
+export const ConnectorHealthSchema = z.enum(['ok', 'unhealthy', 'reconnect-required'])
+
 export const AgentConnectorsSchema = z.array(ConnectorIdSchema).default([])
 
 export const AgentExtraDirectoriesSchema = z.array(z.string().min(1)).default([])
@@ -470,15 +475,42 @@ export const ConnectorSummarySchema = z.object({
   label: z.string().min(1),
   transport: ConnectorTransportSchema,
   authMethod: ConnectorAuthMethodSchema,
-  connected: z.boolean()
+  connected: z.boolean(),
+  kind: ConnectorKindSchema.default('remote'),
+  health: ConnectorHealthSchema.default('ok'),
+  /** Installed package version for local connectors; null until first Connect. */
+  installedVersion: z.string().nullable().default(null)
 })
 
 export const ConnectorActionInputSchema = z.object({
   connectorId: ConnectorIdSchema
 })
 
+// ADR-041: the real tool catalog is discovered from the server (tools/list)
+// at install time; `enabled` reflects the user's per-connector global toggle.
+export const ConnectorToolSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(''),
+  enabled: z.boolean()
+})
+
+export const ConnectorToolsResultSchema = z.object({
+  connectorId: ConnectorIdSchema,
+  tools: z.array(ConnectorToolSchema)
+})
+
+export const ConnectorSetEnabledToolsInputSchema = z.object({
+  connectorId: ConnectorIdSchema,
+  enabledTools: z.array(z.string().min(1))
+})
+
+export type ConnectorKind = z.infer<typeof ConnectorKindSchema>
+export type ConnectorHealth = z.infer<typeof ConnectorHealthSchema>
 export type ConnectorSummary = z.infer<typeof ConnectorSummarySchema>
 export type ConnectorActionInput = z.infer<typeof ConnectorActionInputSchema>
+export type ConnectorTool = z.infer<typeof ConnectorToolSchema>
+export type ConnectorToolsResult = z.infer<typeof ConnectorToolsResultSchema>
+export type ConnectorSetEnabledToolsInput = z.infer<typeof ConnectorSetEnabledToolsInputSchema>
 
 export const WorkspaceUpdateSystemDefaultInputSchema = z.object({
   providerId: ProviderIdSchema,

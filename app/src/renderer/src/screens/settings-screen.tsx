@@ -24,6 +24,7 @@ import type {
   Agent,
   AppInfo,
   ConnectorSummary,
+  ConnectorTool,
   DbStatus,
   LibrarySkill,
   LibrarySkillDetail,
@@ -48,6 +49,7 @@ import { ReadinessBadge } from '@renderer/components/readiness-badge'
 import { SelectControl } from '@renderer/components/select-control'
 import { StatusCard } from '@renderer/components/status-card'
 import { Badge } from '@renderer/components/ui/badge'
+import { Switch } from '@renderer/components/ui/switch'
 import { Button } from '@renderer/components/ui/button'
 import {
   Card,
@@ -807,10 +809,23 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                     <Badge variant={connector.connected ? 'default' : 'secondary'}>
                       {connector.connected ? 'Connected' : 'Not connected'}
                     </Badge>
+                    {connector.health === 'unhealthy' ? (
+                      <Badge variant="failed">Unhealthy</Badge>
+                    ) : null}
+                    {connector.health === 'reconnect-required' ? (
+                      <Badge variant="attention">Reconnect required</Badge>
+                    ) : null}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {connector.transport} · {connector.authMethod}
+                    {connector.kind === 'local'
+                      ? `Runs on this computer · managed by Ordinus${
+                          connector.installedVersion ? ` · v${connector.installedVersion}` : ''
+                        }`
+                      : `${connector.transport} · ${connector.authMethod}`}
                   </p>
+                  {connector.kind === 'local' && connector.connected ? (
+                    <LocalConnectorTools connectorId={connector.id} />
+                  ) : null}
                 </div>
                 {connector.connected ? (
                   <Button
@@ -827,7 +842,11 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                     disabled={busyId === connector.id}
                     onClick={() => void runAction(connector.id, 'connect')}
                   >
-                    {busyId === connector.id ? 'Connecting…' : 'Connect'}
+                    {busyId === connector.id
+                      ? connector.kind === 'local'
+                        ? 'Preparing…'
+                        : 'Connecting…'
+                      : 'Connect'}
                   </Button>
                 )}
               </li>
@@ -835,6 +854,83 @@ function ConnectionsSettingsSection(): React.JSX.Element {
           </ul>
         )}
       </section>
+    </div>
+  )
+}
+
+// ADR-041: per-connector global tool permissions for managed local MCP
+// servers. The catalog comes from the server itself (tools/list at Connect
+// time); outward-acting tools are born disabled by the manifest defaults and
+// the user opts in here. Enforcement happens at the loopback proxy.
+function LocalConnectorTools({ connectorId }: { connectorId: string }): React.JSX.Element {
+  const [tools, setTools] = useState<ConnectorTool[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const [busyTool, setBusyTool] = useState('')
+
+  useEffect(() => {
+    if (!expanded) return
+    let active = true
+    window.ordinus.connectors
+      .listTools({ connectorId })
+      .then((result) => {
+        if (active) setTools(result.tools)
+      })
+      .catch(() => {
+        if (active) setTools([])
+      })
+    return () => {
+      active = false
+    }
+  }, [connectorId, expanded])
+
+  async function toggleTool(name: string, enabled: boolean): Promise<void> {
+    const next = enabled
+      ? [...tools.filter((t) => t.enabled).map((t) => t.name), name]
+      : tools.filter((t) => t.enabled && t.name !== name).map((t) => t.name)
+    try {
+      setBusyTool(name)
+      const result = await window.ordinus.connectors.setEnabledTools({
+        connectorId,
+        enabledTools: next
+      })
+      setTools(result.tools)
+    } catch {
+      // Leave the switches as they were; the next expand re-reads from main.
+    } finally {
+      setBusyTool('')
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded ? 'Hide tools' : 'Manage tools'}
+      </button>
+      {expanded ? (
+        tools.length === 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">No tools discovered.</p>
+        ) : (
+          <ul className="mt-2 grid gap-2 rounded-md border bg-accent/40 p-3">
+            {tools.map((tool) => (
+              <li key={tool.name} className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium">{tool.name}</p>
+                  <p className="text-xs text-muted-foreground">{tool.description}</p>
+                </div>
+                <Switch
+                  checked={tool.enabled}
+                  disabled={busyTool === tool.name}
+                  onCheckedChange={(checked) => void toggleTool(tool.name, checked)}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
     </div>
   )
 }

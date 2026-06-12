@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import type { ConnectorManifest } from './types'
 
 const MANIFESTS: Record<string, ConnectorManifest> = {
@@ -6,6 +7,7 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     label: 'Datadog',
     transport: 'mcp-http',
     authMethod: 'oauth',
+    kind: 'remote',
     mcpUrl: 'https://mcp.datadoghq.com/api/unstable/mcp-server/mcp'
   },
   linear: {
@@ -13,6 +15,7 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     label: 'Linear',
     transport: 'mcp-http',
     authMethod: 'oauth',
+    kind: 'remote',
     mcpUrl: 'https://mcp.linear.app/mcp'
   },
   notion: {
@@ -20,6 +23,7 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     label: 'Notion',
     transport: 'mcp-http',
     authMethod: 'oauth',
+    kind: 'remote',
     mcpUrl: 'https://mcp.notion.com/mcp'
   },
   canva: {
@@ -27,6 +31,7 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     label: 'Canva',
     transport: 'mcp-http',
     authMethod: 'oauth',
+    kind: 'remote',
     mcpUrl: 'https://mcp.canva.com/mcp'
   },
   atlassian: {
@@ -34,16 +39,45 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     label: 'Atlassian',
     transport: 'mcp-http',
     authMethod: 'oauth',
+    kind: 'remote',
     mcpUrl: 'https://mcp.atlassian.com/v1/mcp/authv2'
   }
 }
 
+// ADR-041: dev-only fixture connector. Exercises the whole local-connector
+// pipeline (bootstrap → spawn → bridge → proxy → permissions → idle reaper)
+// without any real third-party server, so the infrastructure stays testable
+// while the catalog has no shipped local connector yet. Never present in
+// packaged builds.
+const DEV_FIXTURE_MANIFEST: ConnectorManifest = {
+  id: 'dev-fixture',
+  label: 'Dev Fixture (local MCP)',
+  transport: 'mcp-stdio',
+  authMethod: 'none',
+  kind: 'local',
+  local: {
+    runtime: 'electron-node',
+    package: 'dev-fixtures/echo-mcp-server.mjs',
+    heavy: true,
+    loginMode: 'none',
+    // fake_send simulates an outward-acting tool: born disabled.
+    defaultEnabledTools: ['echo_tool', 'add_numbers']
+  }
+}
+
+function manifests(): Record<string, ConnectorManifest> {
+  if (app.isPackaged) {
+    return MANIFESTS
+  }
+  return { ...MANIFESTS, [DEV_FIXTURE_MANIFEST.id]: DEV_FIXTURE_MANIFEST }
+}
+
 export function listConnectorManifests(): ConnectorManifest[] {
-  return Object.values(MANIFESTS)
+  return Object.values(manifests())
 }
 
 export function getConnectorManifest(id: string): ConnectorManifest {
-  const manifest = MANIFESTS[id]
+  const manifest = manifests()[id]
   if (!manifest) {
     throw new Error(`Unknown connector: ${id}`)
   }
@@ -51,5 +85,5 @@ export function getConnectorManifest(id: string): ConnectorManifest {
 }
 
 export function hasConnectorManifest(id: string): boolean {
-  return Object.prototype.hasOwnProperty.call(MANIFESTS, id)
+  return Object.prototype.hasOwnProperty.call(manifests(), id)
 }

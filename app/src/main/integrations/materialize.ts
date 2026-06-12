@@ -11,6 +11,8 @@ import { join } from 'node:path'
 import { getConnectorManifest, hasConnectorManifest } from './registry'
 import { refreshCredential } from './oauth-broker'
 import { hasCredential, readCredential } from './vault'
+import { isLocalConnectorConnected } from './service'
+import { getLocalConnectorUrl } from '../local-mcp/supervisor'
 import type { MaterializedConnectors } from './types'
 
 const REFRESH_SKEW_MS = 60_000
@@ -49,7 +51,7 @@ export async function collectUsableConnectors(connectorIds: string[]): Promise<U
       continue
     }
     const manifest = getConnectorManifest(connectorId)
-    if (manifest.transport !== 'mcp-http' || !manifest.mcpUrl) {
+    if (manifest.kind !== 'remote' || manifest.transport !== 'mcp-http' || !manifest.mcpUrl) {
       continue
     }
     if (!hasCredential(connectorId)) {
@@ -62,6 +64,37 @@ export async function collectUsableConnectors(connectorIds: string[]): Promise<U
     })
   }
   return usable
+}
+
+/**
+ * ADR-041: resolve the agent's local connectors to loopback proxy URLs. From
+ * the adapters' perspective these are indistinguishable from the ADR-029
+ * additional servers (loopback, no auth header), so every provider's existing
+ * http materialization path carries them unchanged. The child process is NOT
+ * started here — first traffic starts it (lazy), keeping turn startup cheap.
+ */
+async function collectLocalConnectorServers(
+  connectorIds: string[]
+): Promise<AdditionalMcpServer[]> {
+  const servers: AdditionalMcpServer[] = []
+  for (const connectorId of connectorIds) {
+    if (!hasConnectorManifest(connectorId)) {
+      continue
+    }
+    const manifest = getConnectorManifest(connectorId)
+    if (manifest.kind !== 'local') {
+      continue
+    }
+    if (!isLocalConnectorConnected(connectorId)) {
+      continue
+    }
+    servers.push({
+      id: connectorId,
+      url: await getLocalConnectorUrl(connectorId),
+      codexDefaultToolsApprovalMode: 'approve'
+    })
+  }
+  return servers
 }
 
 const envVarName = (connectorId: string): string =>
@@ -80,6 +113,10 @@ export async function materializeCodexConnectors(
   env: Record<string, string>
 }> {
   const usable = await collectUsableConnectors(connectorIds)
+  const allAdditional = [
+    ...additionalServers,
+    ...(await collectLocalConnectorServers(connectorIds))
+  ]
   const configArgs: string[] = []
   const env: Record<string, string> = {}
   for (const connector of usable) {
@@ -92,9 +129,10 @@ export async function materializeCodexConnectors(
       `mcp_servers.${connector.id}.bearer_token_env_var=${JSON.stringify(tokenEnv)}`
     )
   }
-  // ADR-029: append additional (loopback, no-auth) servers. They get the same
-  // `mcp_servers.<id>` namespace but no bearer_token_env_var.
-  for (const extra of additionalServers) {
+  // ADR-029/041: append additional (loopback, no-auth) servers — the Ordinus
+  // internal server and managed local connectors. Same `mcp_servers.<id>`
+  // namespace, no bearer_token_env_var.
+  for (const extra of allAdditional) {
     configArgs.push('-c', `mcp_servers.${extra.id}.url=${JSON.stringify(extra.url)}`)
     if (extra.codexDefaultToolsApprovalMode) {
       configArgs.push(
@@ -127,7 +165,11 @@ export async function materializeGeminiConnectors(
   skillsRoot: string | null = null
 ): Promise<{ home: string | null; cleanup: () => void }> {
   const usable = await collectUsableConnectors(connectorIds)
-  if (usable.length === 0 && additionalServers.length === 0 && !skillsRoot) {
+  const allAdditional = [
+    ...additionalServers,
+    ...(await collectLocalConnectorServers(connectorIds))
+  ]
+  if (usable.length === 0 && allAdditional.length === 0 && !skillsRoot) {
     return { home: null, cleanup: () => {} }
   }
 
@@ -179,9 +221,9 @@ export async function materializeGeminiConnectors(
       trust: true
     }
   }
-  // ADR-029: loopback servers — no auth header, but `trust: true` so the CLI
-  // does not surface a non-interactive permission prompt for our own tools.
-  for (const extra of additionalServers) {
+  // ADR-029/041: loopback servers — no auth header, but `trust: true` so the
+  // CLI does not surface a non-interactive permission prompt for our own tools.
+  for (const extra of allAdditional) {
     mcpServers[extra.id] = {
       httpUrl: extra.url,
       trust: true
@@ -197,7 +239,7 @@ export async function materializeGeminiConnectors(
   // ADR-029 M4.5 debug: mirror the final settings.json to a stable path so we
   // can inspect what was handed to Gemini after the per-turn cleanup wipes the
   // ephemeral home. Best-effort — failures are silent (debugging is opt-in).
-  if (additionalServers.length > 0) {
+  if (allAdditional.length > 0) {
     try {
       console.log('[gemini-materialize] settings:', JSON.stringify(finalSettings))
     } catch {
@@ -239,7 +281,11 @@ export async function materializeConnectors(
   additionalServers: ReadonlyArray<AdditionalMcpServer> = []
 ): Promise<MaterializedConnectors> {
   const usable = await collectUsableConnectors(connectorIds)
-  if (usable.length === 0 && additionalServers.length === 0) {
+  const allAdditional = [
+    ...additionalServers,
+    ...(await collectLocalConnectorServers(connectorIds))
+  ]
+  if (usable.length === 0 && allAdditional.length === 0) {
     return { mcpConfigPath: null, allowedTools: [], cleanup: () => {} }
   }
 
@@ -255,8 +301,8 @@ export async function materializeConnectors(
     // does not deny connector tool calls it cannot prompt for.
     allowedTools.push(`mcp__${connector.id}`)
   }
-  // ADR-029: loopback servers — no auth header.
-  for (const extra of additionalServers) {
+  // ADR-029/041: loopback servers — no auth header.
+  for (const extra of allAdditional) {
     mcpServers[extra.id] = {
       type: 'http',
       url: extra.url

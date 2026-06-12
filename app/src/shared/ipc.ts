@@ -136,6 +136,8 @@ export const ipcChannels = {
   connectorsList: 'connectors:list',
   connectorsConnect: 'connectors:connect',
   connectorsDisconnect: 'connectors:disconnect',
+  connectorsListTools: 'connectors:list-tools',
+  connectorsSetEnabledTools: 'connectors:set-enabled-tools',
   filesRead: 'files:read',
   schedulesList: 'schedules:list',
   schedulesGet: 'schedules:get',

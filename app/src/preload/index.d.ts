@@ -5,7 +5,9 @@ import type {
   AgentDeleteResult,
   AgentDraft,
   ConnectorActionInput,
+  ConnectorSetEnabledToolsInput,
   ConnectorSummary,
+  ConnectorToolsResult,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentArchiveInput,
@@ -303,6 +305,8 @@ export type OrdinusApi = {
     list: () => Promise<ConnectorSummary[]>
     connect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
     disconnect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
+    listTools: (input: ConnectorActionInput) => Promise<ConnectorToolsResult>
+    setEnabledTools: (input: ConnectorSetEnabledToolsInput) => Promise<ConnectorToolsResult>
   }
   files: {
     read: (input: FileReadInput) => Promise<FileContent>

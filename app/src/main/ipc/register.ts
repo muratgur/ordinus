@@ -47,6 +47,7 @@ import {
   AgentCreateInputSchema,
   AppInfoSchema,
   ConnectorActionInputSchema,
+  ConnectorSetEnabledToolsInputSchema,
   ConversationCancelTurnInputSchema,
   FileReadInputSchema,
   FileContentSchema,
@@ -183,7 +184,13 @@ import type { RuntimeWorkRunInput } from '../runtime/adapters/types'
 import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { createOrdinusSessionService } from '../ordinus/session'
 import { listPendingConfirmations, resolvePendingConfirmation } from '../ordinus/confirmation'
-import { connectConnector, disconnectConnector, listConnectors } from '../integrations/service'
+import {
+  connectConnector,
+  disconnectConnector,
+  listConnectorTools,
+  listConnectors,
+  setConnectorEnabledTools
+} from '../integrations/service'
 import {
   ensureWorkspaceRelativeDirectory,
   filterExistingWorkspacePaths,
@@ -1045,6 +1052,14 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.connectorsDisconnect, (_event, payload) => {
     const input = ConnectorActionInputSchema.parse(payload)
     return disconnectConnector(input.connectorId)
+  })
+  ipcMain.handle(ipcChannels.connectorsListTools, (_event, payload) => {
+    const input = ConnectorActionInputSchema.parse(payload)
+    return listConnectorTools(input.connectorId)
+  })
+  ipcMain.handle(ipcChannels.connectorsSetEnabledTools, (_event, payload) => {
+    const input = ConnectorSetEnabledToolsInputSchema.parse(payload)
+    return setConnectorEnabledTools(input)
   })
   ipcMain.handle(ipcChannels.filesRead, (_event, payload) => {
     const input = FileReadInputSchema.parse(payload)
