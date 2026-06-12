@@ -823,6 +823,11 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                         }`
                       : `${connector.transport} · ${connector.authMethod}`}
                   </p>
+                  {connector.interactiveLogin && !connector.connected ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Connect opens a sign-in window — log in to your account there to finish.
+                    </p>
+                  ) : null}
                   {connector.kind === 'local' && connector.connected ? (
                     <LocalConnectorTools connectorId={connector.id} />
                   ) : null}

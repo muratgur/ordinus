@@ -26,6 +26,14 @@ export type LocalConnectorSpec = {
   package: string
   /** Extra argv after the resolved executable/script. */
   args?: string[]
+  /**
+   * Argv that points the server's sensitive session/profile state at the
+   * per-connector session dir (deleted on Disconnect). `${sessionDir}` is
+   * substituted by the supervisor. Servers whose HOME-side caches must
+   * survive Disconnect (e.g. LinkedIn's downloaded Chromium) use this to
+   * separate the deletable session from the persistent home.
+   */
+  sessionDirArgs?: string[]
   /** True when the server can serve streamable-http itself (still proxied). */
   nativeHttp?: boolean
   /** Heavy servers (e.g. Chromium-carrying) get an idle shutdown timer. */

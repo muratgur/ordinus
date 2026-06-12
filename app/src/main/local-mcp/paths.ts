@@ -32,3 +32,13 @@ export function getLocalMcpPaths(): LocalMcpPaths {
 export function getConnectorSessionDir(connectorId: string): string {
   return join(getLocalMcpPaths().sessions, connectorId)
 }
+
+/**
+ * Persistent per-connector HOME. Survives Disconnect (unlike the session
+ * dir) so heavyweight caches a server keeps under HOME — e.g. LinkedIn's
+ * downloaded Chromium — are not re-fetched on reconnect. Sensitive session
+ * state is steered into the session dir via the manifest's sessionDirArgs.
+ */
+export function getConnectorHomeDir(connectorId: string): string {
+  return join(getLocalMcpPaths().packages, `${connectorId}-home`)
+}

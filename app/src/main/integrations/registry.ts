@@ -34,6 +34,32 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     kind: 'remote',
     mcpUrl: 'https://mcp.canva.com/mcp'
   },
+  linkedin: {
+    id: 'linkedin',
+    label: 'LinkedIn',
+    transport: 'mcp-stdio',
+    authMethod: 'none',
+    kind: 'local',
+    local: {
+      runtime: 'uv',
+      // Pinned (ADR-041): upgrades ride app releases after we test them.
+      package: 'mcp-server-linkedin==4.15.0',
+      sessionDirArgs: ['--user-data-dir', '${sessionDir}'],
+      heavy: true,
+      loginMode: 'interactive',
+      // Read-only, outward-inert tools start enabled. send_message and
+      // connect_with_person act outwardly as the user; inbox/conversation
+      // tools read private correspondence — all born disabled, the user
+      // opts in per tool from Settings → Connections.
+      defaultEnabledTools: [
+        'get_person_profile',
+        'get_my_profile',
+        'get_company_profile',
+        'get_company_posts',
+        'get_sidebar_profiles'
+      ]
+    }
+  },
   atlassian: {
     id: 'atlassian',
     label: 'Atlassian',

@@ -25,8 +25,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConnectorManifest } from '../integrations/registry'
+import { spawn } from 'node:child_process'
 import { ensureConnectorInstalled, requireLocalSpec } from './runtime-bootstrap'
-import { getConnectorSessionDir } from './paths'
+import { getConnectorHomeDir, getConnectorSessionDir } from './paths'
 
 const IDLE_TIMEOUT_MS = 5 * 60_000
 const REAPER_INTERVAL_MS = 60_000
@@ -79,20 +80,37 @@ export function initLocalMcpSupervisor(access: LocalConnectorStateAccess): void 
   state.access = access
 }
 
-/** Spawn the connector's process and connect an MCP client over stdio. */
-async function startServer(connectorId: string): Promise<RunningServer> {
+type ChildLaunch = {
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
+/**
+ * Resolve everything needed to spawn a connector child: installed command,
+ * argv with `${sessionDir}` substituted, and a deliberately minimal
+ * environment — third-party servers must not inherit the main process's
+ * secrets (shell-exported API keys etc.). HOME points at the persistent
+ * per-connector home (caches survive Disconnect); the manifest's
+ * sessionDirArgs steer sensitive session state into the deletable session
+ * dir. Both live under app-data — the clean-machine guarantee (ADR-041).
+ */
+async function resolveChildLaunch(
+  connectorId: string,
+  extraArgs: string[] = []
+): Promise<ChildLaunch> {
   const manifest = getConnectorManifest(connectorId)
   const spec = requireLocalSpec(manifest)
   const launch = await ensureConnectorInstalled(manifest)
 
   const sessionDir = getConnectorSessionDir(connectorId)
+  const homeDir = getConnectorHomeDir(connectorId)
   mkdirSync(sessionDir, { recursive: true })
+  mkdirSync(homeDir, { recursive: true })
 
-  // Deliberately minimal child environment: third-party servers must not
-  // inherit the main process's secrets (shell-exported API keys etc.). Only
-  // basics needed to run, plus our redirections. HOME/profile redirection
-  // keeps server-side state (cookies, browser profiles) inside app-data —
-  // the clean-machine guarantee (ADR-041).
+  const substitute = (arg: string): string => arg.replaceAll('${sessionDir}', sessionDir)
+  const args = [...launch.args, ...(spec.sessionDirArgs ?? []), ...extraArgs].map(substitute)
+
   const inherited: Record<string, string> = {}
   for (const key of ['PATH', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'COMSPEC']) {
     const value = process.env[key]
@@ -103,17 +121,23 @@ async function startServer(connectorId: string): Promise<RunningServer> {
   const env: Record<string, string> = {
     ...inherited,
     ...launch.env,
-    HOME: sessionDir,
-    USERPROFILE: sessionDir,
-    XDG_DATA_HOME: sessionDir,
-    XDG_CACHE_HOME: sessionDir,
-    XDG_CONFIG_HOME: sessionDir
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+    XDG_DATA_HOME: homeDir,
+    XDG_CACHE_HOME: homeDir,
+    XDG_CONFIG_HOME: homeDir
   }
+  return { command: launch.command, args, env }
+}
+
+/** Spawn the connector's process and connect an MCP client over stdio. */
+async function startServer(connectorId: string): Promise<RunningServer> {
+  const launch = await resolveChildLaunch(connectorId)
 
   const transport = new StdioClientTransport({
     command: launch.command,
     args: launch.args,
-    env,
+    env: launch.env,
     stderr: 'pipe'
   })
   const client = new Client({ name: 'ordinus-local-mcp', version: '1.0.0' })
@@ -136,7 +160,7 @@ async function startServer(connectorId: string): Promise<RunningServer> {
   }
 
   console.log(`[local-mcp] ${connectorId} started (${launch.command})`)
-  if (spec.heavy) {
+  if (getConnectorManifest(connectorId).local?.heavy) {
     ensureReaper()
   }
   return running
@@ -176,6 +200,53 @@ async function ensureServer(connectorId: string): Promise<RunningServer> {
     state.pendingStarts.set(connectorId, pending)
   }
   return pending
+}
+
+/**
+ * ADR-041 interactive login (LinkedIn-class servers): run the server's
+ * `--login` flow as a one-shot visible process and wait for it to finish.
+ * The user authenticates in the window the server opens; the session lands
+ * in the session dir via sessionDirArgs. Resolves on exit 0, rejects on
+ * non-zero exit or timeout (user closed the window / walked away).
+ */
+const pendingLogins = new Map<string, Promise<void>>()
+
+export function runInteractiveLogin(connectorId: string, timeoutMs = 5 * 60_000): Promise<void> {
+  // Same share-the-in-flight-promise idiom as ensureServer: a second Connect
+  // while a login window is open must not spawn a second window.
+  let pending = pendingLogins.get(connectorId)
+  if (!pending) {
+    pending = runInteractiveLoginOnce(connectorId, timeoutMs).finally(() => {
+      pendingLogins.delete(connectorId)
+    })
+    pendingLogins.set(connectorId, pending)
+  }
+  return pending
+}
+
+async function runInteractiveLoginOnce(connectorId: string, timeoutMs: number): Promise<void> {
+  const launch = await resolveChildLaunch(connectorId, ['--login'])
+  console.log(`[local-mcp] ${connectorId} interactive login starting`)
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(launch.command, launch.args, { env: launch.env, stdio: 'ignore' })
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error('Login timed out — the sign-in window was not completed.'))
+    }, timeoutMs)
+    child.once('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.once('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(`Login was not completed (exit code ${code ?? 'unknown'}).`))
+      }
+    })
+  })
+  console.log(`[local-mcp] ${connectorId} interactive login completed`)
 }
 
 /**

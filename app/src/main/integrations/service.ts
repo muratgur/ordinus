@@ -11,9 +11,10 @@ import type { OrdinusDatabase } from '../db/database'
 import {
   discoverConnectorTools,
   initLocalMcpSupervisor,
-  revokeLocalConnector
+  revokeLocalConnector,
+  runInteractiveLogin
 } from '../local-mcp/supervisor'
-import { ensureConnectorInstalled, installedVersionOf } from '../local-mcp/runtime-bootstrap'
+import { installedVersionOf } from '../local-mcp/runtime-bootstrap'
 import { getConnectorSessionDir } from '../local-mcp/paths'
 
 // ADR-041: the connector service needs durable local-connector state. The
@@ -55,12 +56,13 @@ export function listConnectors(): ConnectorSummary[] {
         transport: manifest.transport,
         authMethod: manifest.authMethod,
         kind: 'local' as const,
-        // ADR-041: connected stays derived. For loginMode 'none' connectors,
-        // installed == connected; interactive-login connectors will also
-        // require a live session when the first one ships.
+        // ADR-041: connected stays derived — the state row is only written
+        // after install (+ interactive login, when required) succeeded, so
+        // its presence means "agents can use this now".
         connected: state !== null,
         health: state?.lastHealth === 'unhealthy' ? ('unhealthy' as const) : ('ok' as const),
-        installedVersion: state?.installedVersion ?? null
+        installedVersion: state?.installedVersion ?? null,
+        interactiveLogin: manifest.local?.loginMode === 'interactive'
       }
     }
     return {
@@ -71,7 +73,8 @@ export function listConnectors(): ConnectorSummary[] {
       kind: 'remote' as const,
       connected: hasCredential(manifest.id),
       health: 'ok' as const,
-      installedVersion: null
+      installedVersion: null,
+      interactiveLogin: false
     }
   })
 }
@@ -79,10 +82,15 @@ export function listConnectors(): ConnectorSummary[] {
 export async function connectConnector(connectorId: string): Promise<ConnectorSummary[]> {
   const manifest = getConnectorManifest(connectorId)
   if (manifest.kind === 'local') {
-    // Connect = lazy install (runtime + pinned package) + tool discovery.
-    // Interactive login (LinkedIn-class servers) plugs in here when the
-    // first such connector ships (manifest.local.loginMode === 'interactive').
-    await ensureConnectorInstalled(manifest)
+    // Connect = install + login + discovery. Install happens lazily inside
+    // the supervisor (both calls below resolve it); for interactive-login
+    // servers the user signs in via the window the server opens (ADR-041:
+    // login at Connect time, never mid-turn). State is only persisted after
+    // every step succeeded, so a cancelled login leaves the connector
+    // cleanly "Not connected".
+    if (manifest.local?.loginMode === 'interactive') {
+      await runInteractiveLogin(connectorId)
+    }
     const tools = await discoverConnectorTools(connectorId)
     const defaults = new Set(manifest.local?.defaultEnabledTools ?? [])
     requireDb().upsertLocalConnectorState(connectorId, {

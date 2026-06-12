@@ -3747,7 +3747,16 @@ export class OrdinusDatabase {
   }
 
   listConversationObservedRuns(conversationId: string): ObservedRunSnapshot[] {
-    this.getConversation({ conversationId })
+    // A stale conversation id (e.g. persisted renderer state pointing at a
+    // deleted conversation) is not an error here — there are just no runs.
+    const conversation = this.db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .get()
+    if (!conversation) {
+      return []
+    }
     const turnIds = this.db
       .select({ id: conversationTurns.id })
       .from(conversationTurns)

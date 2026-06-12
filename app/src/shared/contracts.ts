@@ -479,7 +479,9 @@ export const ConnectorSummarySchema = z.object({
   kind: ConnectorKindSchema.default('remote'),
   health: ConnectorHealthSchema.default('ok'),
   /** Installed package version for local connectors; null until first Connect. */
-  installedVersion: z.string().nullable().default(null)
+  installedVersion: z.string().nullable().default(null),
+  /** True when Connect opens the server's own sign-in window (ADR-041). */
+  interactiveLogin: z.boolean().default(false)
 })
 
 export const ConnectorActionInputSchema = z.object({
