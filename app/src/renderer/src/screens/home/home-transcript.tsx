@@ -15,10 +15,11 @@
 //   - Tool blocks (M5/M6) will go here later as first-class collapsible
 //     items; M4 only renders user/assistant/status/error.
 
-import { useEffect, useRef, useState } from 'react'
-import { Loader2, AlertCircle, Bookmark, Check, ChevronRight } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Loader2, AlertCircle, Bookmark, Check } from 'lucide-react'
 import { CopyButton } from '@renderer/components/copy-button'
 import { MarkdownContent } from '@renderer/components/markdown-content'
+import { TurnFullResponse } from '@renderer/components/turn-full-response'
 import { FilesTouched } from '@renderer/components/files-touched'
 import { InspectGutterButton, LiveStatusRow } from '@renderer/components/run-inspector-sheet'
 import { cn } from '@renderer/lib/utils'
@@ -191,7 +192,7 @@ function TranscriptItem({
           />
           <MarkdownContent content={message.text} />
           {message.resultContent.trim() ? (
-            <AssistantFullResponse content={message.resultContent} />
+            <TurnFullResponse content={message.resultContent} />
           ) : null}
           {onRevealFile ? (
             <FilesTouched
@@ -218,33 +219,4 @@ function TranscriptItem({
         </div>
       )
   }
-}
-
-// ADR-030 parity (mirrors conversations-screen TurnFullResponse): the summary is
-// always shown above; the agent's full produced body is collapsed by default so
-// the transcript stays calm, and expands on demand.
-function AssistantFullResponse({ content }: { content: string }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="mt-1 flex flex-col gap-2">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-        aria-expanded={open}
-      >
-        {/* One chevron that rotates, instead of swapping icons — the motion
-            carries the state change. */}
-        <ChevronRight
-          className={cn('size-3.5 transition-transform duration-200', open && 'rotate-90')}
-        />
-        {open ? 'Hide full result' : 'Show full result'}
-      </button>
-      {open ? (
-        <div className="border-l-2 border-primary/20 pl-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200">
-          <MarkdownContent content={content} />
-        </div>
-      ) : null}
-    </div>
-  )
 }

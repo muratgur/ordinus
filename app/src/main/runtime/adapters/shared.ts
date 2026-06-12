@@ -277,6 +277,16 @@ export function getStringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+// ADR-040: detect a skill activation from provider activity text. Any read or
+// command that touches a `<skill-folder>/SKILL.md` counts; the folder name is
+// the skill id. Used by adapters to emit `kind: 'skill'` observations.
+const skillFileMatcher = /(?:^|[\s"'`=(])(?:[^\s"'`]*[/\\])?([^/\\\s"'`]+)[/\\]SKILL\.md\b/
+
+export function matchSkillActivation(text: string): string | null {
+  const match = skillFileMatcher.exec(text)
+  return match ? match[1] : null
+}
+
 export function addCliModelArg(args: string[], model: string, index = args.length): void {
   if (model === 'default') {
     return

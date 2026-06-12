@@ -41,10 +41,36 @@ export function useRunInspector(conversationId: string | null): RunInspector {
   useEffect(() => {
     if (!conversationId) return undefined
 
-    return window.ordinus.observability.onRunChanged((snapshot) => {
+    let cancelled = false
+    let pushSeen = false
+    const off = window.ordinus.observability.onRunChanged((snapshot) => {
       if (snapshot.conversationId !== conversationId) return
+      pushSeen = true
       setLiveRun({ conversationId, snapshot })
     })
+    // Seed from the persisted record so opening the live inspector right
+    // after a remount (e.g. returning from another tab mid-turn) shows the
+    // in-flight run instead of the "no record" empty state — pushes only
+    // fire on provider events. A push that races in first wins.
+    void window.ordinus.observability
+      .listConversation({ conversationId })
+      .then((runs) => {
+        if (cancelled || pushSeen) return
+        const live = runs.find(
+          (run) =>
+            run.lifecycleStatus !== 'completed' &&
+            run.lifecycleStatus !== 'failed' &&
+            run.lifecycleStatus !== 'cancelled'
+        )
+        if (live) setLiveRun({ conversationId, snapshot: live })
+      })
+      .catch(() => {
+        // Best-effort: the sheet's empty state covers this.
+      })
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [conversationId])
 
   const open = Boolean(conversationId) && target?.conversationId === conversationId

@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 const markdownDocumentPolicy = [
   'Markdown document policy:',
   '- For new user-facing Markdown documents you create, start the file with short, human-readable YAML frontmatter.',
@@ -28,20 +26,60 @@ export function buildWorkspaceWorkingFolderInstructions(workingRoot: string): st
   ].join('\n')
 }
 
+// ADR-040: skill discovery is no longer prompted here. Claude and Gemini
+// discover skills natively (symlinks into their discovery roots); Codex gets an
+// explicit frontmatter inventory via buildSkillInventoryInstructions.
 export function buildAgentPrivateFolderInstructions(agentHomePath: string): string {
-  const skillsPath = join(agentHomePath, 'skills')
-
   return [
     'Agent private folder policy:',
     `- Agent private folder: ${agentHomePath}`,
-    `- Agent skills folder: ${skillsPath}`,
-    '- Before answering each turn, check whether the skills folder exists.',
-    '- If it exists, inspect immediate child skill folders and read each SKILL.md frontmatter.',
-    '- Do not assume no skill applies until you have checked the available skill frontmatter.',
-    '- If a skill description matches the current user request or needed context, read that full SKILL.md before answering.',
-    '- Use only skills that match the current task.',
-    '- Do not ask the user to provide information that is already available in a matching skill.',
     '- Files in the agent private folder are not workspace artifacts. Do not report them as created or modified workspace files.'
+  ].join('\n')
+}
+
+export type PromptSkill = {
+  name: string
+  description: string
+  skillPath: string
+}
+
+// ADR-040: stale-session fix — an open session learns only what CHANGED since
+// its inventory was announced. Empty diff → empty string → zero prompt cost.
+export function buildSkillDeltaInstructions(input: {
+  added: PromptSkill[]
+  updated: PromptSkill[]
+  removedIds: string[]
+}): string {
+  if (input.added.length + input.updated.length + input.removedIds.length === 0) {
+    return ''
+  }
+  return [
+    'Skill changes since this conversation started:',
+    ...input.added.map(
+      (skill) => `- New skill: ${skill.name}: ${skill.description} (file: ${skill.skillPath})`
+    ),
+    ...input.updated.map(
+      (skill) =>
+        `- Updated skill: ${skill.name}: ${skill.description} (file: ${skill.skillPath}) — re-read it before applying.`
+    ),
+    ...input.removedIds.map((id) => `- Removed skill: ${id} — it is no longer available.`),
+    '- Apply the usual rule: read a skill file only when it matches the current task.'
+  ].join('\n')
+}
+
+// ADR-040: Codex cannot discover skills outside its fixed roots, so the prompt
+// carries the frontmatter inventory instead. Mirrors the CLIs' progressive
+// disclosure: bodies are read only when a skill matches the task.
+export function buildSkillInventoryInstructions(skills: PromptSkill[]): string {
+  if (skills.length === 0) {
+    return ''
+  }
+  return [
+    'Agent skills available this conversation:',
+    ...skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.skillPath})`),
+    '- If a skill matches the current request, read its file and follow it before answering.',
+    '- Do not read skill files that do not match the current task.',
+    '- Do not ask the user for information that a matching skill already provides.'
   ].join('\n')
 }
 

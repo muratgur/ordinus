@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import {
   ProviderStatusSchema,
   type AgentDraft,
+  type AgentSkillDraft,
   type OrchestrationPlan,
   type ProviderConnectResult,
   type ProviderStatus,
@@ -24,6 +25,12 @@ import {
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
 import {
+  buildSkillDraft,
+  buildSkillDraftPrompt,
+  SkillDraftOutputSchema,
+  skillDraftOutputJsonSchema
+} from '../../prompts/skill-draft'
+import {
   buildOrchestrationPrompt,
   orchestrationPlanJsonSchema,
   parseOrchestrationPlan
@@ -42,9 +49,17 @@ import {
 import {
   buildAgentPrivateFolderInstructions,
   buildExtraDirectoriesInstructions,
-  buildWorkspaceWorkingFolderInstructions
+  buildSkillDeltaInstructions,
+  buildSkillInventoryInstructions,
+  buildWorkspaceWorkingFolderInstructions,
+  type PromptSkill
 } from '../../prompts/workspace'
 import { resolveWorkspaceRelativePath } from '../../../workspace/path-policy'
+import {
+  diffSkillFingerprints,
+  listSkillFingerprints,
+  listSkillsForPrompt
+} from '../../../agents/filesystem'
 import {
   addCliModelArg,
   connectCliProvider,
@@ -53,6 +68,7 @@ import {
   disconnectCliProvider,
   getCliVersion,
   isInvalidProviderSessionMessage,
+  matchSkillActivation,
   ProviderSessionInvalidError,
   readCliFailureMessage,
   runConversationProcess,
@@ -63,6 +79,7 @@ import type {
   ProviderAdapter,
   ProviderLoginProcess,
   RuntimeAgentDraftInput,
+  RuntimeSkillDraftInput,
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
   RuntimeOrchestrationPlanInput,
@@ -93,6 +110,9 @@ export const codexProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateCodexAgentDraft(input)
+  },
+  generateSkillDraft(input) {
+    return generateCodexSkillDraft(input)
   },
   generateOrchestrationPlan(input) {
     return generateCodexOrchestrationPlan(input)
@@ -137,8 +157,12 @@ async function sendCodexConversationTurn(
   if (connectors.configArgs.length > 0) {
     args.splice(1, 0, ...connectors.configArgs)
   }
+  // ADR-040: skills reach Codex through the prompt, so a resumed session only
+  // knows the inventory from its first turn. Snapshot the current set now;
+  // resumes carry the diff against what the session was already told.
+  const skillFingerprints = listSkillFingerprints(input.agentHomePath)
   const prompt = input.providerSessionRef
-    ? buildCodexResumePrompt(input)
+    ? buildCodexResumePrompt(input, buildCodexSkillDelta(input, skillFingerprints))
     : buildCodexConversationPrompt(input)
   const result = await runConversationProcess({
     executable,
@@ -179,8 +203,39 @@ async function sendCodexConversationTurn(
   return {
     providerSessionRef,
     outcome: parseAgentTurnOutcome(readCodexLastMessage(input.lastMessagePath)),
-    logRef: input.logRef
+    logRef: input.logRef,
+    announcedSkills: skillFingerprints
   }
+}
+
+// ADR-040: diff the current skill set against what this session was already
+// told. `undefined` announcedSkills = the caller does not track announcements
+// (no delta); `null` = tracked but never announced (announce everything once).
+function buildCodexSkillDelta(
+  input: RuntimeConversationTurnInput,
+  currentFingerprints: Record<string, string>
+): string {
+  if (input.announcedSkills === undefined) {
+    return ''
+  }
+
+  const diff = diffSkillFingerprints(input.announcedSkills, currentFingerprints)
+  if (diff.addedIds.length + diff.updatedIds.length + diff.removedIds.length === 0) {
+    return ''
+  }
+
+  const skillsById = new Map(listSkillsForPrompt(input.agentHomePath).map((s) => [s.id, s]))
+  const toPromptSkills = (ids: string[]): PromptSkill[] =>
+    ids.flatMap((id) => {
+      const skill = skillsById.get(id)
+      return skill ? [skill] : []
+    })
+
+  return buildSkillDeltaInstructions({
+    added: toPromptSkills(diff.addedIds),
+    updated: toPromptSkills(diff.updatedIds),
+    removedIds: diff.removedIds
+  })
 }
 
 function buildCodexExtraWritableRootsArgs(extraDirectories: string[]): string[] {
@@ -281,6 +336,10 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
     '',
     buildAgentPrivateFolderInstructions(input.agentHomePath),
     '',
+    // ADR-040: Codex has no native discovery root we can point at the agent
+    // home, so the frontmatter inventory rides in the first-turn prompt.
+    buildSkillInventoryInstructions(listSkillsForPrompt(input.agentHomePath)),
+    '',
     buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
     buildConversationOutcomeInstructions(),
@@ -290,10 +349,17 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
   ].join('\n')
 }
 
-function buildCodexResumePrompt(input: RuntimeConversationTurnInput): string {
+function buildCodexResumePrompt(input: RuntimeConversationTurnInput, skillDelta = ''): string {
   // ADR-037: the resumed session already holds the full rules from its first
   // turn; the outcome shape is enforced by --output-schema regardless.
-  return [buildResumeReminderInstructions(), '', 'User message:', input.message].join('\n')
+  // ADR-040: the only addition is the skill delta, and only when non-empty.
+  return [
+    buildResumeReminderInstructions(),
+    ...(skillDelta ? ['', skillDelta] : []),
+    '',
+    'User message:',
+    input.message
+  ].join('\n')
 }
 
 function writeCodexConversationOutcomeSchema(input: RuntimeConversationTurnInput): string {
@@ -354,6 +420,62 @@ async function generateCodexAgentDraft(input: RuntimeAgentDraftInput): Promise<A
     const draftJson = AgentDraftOutputSchema.parse(readAgentDraftOutput(outputPath))
 
     return buildAgentDraft(input, draftJson)
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true })
+  }
+}
+
+// ADR-040: one-shot skill draft by the owning agent — same invocation shape as
+// the agent draft, different prompt/schema.
+async function generateCodexSkillDraft(input: RuntimeSkillDraftInput): Promise<AgentSkillDraft> {
+  const executable = await findCodexExecutable()
+  if (!executable) {
+    throw new Error('Codex CLI was not found.')
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'ordinus-skill-draft-'))
+  const schemaPath = join(tempDir, 'skill-draft.schema.json')
+  const outputPath = join(tempDir, 'skill-draft.json')
+
+  try {
+    writeFileSync(schemaPath, JSON.stringify(skillDraftOutputJsonSchema, null, 2), 'utf8')
+
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--ephemeral',
+      '--ignore-rules',
+      '--sandbox',
+      'read-only',
+      '-C',
+      tempDir,
+      '--output-schema',
+      schemaPath,
+      '--output-last-message',
+      outputPath
+    ]
+
+    addCliModelArg(args, input.model)
+
+    const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
+      env: getCodexEnvironment(),
+      shell: executable.shell,
+      stdin: buildSkillDraftPrompt(input),
+      timeoutMs: 90_000
+    })
+
+    if (result.code !== 0) {
+      throw new Error(
+        readCliFailureMessage({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ignoredDiagnosticPatterns: IGNORED_CODEX_DIAGNOSTICS,
+          defaultMessage: 'Codex could not draft the skill.'
+        })
+      )
+    }
+
+    return buildSkillDraft(SkillDraftOutputSchema.parse(readAgentDraftOutput(outputPath)))
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }
@@ -731,6 +853,9 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
 
   const itemType = getStringPath(item, ['type'])
   const label = getCodexActivityItemLabel(item)
+  // ADR-040: skill detection runs on the untruncated command — in compound
+  // commands the SKILL.md path routinely sits past the 180-char label cut.
+  const rawActivityText = `${getStringPath(item, ['command'])} ${label}`
   if (type === 'item.started' || type === 'item.completed') {
     // ADR-034: item types that the command/tool heuristics below miss but
     // that carry most of a real turn's work — file writes and web research.
@@ -773,6 +898,21 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
   }
 
   if (type === 'item.started') {
+    // ADR-040: a command or tool touching a SKILL.md is the Codex-side skill
+    // activation signal (skills ride in the prompt inventory, the agent reads
+    // the body on demand).
+    const skillName = matchSkillActivation(rawActivityText)
+    if (skillName && (isCommandLikeItem(itemType, item) || isToolLikeItem(itemType, item))) {
+      return [
+        codexObservation({
+          kind: 'skill',
+          phase: 'running',
+          summary: `Applying skill: ${skillName}`,
+          payload: { label, skillName }
+        })
+      ]
+    }
+
     if (isCommandLikeItem(itemType, item)) {
       return [
         codexObservation({
@@ -797,6 +937,24 @@ function observeCodexStdoutLine(line: string): RuntimeObservation[] {
   }
 
   if (type === 'item.completed') {
+    // ADR-040: completion echoes of a skill read stay 'skill' — otherwise the
+    // sub-second cat/read flips the live line back to "Running a command…"
+    // before the skill phrase was ever visible.
+    const completedSkillName = matchSkillActivation(rawActivityText)
+    if (
+      completedSkillName &&
+      (isCommandLikeItem(itemType, item) || isToolLikeItem(itemType, item))
+    ) {
+      return [
+        codexObservation({
+          kind: 'skill',
+          phase: 'running',
+          summary: `Applying skill: ${completedSkillName}`,
+          payload: { label, skillName: completedSkillName }
+        })
+      ]
+    }
+
     if (itemType === 'agent_message') {
       return [
         codexObservation({

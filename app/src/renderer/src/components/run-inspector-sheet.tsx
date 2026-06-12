@@ -8,7 +8,7 @@
 // Workboard (work items), Home (Ordinus turns), and Agent Room (agent turns).
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronRight, Copy, Loader2, TerminalSquare, XCircle } from 'lucide-react'
+import { Check, ChevronRight, Copy, Loader2, Sparkles, TerminalSquare, XCircle } from 'lucide-react'
 import type {
   ObservedRunDiagnostics,
   ObservedRunEvent,
@@ -345,6 +345,7 @@ function RunTimelineRegion({
   }, [events.length, busy])
 
   const rows = useMemo(() => groupEvents(events), [events])
+  const skillsUsed = useMemo(() => collectSkillsUsed(events), [events])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -363,9 +364,19 @@ function RunTimelineRegion({
               : `${capitalize(formatObservedPhase(observedRun.currentPhase))} · ${formatElapsedMs(observedRun.elapsedMs)}`}
           </p>
         </div>
-        <Badge variant={observedRun.livenessHealth === 'stalled' ? 'attention' : 'outline'}>
-          {formatLivenessHealth(observedRun.livenessHealth)}
-        </Badge>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {/* ADR-040: which skills this run actually applied — the durable
+              answer to "did my skill ever trigger?". */}
+          {skillsUsed.map((skill) => (
+            <Badge key={skill} variant="secondary" className="max-w-40 truncate" title={skill}>
+              <Sparkles className="size-3" aria-hidden="true" />
+              {skill}
+            </Badge>
+          ))}
+          <Badge variant={observedRun.livenessHealth === 'stalled' ? 'attention' : 'outline'}>
+            {formatLivenessHealth(observedRun.livenessHealth)}
+          </Badge>
+        </div>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-3 ordinus-scrollbar">
         {error ? <p className="py-2 text-sm text-destructive">{error}</p> : null}
@@ -399,6 +410,19 @@ function RunTimelineRegion({
       </div>
     </div>
   )
+}
+
+// ADR-040: unique skill names from this run's skill events, in first-use order.
+function collectSkillsUsed(events: ObservedRunEvent[]): string[] {
+  const names: string[] = []
+  for (const event of events) {
+    if (event.kind !== 'skill') continue
+    const name = typeof event.payload.skillName === 'string' ? event.payload.skillName : null
+    if (name && !names.includes(name)) {
+      names.push(name)
+    }
+  }
+  return names
 }
 
 function groupEvents(events: ObservedRunEvent[]): TimelineRow[] {

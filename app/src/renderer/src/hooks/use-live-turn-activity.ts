@@ -57,6 +57,8 @@ function phraseFor(snapshot: ObservedRunSnapshot, openingLabel: string): string 
         return label ? `Editing ${label}…` : 'Editing…'
       }
       return label ? `Using ${label}…` : 'Using a tool…'
+    case 'skill':
+      return label ? `Applying skill ${label}…` : 'Applying a skill…'
     case 'message':
       return 'Preparing a response…'
     default:
@@ -99,14 +101,39 @@ export function useLiveTurnActivity(
       return undefined
     }
     const observedRunId = options?.observedRunId
+    let cancelled = false
+    let pushSeen = false
     const off = window.ordinus.observability.onRunChanged((snapshot) => {
       const matches = observedRunId
         ? snapshot.id === observedRunId
         : snapshot.conversationId === conversationId
       if (!matches) return
+      pushSeen = true
       stateRef.current.snapshot = isTerminal(snapshot) ? null : snapshot
     })
-    return off
+    // Seed from the persisted record so a remount mid-turn (tab switch) shows
+    // the in-flight state immediately instead of waiting for the next push —
+    // pushes only fire on provider events, which can be minutes apart while
+    // the provider thinks. A push that races in first wins (pushSeen guard).
+    // Skipped in observedRunId mode: there `conversationId` is just a hook
+    // key (workboard runs have no conversation) and the caller already holds
+    // the snapshot it is inspecting.
+    if (!observedRunId) {
+      void window.ordinus.observability
+        .listConversation({ conversationId })
+        .then((runs) => {
+          if (cancelled || pushSeen || stateRef.current.snapshot) return
+          const live = runs.find((run) => !isTerminal(run))
+          if (live) stateRef.current.snapshot = live
+        })
+        .catch(() => {
+          // Best-effort: the opening-label fallback already covers this.
+        })
+    }
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [conversationId, busy, options?.observedRunId])
 
   // Tick once per second while busy: compose the line from the latest

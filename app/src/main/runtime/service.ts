@@ -10,6 +10,7 @@ import {
   WorkspaceRelativePathSchema,
   type OrchestrationPlan,
   type AgentDraft,
+  type AgentSkillDraft,
   type ProviderActionInput,
   type ProviderConnectInput,
   type ProviderConnectResult,
@@ -24,6 +25,7 @@ import { buildWorkspaceWorkingFolderInstructions } from './prompts/workspace'
 import type {
   ProviderRuntimeContext,
   RuntimeAgentDraftInput,
+  RuntimeSkillDraftInput,
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
   RuntimeOrchestrationPlanInput,
@@ -35,6 +37,17 @@ import type {
 const RuntimeAgentDraftInputSchema = AgentDraftFromIntentInputSchema.extend({
   providerId: ProviderIdSchema,
   model: z.string().trim().min(1).default('default')
+})
+
+// ADR-040: conversational skill creation — the owning agent's identity rides
+// along so the draft reflects how that agent works.
+const RuntimeSkillDraftInputSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string().trim().min(1).default('default'),
+  agentName: z.string().trim().min(1),
+  agentRole: z.string().trim().min(1),
+  instructions: z.string(),
+  request: z.string().trim().min(12).max(2000)
 })
 
 const RuntimeOrchestrationPlanInputSchema = z.object({
@@ -74,6 +87,7 @@ export type RuntimeService = {
   connectProvider(input: ProviderConnectInput): Promise<ProviderConnectResult>
   disconnectProvider(input: ProviderActionInput): Promise<ProviderStatus>
   generateAgentDraft(input: RuntimeAgentDraftInput): Promise<AgentDraft>
+  generateSkillDraft(input: RuntimeSkillDraftInput): Promise<AgentSkillDraft>
   generateOrchestrationPlan(input: RuntimeOrchestrationPlanInput): Promise<OrchestrationPlan>
   generateWorkboardPlan(input: RuntimeWorkboardPlanInput): Promise<WorkboardDraftPlan>
   sendConversationTurn(input: RuntimeConversationTurnInput): Promise<RuntimeConversationTurnResult>
@@ -201,6 +215,16 @@ export function createRuntimeService(): RuntimeService {
 
       return adapter.generateAgentDraft(parsed, context)
     },
+    async generateSkillDraft(input) {
+      const parsed = RuntimeSkillDraftInputSchema.parse(input)
+      const adapter = getProviderAdapter(parsed.providerId)
+
+      if (!adapter.generateSkillDraft) {
+        throw new Error(`Skill drafting is not available for ${adapter.label} yet.`)
+      }
+
+      return adapter.generateSkillDraft(parsed, context)
+    },
     async generateOrchestrationPlan(input) {
       const parsed = RuntimeOrchestrationPlanInputSchema.parse(
         input
@@ -258,6 +282,7 @@ export function createRuntimeService(): RuntimeService {
           instructions: input.instructions,
           connectors: input.connectors,
           providerSessionRef: input.providerSessionRef,
+          announcedSkills: input.announcedSkills,
           message: buildWorkRunMessage(input),
           logRef: input.logRef,
           eventLogPath: input.eventLogPath,

@@ -547,7 +547,7 @@ function broadcast(snapshot: ObservedRunSnapshot): void {
 // and other labels are reduced to a short human object (file basename, tool
 // name) rather than full paths or arguments.
 function updateLiveActivityDecoration(observedRunId: string, event: RuntimeObservation): void {
-  const meaningfulKinds: ObservedRunEventKind[] = ['tool', 'command', 'file', 'message']
+  const meaningfulKinds: ObservedRunEventKind[] = ['tool', 'command', 'file', 'message', 'skill']
   if (!meaningfulKinds.includes(event.kind)) {
     return
   }
@@ -557,11 +557,24 @@ function updateLiveActivityDecoration(observedRunId: string, event: RuntimeObser
     return
   }
 
-  const nextLabel = event.kind === 'command' ? null : deriveCalmEventLabel(event.payload)
+  // ADR-040: skill events carry the skill name explicitly — it is already a
+  // calm, human label.
+  const skillName =
+    event.kind === 'skill' && typeof event.payload?.skillName === 'string'
+      ? event.payload.skillName.slice(0, 60)
+      : null
+  const nextLabel =
+    skillName ?? (event.kind === 'command' ? null : deriveCalmEventLabel(event.payload))
   // Completion echoes ("Tool completed.") arrive without a label; don't let
   // them downgrade a specific phrase ("Editing report.md…") to a generic one
   // while the kind hasn't changed.
   if (nextLabel === null && decoration.latestEventKind === event.kind) {
+    return
+  }
+  // ADR-040: a skill phrase holds until a *labelled* activity replaces it —
+  // sub-second command echoes right after the SKILL.md read must not flip the
+  // live line back to "Running a command…" before the phrase was visible.
+  if (nextLabel === null && decoration.latestEventKind === 'skill') {
     return
   }
 

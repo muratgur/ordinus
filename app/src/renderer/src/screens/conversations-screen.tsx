@@ -54,6 +54,7 @@ import {
 import { FileReferenceList } from '@renderer/components/file-reference-list'
 import { getFileReferences, type FileReference } from '@renderer/components/file-reference-utils'
 import { MarkdownContent } from '@renderer/components/markdown-content'
+import { TurnFullResponse } from '@renderer/components/turn-full-response'
 import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
@@ -1374,33 +1375,6 @@ function ModeratorDeliberatingRow(): React.JSX.Element {
       <span className="shrink-0 font-medium text-foreground">Moderator</span>
       <span className="ordinus-text-shimmer min-w-0 truncate">is reviewing the discussion</span>
       <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-status-running" />
-    </div>
-  )
-}
-
-// ADR-030 parity: the summary is always shown; the agent's full produced body
-// (resultContent) is surfaced on demand so the room stays calm by default.
-function TurnFullResponse({ content }: { content: string }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <div className="grid gap-2">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-        aria-expanded={open}
-      >
-        <ChevronRight
-          className={cn('size-3.5 transition-transform duration-200', open && 'rotate-90')}
-        />
-        {open ? 'Hide full response' : 'Show full response'}
-      </button>
-      {open ? (
-        <div className="border-l-2 border-primary/20 pl-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200">
-          <AgentMarkdown content={content} />
-        </div>
-      ) : null}
     </div>
   )
 }

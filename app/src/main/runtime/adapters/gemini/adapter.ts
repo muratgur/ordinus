@@ -6,6 +6,7 @@ import {
   AgentSandboxSchema,
   ProviderStatusSchema,
   type AgentDraft,
+  type AgentSkillDraft,
   type AgentSandbox,
   type OrchestrationPlan,
   type ProviderConnectResult,
@@ -25,11 +26,17 @@ import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
 import type { ProviderUsageReport } from '../../../observability/types'
 import { materializeGeminiConnectors } from '../../../integrations/materialize'
+import { listSkillsForPrompt } from '../../../agents/filesystem'
 import {
   AgentDraftOutputSchema,
   buildAgentDraft,
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
+import {
+  buildSkillDraft,
+  buildSkillDraftPrompt,
+  SkillDraftOutputSchema
+} from '../../prompts/skill-draft'
 import { buildOrchestrationPrompt, parseOrchestrationPlan } from '../../prompts/orchestration'
 import { buildWorkboardPlanPrompt, parseWorkboardDraftPlan } from '../../prompts/work-plan'
 import {
@@ -62,6 +69,7 @@ import type {
   ProviderLoginProcess,
   ProviderRuntimeContext,
   RuntimeAgentDraftInput,
+  RuntimeSkillDraftInput,
   RuntimeConversationTurnInput,
   RuntimeConversationTurnResult,
   RuntimeOrchestrationPlanInput,
@@ -101,6 +109,9 @@ export const geminiProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateGeminiAgentDraft(input)
+  },
+  generateSkillDraft(input) {
+    return generateGeminiSkillDraft(input)
   },
   generateOrchestrationPlan(input) {
     return generateGeminiOrchestrationPlan(input)
@@ -142,11 +153,15 @@ async function sendGeminiConversationTurn(
     throw new Error('Gemini needs login before this conversation can run.')
   }
 
+  // ADR-040: hand the canonical skills folder to the turn-private home so
+  // Gemini discovers it natively as user-tier skills.
+  const agentSkills = listSkillsForPrompt(input.agentHomePath)
   const connectors = await materializeGeminiConnectors(
     input.connectors,
     getGeminiConfigDir(),
     join(input.agentHomePath, '.ordinus-gemini', input.turnId),
-    input.additionalMcpServers
+    input.additionalMcpServers,
+    agentSkills.length > 0 ? join(input.agentHomePath, 'skills') : null
   )
 
   try {
@@ -327,6 +342,58 @@ async function generateGeminiAgentDraft(input: RuntimeAgentDraftInput): Promise<
     const draftJson = AgentDraftOutputSchema.parse(readGeminiAgentDraftOutput(result.stdout))
 
     return buildAgentDraft(input, draftJson)
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true })
+  }
+}
+
+// ADR-040: one-shot skill draft by the owning agent — same invocation shape as
+// the agent draft, different prompt/schema.
+async function generateGeminiSkillDraft(input: RuntimeSkillDraftInput): Promise<AgentSkillDraft> {
+  const executable = await findGeminiExecutable()
+  if (!executable) {
+    throw new Error('Gemini CLI was not found.')
+  }
+
+  const status = await getGeminiStatus(null)
+  if (!status.connected) {
+    throw new Error('Gemini needs login before Ordinus can draft skills with it.')
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'ordinus-gemini-skill-draft-'))
+
+  try {
+    const args = [
+      '--skip-trust',
+      '--approval-mode',
+      'plan',
+      '--output-format',
+      'json',
+      '--prompt',
+      buildSkillDraftPrompt(input)
+    ]
+
+    addCliModelArg(args, input.model, 0)
+
+    const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
+      cwd: tempDir,
+      env: getGeminiEnvironment(),
+      shell: executable.shell,
+      timeoutMs: 90_000
+    })
+
+    if (result.code !== 0) {
+      throw new Error(
+        readCliFailureMessage({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          ignoredDiagnosticPatterns: ignoredGeminiDiagnosticPatterns,
+          defaultMessage: 'Gemini could not draft the skill.'
+        })
+      )
+    }
+
+    return buildSkillDraft(SkillDraftOutputSchema.parse(readGeminiAgentDraftOutput(result.stdout)))
   } finally {
     rmSync(tempDir, { force: true, recursive: true })
   }

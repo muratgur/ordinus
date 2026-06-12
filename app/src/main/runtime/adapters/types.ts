@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import type {
   AgentDraft,
+  AgentSkillDraft,
   AgentDraftFromIntentInput,
   AgentSandbox,
   AgentTurnOutcome,
@@ -38,6 +39,16 @@ export type RuntimeAgentDraftInput = AgentDraftFromIntentInput & {
   model: string
 }
 
+// ADR-040: one-shot skill drafting by the owning agent (no session, JSON out).
+export type RuntimeSkillDraftInput = {
+  providerId: ProviderId
+  model: string
+  agentName: string
+  agentRole: string
+  instructions: string
+  request: string
+}
+
 export type ProviderRuntimeContext = {
   loginProcesses: Map<ProviderId, ProviderLoginProcess>
   conversationProcesses: Map<string, ProviderConversationProcess>
@@ -58,6 +69,11 @@ export type RuntimeConversationTurnInput = {
   instructions: string
   connectors: string[]
   providerSessionRef: string | null
+  // ADR-040: skill set already announced to the session being resumed
+  // (skillId → SKILL.md mtime). `null` = session tracked but nothing announced
+  // yet (announce the full current set once); `undefined` = caller does not
+  // track announcements, so no delta is emitted (Workboard today).
+  announcedSkills?: Record<string, string> | null
   message: string
   logRef: string
   eventLogPath: string
@@ -83,6 +99,10 @@ export type RuntimeConversationTurnResult = {
   // could not resume (ADR-013 fallback). Adapters leave this unset; the runtime
   // service sets it on the fallback path.
   sessionReset?: boolean
+  // ADR-040: the skill set this turn made known to the provider session
+  // (skillId → mtime). Persisted next to providerSessionRef so later resumes
+  // diff against it. Only adapters with prompt-based discovery (Codex) set it.
+  announcedSkills?: Record<string, string>
 }
 
 export type RuntimeWorkRunInput = {
@@ -100,6 +120,8 @@ export type RuntimeWorkRunInput = {
   instructions: string
   connectors: string[]
   providerSessionRef: string | null
+  // ADR-040: same announced-skills contract as RuntimeConversationTurnInput.
+  announcedSkills?: Record<string, string> | null
   title: string
   instruction: string
   expectedOutput: string
@@ -136,6 +158,10 @@ export type ProviderAdapter = {
     input: RuntimeAgentDraftInput,
     context: ProviderRuntimeContext
   ): Promise<AgentDraft>
+  generateSkillDraft?(
+    input: RuntimeSkillDraftInput,
+    context: ProviderRuntimeContext
+  ): Promise<AgentSkillDraft>
   generateOrchestrationPlan?(
     input: RuntimeOrchestrationPlanInput,
     context: ProviderRuntimeContext

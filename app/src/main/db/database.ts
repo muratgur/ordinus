@@ -219,6 +219,10 @@ export type PreparedConversationAgentTurn = {
   agentTurnId: string
   agent: Agent
   providerSessionRef: string | null
+  // ADR-040: skill set already announced to the session being resumed; null
+  // when the session is fresh or nothing was announced yet. Lives and dies
+  // with providerSessionRef.
+  announcedSkills: Record<string, string> | null
   message: string
 }
 
@@ -2992,14 +2996,24 @@ export class OrdinusDatabase {
       .slice(0, limit)
   }
 
-  prepareWorkRunProviderSession(runId: string): string | null {
+  prepareWorkRunProviderSession(runId: string): {
+    providerSessionRef: string | null
+    // ADR-040: undefined = no session row to track announcements on; null =
+    // tracked session with nothing announced yet.
+    announcedSkills?: Record<string, string> | null
+  } {
     const run = this.getWorkRun(runId)
     const session = this.ensureWorkRequestAgentSessionForRun(run)
     if (!session) {
-      return run.providerSessionRef
+      return { providerSessionRef: run.providerSessionRef }
     }
 
     const providerSessionRef = this.getCompatibleProviderSessionRefForRun(run, session)
+    // ADR-040: announced state lives and dies with the session ref — an
+    // incompatible/reset ref clears it in the same update.
+    const announcedSkills = providerSessionRef
+      ? this.parseAnnouncedSkills(session.announcedSkills)
+      : null
     const now = new Date().toISOString()
     this.db
       .update(workRequestAgentSessions)
@@ -3007,6 +3021,7 @@ export class OrdinusDatabase {
         providerId: run.providerId,
         model: run.model,
         providerSessionRef,
+        announcedSkills: announcedSkills ? JSON.stringify(announcedSkills) : null,
         status: 'active',
         lastRunId: run.id,
         updatedAt: now
@@ -3025,7 +3040,7 @@ export class OrdinusDatabase {
         .run()
     }
 
-    return providerSessionRef
+    return { providerSessionRef, announcedSkills }
   }
 
   getQueuedWorkRunResume(runId: string): QueuedWorkRunResume | null {
@@ -3227,7 +3242,11 @@ export class OrdinusDatabase {
         })
       })
     })
-    this.recordWorkRunProviderSession(run.id, parsed.providerSessionRef ?? run.providerSessionRef)
+    this.recordWorkRunProviderSession(
+      run.id,
+      parsed.providerSessionRef ?? run.providerSessionRef,
+      parsed.announcedSkills
+    )
     this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
@@ -3255,6 +3274,8 @@ export class OrdinusDatabase {
     runId: string
     providerSessionRef: string
     outcome: Extract<AgentTurnOutcome, { outcome: 'needs_input' }>
+    // ADR-040: persisted with the session ref, same as completeWorkRun.
+    announcedSkills?: Record<string, string>
   }): WorkRun {
     const run = this.getWorkRun(input.runId)
     if (run.status === 'cancelled') {
@@ -3302,7 +3323,7 @@ export class OrdinusDatabase {
         })
         .run()
     })
-    this.recordWorkRunProviderSession(run.id, input.providerSessionRef)
+    this.recordWorkRunProviderSession(run.id, input.providerSessionRef, input.announcedSkills)
     this.refreshWorkRequestStatusForRun(run.id)
 
     return this.getWorkRun(run.id)
@@ -4282,7 +4303,43 @@ export class OrdinusDatabase {
       agent,
       providerSessionRef:
         participant.providerId === agent.providerId ? participant.providerSessionRef : null,
+      announcedSkills:
+        participant.providerId === agent.providerId
+          ? this.readParticipantAnnouncedSkills(participant.id)
+          : null,
       message: input.message
+    }
+  }
+
+  // ADR-040: raw read of the announced-skills map — intentionally not part of
+  // the renderer-facing participant contract.
+  private readParticipantAnnouncedSkills(participantId: string): Record<string, string> | null {
+    const row = this.db
+      .select({ announcedSkills: conversationParticipants.announcedSkills })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.id, participantId))
+      .get()
+    return this.parseAnnouncedSkills(row?.announcedSkills ?? null)
+  }
+
+  private parseAnnouncedSkills(raw: string | null): Record<string, string> | null {
+    if (!raw) {
+      return null
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return null
+      }
+      const map: Record<string, string> = {}
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === 'string') {
+          map[key] = value
+        }
+      }
+      return map
+    } catch {
+      return null
     }
   }
 
@@ -4372,6 +4429,10 @@ export class OrdinusDatabase {
         agent,
         providerSessionRef:
           participant.providerId === agent.providerId ? participant.providerSessionRef : null,
+        announcedSkills:
+          participant.providerId === agent.providerId
+            ? this.readParticipantAnnouncedSkills(participant.id)
+            : null,
         message: buildAssignedConversationMessage(userMessage, assignments[index].instruction)
       }
     })
@@ -4448,6 +4509,9 @@ export class OrdinusDatabase {
     outcome: AgentTurnOutcome
     logRef: string
     sessionReset?: boolean
+    // ADR-040: written together with providerSessionRef so announced state can
+    // never outlive or contradict the session it belongs to.
+    announcedSkills?: Record<string, string>
   }): ConversationDetail {
     const turn = this.getConversationTurn(input.turnId)
     if (turn.status === 'cancelled') {
@@ -4495,6 +4559,7 @@ export class OrdinusDatabase {
             providerId: input.providerId,
             model: input.model,
             providerSessionRef: input.providerSessionRef,
+            announcedSkills: input.announcedSkills ? JSON.stringify(input.announcedSkills) : null,
             status: 'waiting_for_user',
             updatedAt: now
           })
@@ -4542,6 +4607,7 @@ export class OrdinusDatabase {
         providerId: input.providerId,
         model: input.model,
         providerSessionRef: input.providerSessionRef,
+        announcedSkills: input.announcedSkills ? JSON.stringify(input.announcedSkills) : null,
         status: 'ready',
         updatedAt: now
       })
@@ -4668,6 +4734,9 @@ export class OrdinusDatabase {
           agentTurnId,
           agent,
           providerSessionRef,
+          announcedSkills: providerSessionRef
+            ? this.readParticipantAnnouncedSkills(request.participantId)
+            : null,
           message: agentMessage
         }
       ]
@@ -5046,6 +5115,8 @@ export class OrdinusDatabase {
       providerId: run.providerId,
       model: run.model,
       providerSessionRef,
+      // ADR-040: Workboard does not track announcements yet (known follow-up).
+      announcedSkills: null,
       status: 'active',
       lastRunId: null,
       createdAt: now,
@@ -5110,7 +5181,8 @@ export class OrdinusDatabase {
 
   private recordWorkRunProviderSession(
     runId: string,
-    providerSessionRef: string | null | undefined
+    providerSessionRef: string | null | undefined,
+    announcedSkills?: Record<string, string>
   ): void {
     if (!providerSessionRef) {
       return
@@ -5128,6 +5200,9 @@ export class OrdinusDatabase {
         providerId: run.providerId,
         model: run.model,
         providerSessionRef,
+        // ADR-040: written together with the session ref; an adapter that does
+        // not announce (Claude/Gemini) resets the map for its session.
+        announcedSkills: announcedSkills ? JSON.stringify(announcedSkills) : null,
         status: 'active',
         lastRunId: run.id,
         updatedAt: new Date().toISOString()

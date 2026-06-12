@@ -35,7 +35,17 @@ import type {
   AgentSkill,
   AgentSkillCreateInput,
   AgentSkillDeleteInput,
+  AgentSkillAssignInput,
   AgentSkillDeleteResult,
+  AgentSkillDraft,
+  AgentSkillDraftFromIntentInput,
+  LibrarySkill,
+  LibrarySkillDetail,
+  LibrarySkillGetInput,
+  LocalSkillCandidate,
+  SkillImportFolderResult,
+  SkillImportPreview,
+  SkillImportSourceInput,
   AgentSkillDetail,
   AgentSkillGetInput,
   AgentSkillsListInput,
@@ -203,6 +213,8 @@ export type OrdinusApi = {
     createSkill: (input: AgentSkillCreateInput) => Promise<AgentSkill>
     updateSkill: (input: AgentSkillUpdateInput) => Promise<AgentSkill>
     deleteSkill: (input: AgentSkillDeleteInput) => Promise<AgentSkillDeleteResult>
+    assignLibrarySkill: (input: AgentSkillAssignInput) => Promise<AgentSkill>
+    draftSkill: (input: AgentSkillDraftFromIntentInput) => Promise<AgentSkillDraft>
     listMemory: (input: AgentMemoryListInput) => Promise<AgentMemoryRule[]>
     addMemory: (input: AgentMemoryAddInput) => Promise<AgentMemoryRule>
     updateMemory: (input: AgentMemoryUpdateInput) => Promise<AgentMemoryRule>
@@ -215,6 +227,14 @@ export type OrdinusApi = {
       input: AgentExtraDirectoryRemoveInput
     ) => Promise<AgentExtraDirectoryList>
     listExtraDirectories: (input: AgentExtraDirectoryListInput) => Promise<AgentExtraDirectoryList>
+  }
+  skills: {
+    listLibrary: () => Promise<LibrarySkill[]>
+    getLibrarySkill: (input: LibrarySkillGetInput) => Promise<LibrarySkillDetail>
+    scanLocal: () => Promise<LocalSkillCandidate[]>
+    selectImportFolder: () => Promise<SkillImportFolderResult>
+    previewImport: (input: SkillImportSourceInput) => Promise<SkillImportPreview>
+    import: (input: SkillImportSourceInput) => Promise<LibrarySkill>
   }
   conversations: {
     list: () => Promise<ConversationListItem[]>

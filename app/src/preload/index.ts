@@ -37,7 +37,17 @@ import type {
   AgentSkill,
   AgentSkillCreateInput,
   AgentSkillDeleteInput,
+  AgentSkillAssignInput,
   AgentSkillDeleteResult,
+  AgentSkillDraft,
+  AgentSkillDraftFromIntentInput,
+  LibrarySkill,
+  LibrarySkillDetail,
+  LibrarySkillGetInput,
+  LocalSkillCandidate,
+  SkillImportFolderResult,
+  SkillImportPreview,
+  SkillImportSourceInput,
   AgentSkillDetail,
   AgentSkillGetInput,
   AgentSkillsListInput,
@@ -272,6 +282,10 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.agentsUpdateSkill, input),
     deleteSkill: async (input: AgentSkillDeleteInput): Promise<AgentSkillDeleteResult> =>
       ipcRenderer.invoke(ipcChannels.agentsDeleteSkill, input),
+    assignLibrarySkill: async (input: AgentSkillAssignInput): Promise<AgentSkill> =>
+      ipcRenderer.invoke(ipcChannels.agentsAssignLibrarySkill, input),
+    draftSkill: async (input: AgentSkillDraftFromIntentInput): Promise<AgentSkillDraft> =>
+      ipcRenderer.invoke(ipcChannels.agentsDraftSkill, input),
     listMemory: async (input: AgentMemoryListInput): Promise<AgentMemoryRule[]> =>
       ipcRenderer.invoke(ipcChannels.agentsListMemory, input),
     addMemory: async (input: AgentMemoryAddInput): Promise<AgentMemoryRule> =>
@@ -300,6 +314,20 @@ const ordinus = {
       input: AgentExtraDirectoryListInput
     ): Promise<AgentExtraDirectoryList> =>
       ipcRenderer.invoke(ipcChannels.agentsListExtraDirectories, input)
+  },
+  skills: {
+    listLibrary: async (): Promise<LibrarySkill[]> =>
+      ipcRenderer.invoke(ipcChannels.skillsListLibrary),
+    getLibrarySkill: async (input: LibrarySkillGetInput): Promise<LibrarySkillDetail> =>
+      ipcRenderer.invoke(ipcChannels.skillsGetLibrarySkill, input),
+    scanLocal: async (): Promise<LocalSkillCandidate[]> =>
+      ipcRenderer.invoke(ipcChannels.skillsScanLocal),
+    selectImportFolder: async (): Promise<SkillImportFolderResult> =>
+      ipcRenderer.invoke(ipcChannels.skillsSelectImportFolder),
+    previewImport: async (input: SkillImportSourceInput): Promise<SkillImportPreview> =>
+      ipcRenderer.invoke(ipcChannels.skillsPreviewImport, input),
+    import: async (input: SkillImportSourceInput): Promise<LibrarySkill> =>
+      ipcRenderer.invoke(ipcChannels.skillsImport, input)
   },
   conversations: {
     list: async (): Promise<ConversationListItem[]> =>

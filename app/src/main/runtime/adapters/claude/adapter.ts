@@ -5,6 +5,7 @@ import {
   AgentSandboxSchema,
   ProviderStatusSchema,
   type AgentDraft,
+  type AgentSkillDraft,
   type AgentSandbox,
   type OrchestrationPlan,
   type ProviderConnectInput,
@@ -19,12 +20,19 @@ import { runCapture } from '../../cli/process'
 import { extractTrustedHttpsUrl } from '../../cli/url'
 import { getSystemPaths } from '../../../paths'
 import { materializeConnectors } from '../../../integrations/materialize'
+import { ensureClaudeSkillsLink } from '../../../agents/filesystem'
 import {
   AgentDraftOutputSchema,
   agentDraftOutputJsonSchema,
   buildAgentDraft,
   buildAgentDraftPrompt
 } from '../../prompts/agent-draft'
+import {
+  buildSkillDraft,
+  buildSkillDraftPrompt,
+  SkillDraftOutputSchema,
+  skillDraftOutputJsonSchema
+} from '../../prompts/skill-draft'
 import {
   buildOrchestrationPrompt,
   orchestrationPlanJsonSchema,
@@ -56,6 +64,7 @@ import {
   getStringValue,
   isInvalidProviderSessionMessage,
   ProviderSessionInvalidError,
+  matchSkillActivation,
   readCliFailureMessage,
   runConversationProcess,
   scheduleLoginCleanup
@@ -65,6 +74,7 @@ import type {
   ProviderLoginProcess,
   RuntimeAgentDraftInput,
   RuntimeOrchestrationPlanInput,
+  RuntimeSkillDraftInput,
   RuntimeWorkboardPlanInput
 } from '../types'
 import type {
@@ -97,6 +107,9 @@ export const claudeProviderAdapter: ProviderAdapter = {
   },
   generateAgentDraft(input) {
     return generateClaudeAgentDraft(input)
+  },
+  generateSkillDraft(input) {
+    return generateClaudeSkillDraft(input)
   },
   generateOrchestrationPlan(input) {
     return generateClaudeOrchestrationPlan(input)
@@ -159,6 +172,10 @@ async function sendClaudeConversationTurn(
   if (!status.connected) {
     throw new Error('Claude needs login before this conversation can run.')
   }
+
+  // ADR-040: Claude discovers `.claude/skills/` inside the --add-dir'd agent
+  // home natively; the link is ensured per turn to cover pre-ADR agents.
+  ensureClaudeSkillsLink(input.agentHomePath)
 
   const materialized = await materializeConnectors(
     input.connectors,
@@ -356,6 +373,48 @@ async function generateClaudeAgentDraft(input: RuntimeAgentDraftInput): Promise<
   const draftJson = AgentDraftOutputSchema.parse(readClaudeAgentDraftOutput(result.stdout))
 
   return buildAgentDraft(input, draftJson)
+}
+
+// ADR-040: one-shot skill draft by the owning agent — same invocation shape as
+// the agent draft, different prompt/schema.
+async function generateClaudeSkillDraft(input: RuntimeSkillDraftInput): Promise<AgentSkillDraft> {
+  const executable = await findClaudeExecutable()
+  if (!executable) {
+    throw new Error('Claude Code CLI was not found.')
+  }
+
+  const status = await getClaudeStatus(null)
+  if (!status.connected) {
+    throw new Error('Claude needs login before Ordinus can draft skills with it.')
+  }
+
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--json-schema',
+    JSON.stringify(skillDraftOutputJsonSchema),
+    '--no-session-persistence',
+    '--permission-mode',
+    'dontAsk'
+  ]
+
+  addCliModelArg(args, input.model, 1)
+
+  const result = await runCapture(executable.command, withCliBaseArgs(executable, args), {
+    env: getClaudeEnvironment(),
+    shell: executable.shell,
+    stdin: buildSkillDraftPrompt(input),
+    timeoutMs: 90_000
+  })
+
+  if (result.code !== 0) {
+    throw new Error(
+      firstLine(result.stderr || result.stdout) || 'Claude could not draft the skill.'
+    )
+  }
+
+  return buildSkillDraft(SkillDraftOutputSchema.parse(readClaudeAgentDraftOutput(result.stdout)))
 }
 
 async function generateClaudeOrchestrationPlan(
@@ -798,6 +857,21 @@ function observeClaudeAssistantEvent(event: Record<string, unknown>): RuntimeObs
     const phase = getClaudeToolPhase(name, label)
     const isCommand = isClaudeCommandTool(name)
 
+    // ADR-040: surface skill activations as their own signal — either the
+    // native Skill tool or any read/command touching a SKILL.md.
+    const skillName = getClaudeSkillName(name, input, label)
+    if (skillName) {
+      observations.push(
+        claudeObservation({
+          kind: 'skill',
+          phase: 'running',
+          summary: `Applying skill: ${skillName}`,
+          payload: { id: getStringValue(item.id), name, skillName }
+        })
+      )
+      continue
+    }
+
     observations.push(
       claudeObservation({
         kind: isCommand ? 'command' : 'tool',
@@ -938,6 +1012,37 @@ function getClaudeToolPhase(name: string, label: string): RuntimeObservation['ph
 
 function isClaudeCommandTool(name: string): boolean {
   return name.toLowerCase() === 'bash'
+}
+
+// ADR-040: the native Skill tool carries the skill name in its input; reads
+// of a SKILL.md (Read/cat) carry it in the path. Returns null when the tool
+// use is not skill-related.
+function getClaudeSkillName(
+  name: string,
+  input: Record<string, unknown>,
+  label: string
+): string | null {
+  if (name.toLowerCase() === 'skill') {
+    const fromInput =
+      getStringValue(input.command) || getStringValue(input.skill) || getStringValue(input.name)
+    if (fromInput) {
+      return fromInput.trim().slice(0, 80)
+    }
+  }
+
+  // Writing/editing a SKILL.md is authoring, not applying — without this,
+  // creating a skill in chat reports the skill as "used".
+  if (/^(write|edit|notebookedit|multiedit)$/i.test(name)) {
+    return null
+  }
+
+  // ADR-040: match the untruncated tool input — the label is cut at 180 chars
+  // and compound bash commands push the SKILL.md path past it.
+  const rawInput = [input.command, input.file_path, input.path]
+    .map((value) => getStringValue(value))
+    .filter(Boolean)
+    .join(' ')
+  return matchSkillActivation(rawInput || label)
 }
 
 function unwrapClaudeStructuredOutput(value: unknown): unknown {

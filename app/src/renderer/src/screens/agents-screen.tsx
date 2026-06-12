@@ -4,8 +4,11 @@ import {
   AlertTriangle,
   Bot,
   CalendarClock,
+  Check,
+  Copy,
   FileText,
   Info,
+  Library,
   Loader2,
   MessageSquareText,
   Pin,
@@ -16,6 +19,7 @@ import {
   UserRound,
   WandSparkles
 } from 'lucide-react'
+import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
 import { Rail, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
 import { SelectControl } from '@renderer/components/select-control'
@@ -48,6 +52,7 @@ import type {
   AgentUpdateSettingsInput,
   AgentRoomSummary,
   ConnectorSummary,
+  LibrarySkill,
   ObservedRunSnapshot,
   ProviderId,
   WorkRequest
@@ -130,6 +135,8 @@ export function AgentsScreen(): React.JSX.Element {
   )
   const [sidebarDocked, setSidebarDocked] = useState(true)
   const [activeTab, setActiveTab] = useState<AgentTab>('chat')
+  // ADR-040: the skill trial hands a sample request to the chat composer.
+  const [composerSeed, setComposerSeed] = useState('')
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -283,6 +290,7 @@ export function AgentsScreen(): React.JSX.Element {
   function handleAgentCreated(nextAgent: Agent): void {
     handleAgentSaved(nextAgent)
     setActiveTab('chat')
+    setComposerSeed('')
     setCreateAgentOpen(false)
   }
 
@@ -303,6 +311,7 @@ export function AgentsScreen(): React.JSX.Element {
       return nextAgents[0]?.id ?? ''
     })
     setActiveTab('chat')
+    setComposerSeed('')
   }
 
   async function handleDeleteAgent(): Promise<void> {
@@ -380,6 +389,9 @@ export function AgentsScreen(): React.JSX.Element {
             return next
           })
           setSelectedAgentId(agentId)
+          // A pending skill-trial seed belongs to the previously selected
+          // agent — never let it land in another agent's composer.
+          setComposerSeed('')
         }}
         onTogglePinned={(agent) => void handleTogglePinned(agent)}
       />
@@ -426,6 +438,12 @@ export function AgentsScreen(): React.JSX.Element {
                   activeTab={activeTab}
                   onAgentSaved={handleAgentSaved}
                   onRoomChanged={handleRoomChanged}
+                  composerSeed={composerSeed}
+                  onComposerSeedConsumed={() => setComposerSeed('')}
+                  onTrySkill={(sampleRequest) => {
+                    setComposerSeed(sampleRequest)
+                    setActiveTab('chat')
+                  }}
                 />
               </CardContent>
             </>
@@ -863,19 +881,35 @@ function AgentTabContent({
   agent,
   activeTab,
   onAgentSaved,
-  onRoomChanged
+  onRoomChanged,
+  composerSeed,
+  onComposerSeedConsumed,
+  onTrySkill
 }: {
   agent: Agent
   activeTab: AgentTab
   onAgentSaved: (agent: Agent) => void
   onRoomChanged: () => void
+  composerSeed: string
+  onComposerSeedConsumed: () => void
+  onTrySkill: (sampleRequest: string) => void
 }): React.JSX.Element {
   if (activeTab === 'chat') {
-    return <AgentRoom key={agent.id} agent={agent} onRoomChanged={onRoomChanged} />
+    return (
+      <AgentRoom
+        key={agent.id}
+        agent={agent}
+        onRoomChanged={onRoomChanged}
+        composerSeed={composerSeed}
+        onComposerSeedConsumed={onComposerSeedConsumed}
+      />
+    )
   }
 
   if (activeTab === 'skills') {
-    return <SkillsTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} />
+    return (
+      <SkillsTab key={agent.id} agent={agent} onAgentSaved={onAgentSaved} onTrySkill={onTrySkill} />
+    )
   }
 
   if (activeTab === 'agenda') {
@@ -918,14 +952,16 @@ function buildAgentSettingsPayload(
 
 function SkillsTab({
   agent,
-  onAgentSaved
+  onAgentSaved,
+  onTrySkill
 }: {
   agent: Agent
   onAgentSaved: (agent: Agent) => void
+  onTrySkill: (sampleRequest: string) => void
 }): React.JSX.Element {
   return (
     <ScrollArea className="h-full min-h-0">
-      <SkillsPanel agent={agent} />
+      <SkillsPanel agent={agent} onTrySkill={onTrySkill} />
       <div className="border-t p-5">
         <CvConnectors agent={agent} onAgentSaved={onAgentSaved} />
       </div>
@@ -1254,6 +1290,9 @@ function CapabilitiesField({
 }
 
 type SkillEditorMode = 'create' | 'edit'
+// ADR-040: creation opens on the describe step; the form step hosts review
+// and manual authoring (mirrors the agent creation flow).
+type SkillCreationStep = 'intent' | 'form'
 type SkillEditorState = {
   mode: SkillEditorMode
   skillId: string
@@ -1261,6 +1300,8 @@ type SkillEditorState = {
   description: string
   body: string
   bodyTouched: boolean
+  // ADR-040: library assignments open read-only with copy-to-customize.
+  source: 'own' | 'library'
 }
 
 function buildDefaultSkillBody(name: string): string {
@@ -1292,7 +1333,8 @@ function createSkillEditorState(): SkillEditorState {
     name: '',
     description: '',
     body: buildDefaultSkillBody(''),
-    bodyTouched: false
+    bodyTouched: false,
+    source: 'own'
   }
 }
 
@@ -1303,7 +1345,8 @@ function createSkillEditState(skill: AgentSkill): SkillEditorState {
     name: skill.name,
     description: skill.description,
     body: '',
-    bodyTouched: false
+    bodyTouched: false,
+    source: skill.source
   }
 }
 
@@ -1313,7 +1356,13 @@ function upsertSkill(skills: AgentSkill[], skill: AgentSkill): AgentSkill[] {
   )
 }
 
-function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
+function SkillsPanel({
+  agent,
+  onTrySkill
+}: {
+  agent: Agent
+  onTrySkill?: (sampleRequest: string) => void
+}): React.JSX.Element {
   const [skills, setSkills] = useState<AgentSkill[]>([])
   const [loading, setLoading] = useState(true)
   const [editorOpen, setEditorOpen] = useState(false)
@@ -1322,6 +1371,16 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  // ADR-040: conversational creation — the agent drafts from this description;
+  // the resulting sampleRequest powers the post-save trial prompt. Creation is
+  // two-step (describe → review form), mirroring the agent creation flow.
+  const [creationStep, setCreationStep] = useState<SkillCreationStep>('intent')
+  const [draftRequest, setDraftRequest] = useState('')
+  const [drafting, setDrafting] = useState(false)
+  const [sampleRequest, setSampleRequest] = useState('')
+  const [tryOpen, setTryOpen] = useState(false)
+  const [trySkillName, setTrySkillName] = useState('')
   const [error, setError] = useState('')
   const skillLoadRequestRef = useRef(0)
 
@@ -1359,8 +1418,49 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
     setEditor(createSkillEditorState())
     setLoadingSkill(false)
     setDeleteOpen(false)
+    setCreationStep('intent')
+    setDraftRequest('')
+    setSampleRequest('')
     setError('')
     setEditorOpen(true)
+  }
+
+  // ADR-040: the owning agent turns a free-text need into a SKILL.md draft.
+  async function handleDraftSkill(): Promise<void> {
+    if (draftRequest.trim().length < 12 || drafting || saving) {
+      return
+    }
+
+    // Staleness guard (same pattern as openEditSkill): closing the dialog or
+    // opening another skill mid-draft must not let the late result clobber
+    // whatever editor session is open by then.
+    const requestId = skillLoadRequestRef.current
+    try {
+      setDrafting(true)
+      setError('')
+      const draft = await window.ordinus.agents.draftSkill({
+        agentId: agent.id,
+        request: draftRequest
+      })
+      if (skillLoadRequestRef.current !== requestId) {
+        return
+      }
+      setEditor((current) => ({
+        ...current,
+        name: draft.name,
+        description: draft.description,
+        body: draft.body,
+        bodyTouched: true
+      }))
+      setSampleRequest(draft.sampleRequest)
+      setCreationStep('form')
+    } catch (draftError) {
+      if (skillLoadRequestRef.current === requestId) {
+        setError(getErrorMessage(draftError, 'The skill draft could not be generated.'))
+      }
+    } finally {
+      setDrafting(false)
+    }
   }
 
   async function openEditSkill(skill: AgentSkill): Promise<void> {
@@ -1386,7 +1486,8 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
         name: detail.name,
         description: detail.description,
         body: detail.body,
-        bodyTouched: false
+        bodyTouched: false,
+        source: detail.source
       })
     } catch (loadError) {
       if (skillLoadRequestRef.current !== requestId) {
@@ -1431,24 +1532,31 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
     try {
       setSaving(true)
       setError('')
-      const skill =
-        editor.mode === 'create'
-          ? await window.ordinus.agents.createSkill({
-              agentId: agent.id,
-              name: editor.name,
-              description: editor.description,
-              body: editor.body
-            })
-          : await window.ordinus.agents.updateSkill({
-              agentId: agent.id,
-              skillId: editor.skillId,
-              name: editor.name,
-              description: editor.description,
-              body: editor.body
-            })
+      const created = editor.mode === 'create'
+      const skill = created
+        ? await window.ordinus.agents.createSkill({
+            agentId: agent.id,
+            name: editor.name,
+            description: editor.description,
+            body: editor.body
+          })
+        : await window.ordinus.agents.updateSkill({
+            agentId: agent.id,
+            skillId: editor.skillId,
+            name: editor.name,
+            description: editor.description,
+            body: editor.body
+          })
       setSkills((current) => upsertSkill(current, skill))
       setEditor(createSkillEditorState())
       closeSkillEditor()
+      // ADR-040 A-lite trial: a drafted skill ends with "try it now?" — the
+      // sample request runs as a real turn and the skill badge answers
+      // whether it triggered.
+      if (created && sampleRequest && onTrySkill) {
+        setTrySkillName(skill.name)
+        setTryOpen(true)
+      }
     } catch (saveError) {
       setError(getErrorMessage(saveError, 'Skill could not be saved.'))
     } finally {
@@ -1477,9 +1585,48 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
     }
   }
 
+  // ADR-040: turn a read-only library assignment into this agent's own,
+  // editable skill. The assignment stays; the copy gets a distinct name.
+  async function handleCopySkill(): Promise<void> {
+    if (editor.mode !== 'edit' || editor.source !== 'library' || saving || loadingSkill) {
+      return
+    }
+
+    try {
+      setSaving(true)
+      setError('')
+      const skill = await window.ordinus.agents.createSkill({
+        agentId: agent.id,
+        name: `${editor.name} (custom)`.slice(0, 80),
+        description: editor.description,
+        body: editor.body
+      })
+      setSkills((current) => upsertSkill(current, skill))
+      closeSkillEditor()
+    } catch (copyError) {
+      setError(getErrorMessage(copyError, 'Skill could not be copied.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleLibrarySkillAssigned(skill: AgentSkill): void {
+    setSkills((current) => upsertSkill(current, skill))
+  }
+
   return (
     <div className="grid gap-3 p-5">
       <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 px-2.5 text-xs"
+          onClick={() => setLibraryOpen(true)}
+        >
+          <Library />
+          Add from library
+        </Button>
         <Button
           type="button"
           variant="outline"
@@ -1505,7 +1652,14 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
             >
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{skill.name}</p>
+                  <p className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                    <span className="truncate">{skill.name}</span>
+                    {skill.source === 'library' ? (
+                      <Badge variant="secondary" className="shrink-0">
+                        Library
+                      </Badge>
+                    ) : null}
+                  </p>
                   <p className="truncate font-mono text-xs text-muted-foreground">
                     {skill.relativePath}
                   </p>
@@ -1543,91 +1697,332 @@ function SkillsPanel({ agent }: { agent: Agent }): React.JSX.Element {
         }}
       >
         <SkillEditorDialog
+          agentName={agent.name}
+          creationStep={creationStep}
           deleting={deleting}
+          drafting={drafting}
+          draftRequest={draftRequest}
           editor={editor}
+          error={editorOpen ? error : ''}
           loadingSkill={loadingSkill}
           saving={saving}
+          onCreateManually={() => setCreationStep('form')}
           onBodyChange={handleSkillBodyChange}
           onCancel={closeSkillEditor}
+          onCopy={() => void handleCopySkill()}
           onDelete={() => setDeleteOpen(true)}
           onDescriptionChange={(description) =>
             setEditor((current) => ({ ...current, description }))
           }
+          onDraft={() => void handleDraftSkill()}
+          onDraftRequestChange={setDraftRequest}
           onNameChange={handleSkillNameChange}
           onSave={() => void handleSaveSkill()}
         />
       </Dialog>
+      <TrySkillDialog
+        agentName={agent.name}
+        open={tryOpen}
+        sampleRequest={sampleRequest}
+        skillName={trySkillName}
+        onOpenChange={setTryOpen}
+        onTry={() => {
+          setTryOpen(false)
+          onTrySkill?.(sampleRequest)
+        }}
+      />
       <DeleteSkillDialog
         deleting={deleting}
         open={deleteOpen}
         skillName={editor.name}
+        source={editor.source}
         onDelete={() => void handleDeleteSkill()}
         onOpenChange={setDeleteOpen}
+      />
+      <LibraryPickerDialog
+        agentId={agent.id}
+        assignedSkillIds={skills.map((skill) => skill.id)}
+        open={libraryOpen}
+        onAssigned={handleLibrarySkillAssigned}
+        onOpenChange={setLibraryOpen}
       />
     </div>
   )
 }
 
+// ADR-040: assign shared library skills to this agent. Already-assigned
+// entries stay visible but disabled, so the catalog reads as one stable list.
+function LibraryPickerDialog({
+  agentId,
+  assignedSkillIds,
+  open,
+  onAssigned,
+  onOpenChange
+}: {
+  agentId: string
+  assignedSkillIds: string[]
+  open: boolean
+  onAssigned: (skill: AgentSkill) => void
+  onOpenChange: (open: boolean) => void
+}): React.JSX.Element {
+  const [librarySkills, setLibrarySkills] = useState<LibrarySkill[]>([])
+  const [loading, setLoading] = useState(false)
+  const [assigningId, setAssigningId] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!open) {
+      return undefined
+    }
+    let mounted = true
+
+    async function loadLibrary(): Promise<void> {
+      try {
+        setLoading(true)
+        setError('')
+        const skills = await window.ordinus.skills.listLibrary()
+        if (mounted) {
+          setLibrarySkills(skills)
+        }
+      } catch (loadError) {
+        if (mounted) {
+          setError(getErrorMessage(loadError, 'Skill library could not be loaded.'))
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadLibrary()
+    return () => {
+      mounted = false
+    }
+  }, [open])
+
+  async function assign(librarySkillId: string): Promise<void> {
+    try {
+      setAssigningId(librarySkillId)
+      setError('')
+      const skill = await window.ordinus.agents.assignLibrarySkill({ agentId, librarySkillId })
+      onAssigned(skill)
+    } catch (assignError) {
+      setError(getErrorMessage(assignError, 'Skill could not be assigned.'))
+    } finally {
+      setAssigningId('')
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Add from library</DialogTitle>
+          <DialogDescription>
+            Library skills are shared across agents. Assigning adds them to this agent; removing
+            later only unassigns.
+          </DialogDescription>
+        </DialogHeader>
+        {error ? <InlineError message={error} /> : null}
+        <div className="ordinus-scrollbar grid max-h-96 gap-2 overflow-y-auto">
+          {loading ? (
+            <p className="py-4 text-sm text-muted-foreground">Loading library…</p>
+          ) : librarySkills.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">The skill library is empty.</p>
+          ) : (
+            librarySkills.map((librarySkill) => {
+              const assigned = assignedSkillIds.includes(librarySkill.id)
+              return (
+                <div
+                  key={librarySkill.id}
+                  className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-sm font-semibold">
+                      <span className="truncate">{librarySkill.name}</span>
+                      {librarySkill.origin === 'builtin' ? (
+                        <Badge variant="outline" className="shrink-0">
+                          Ordinus
+                        </Badge>
+                      ) : null}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {librarySkill.description}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 px-2.5 text-xs"
+                    disabled={assigned || assigningId === librarySkill.id}
+                    onClick={() => void assign(librarySkill.id)}
+                  >
+                    {assigningId === librarySkill.id ? (
+                      <Loader2 className="animate-spin" />
+                    ) : assigned ? (
+                      <Check />
+                    ) : (
+                      <Plus />
+                    )}
+                    {assigned ? 'Assigned' : 'Assign'}
+                  </Button>
+                </div>
+              )
+            })
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function SkillEditorDialog({
+  agentName,
+  creationStep,
   deleting,
+  drafting,
+  draftRequest,
   editor,
+  error,
   loadingSkill,
   saving,
   onBodyChange,
   onCancel,
+  onCopy,
+  onCreateManually,
   onDelete,
   onDescriptionChange,
+  onDraft,
+  onDraftRequestChange,
   onNameChange,
   onSave
 }: {
+  agentName: string
+  creationStep: SkillCreationStep
   deleting: boolean
+  drafting: boolean
+  draftRequest: string
   editor: SkillEditorState
+  error: string
   loadingSkill: boolean
   saving: boolean
   onBodyChange: (body: string) => void
   onCancel: () => void
+  onCopy: () => void
+  onCreateManually: () => void
   onDelete: () => void
   onDescriptionChange: (description: string) => void
+  onDraft: () => void
+  onDraftRequestChange: (request: string) => void
   onNameChange: (name: string) => void
   onSave: () => void
 }): React.JSX.Element {
-  const disabled = saving || deleting || loadingSkill
+  const disabled = saving || deleting || loadingSkill || drafting
+  // ADR-040: library assignments are shared — view them here, edit a copy.
+  const readOnly = editor.mode === 'edit' && editor.source === 'library'
+  const intentStep = editor.mode === 'create' && creationStep === 'intent'
 
+  // Step 1 (create only): describe the need; the agent drafts the SKILL.md.
+  // Mirrors the agent creation flow — the form is the review step, not the
+  // entry point.
+  if (intentStep) {
+    return (
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Create skill</DialogTitle>
+          <DialogDescription>
+            Tell {agentName} what should always be handled the same way — it drafts the skill for
+            your review.
+          </DialogDescription>
+        </DialogHeader>
+        {error ? <InlineError message={error} /> : null}
+        <textarea
+          aria-label="Describe what the skill should do"
+          className="ordinus-scrollbar min-h-36 resize-y rounded-lg border bg-card p-3 text-sm leading-6 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          value={draftRequest}
+          onChange={(event) => onDraftRequestChange(event.target.value)}
+          placeholder="e.g. When I ask for a monthly report from PDFs, always extract the same sections and format the output the same way…"
+          disabled={drafting}
+          autoFocus
+        />
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={drafting}
+            className="mr-auto"
+            onClick={onCreateManually}
+          >
+            <FileText />
+            Write it yourself
+          </Button>
+          <Button type="button" variant="ghost" disabled={drafting} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            disabled={draftRequest.trim().length < 12 || drafting}
+            onClick={onDraft}
+          >
+            {drafting ? <Loader2 className="animate-spin" /> : <WandSparkles />}
+            {drafting ? 'Drafting…' : `Draft with ${agentName}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    )
+  }
+
+  // Step 2 / edit: the form. The field block scrolls so the footer (Save)
+  // always stays reachable regardless of body length.
   return (
-    <DialogContent className="max-w-3xl">
+    <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
       <DialogHeader>
-        <DialogTitle>{editor.mode === 'create' ? 'Create skill' : 'Edit skill'}</DialogTitle>
+        <DialogTitle>
+          {editor.mode === 'create' ? 'Review skill' : readOnly ? 'Library skill' : 'Edit skill'}
+        </DialogTitle>
         <DialogDescription>
-          Save frontmatter and instructions to this agent&apos;s SKILL.md file.
+          {readOnly
+            ? 'This skill comes from the shared library. Copy it to this agent to customize it.'
+            : editor.mode === 'create'
+              ? `Adjust ${agentName}'s draft — the description decides when the skill triggers.`
+              : "Save frontmatter and instructions to this agent's SKILL.md file."}
         </DialogDescription>
       </DialogHeader>
-      <div className="grid gap-3">
+      {error ? <InlineError message={error} /> : null}
+      <div className="ordinus-scrollbar grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1">
         <FormField label="Skill name">
           <Input
             value={editor.name}
             onChange={(event) => onNameChange(event.target.value)}
             placeholder="Strategy review"
-            disabled={loadingSkill}
+            disabled={loadingSkill || readOnly}
           />
         </FormField>
         <label className="grid gap-2">
           <span className="text-xs font-medium text-muted-foreground">Description</span>
           <textarea
-            className="ordinus-scrollbar min-h-28 resize-y rounded-lg border bg-card p-3 text-sm leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="ordinus-scrollbar min-h-24 resize-y rounded-lg border bg-card p-3 text-sm leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             value={editor.description}
             onChange={(event) => onDescriptionChange(event.target.value)}
             placeholder="When should this skill be used?"
-            disabled={loadingSkill}
+            disabled={loadingSkill || readOnly}
           />
         </label>
         <label className="grid gap-2">
           <span className="text-xs font-medium text-muted-foreground">Skill instructions</span>
           <textarea
-            className="ordinus-scrollbar min-h-80 resize-y rounded-lg border bg-card p-3 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="ordinus-scrollbar min-h-64 resize-y rounded-lg border bg-card p-3 font-mono text-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             value={loadingSkill ? 'Loading skill...' : editor.body}
             onChange={(event) => onBodyChange(event.target.value)}
             placeholder="# Skill name"
-            disabled={loadingSkill}
+            disabled={loadingSkill || readOnly}
           />
         </label>
       </div>
@@ -1641,18 +2036,71 @@ function SkillEditorDialog({
             onClick={onDelete}
           >
             <Trash2 />
-            Delete skill
+            {readOnly ? 'Remove from agent' : 'Delete skill'}
           </Button>
         ) : null}
         <Button type="button" variant="ghost" disabled={disabled} onClick={onCancel}>
-          Cancel
+          {readOnly ? 'Close' : 'Cancel'}
         </Button>
-        <Button type="button" disabled={!editor.name.trim() || disabled} onClick={onSave}>
-          {saving ? <Loader2 className="animate-spin" /> : null}
-          {editor.mode === 'create' ? 'Create skill' : 'Save skill'}
-        </Button>
+        {readOnly ? (
+          <Button type="button" disabled={disabled} onClick={onCopy}>
+            {saving ? <Loader2 className="animate-spin" /> : <Copy />}
+            Copy &amp; customize
+          </Button>
+        ) : (
+          <Button type="button" disabled={!editor.name.trim() || disabled} onClick={onSave}>
+            {saving ? <Loader2 className="animate-spin" /> : null}
+            {editor.mode === 'create' ? 'Create skill' : 'Save skill'}
+          </Button>
+        )}
       </DialogFooter>
     </DialogContent>
+  )
+}
+
+// ADR-040 A-lite trial: offer to run the drafted skill's sample request as a
+// real turn in the 1:1 room — the live activity line and skill badge show
+// whether the skill actually triggered.
+function TrySkillDialog({
+  agentName,
+  open,
+  sampleRequest,
+  skillName,
+  onOpenChange,
+  onTry
+}: {
+  agentName: string
+  open: boolean
+  sampleRequest: string
+  skillName: string
+  onOpenChange: (open: boolean) => void
+  onTry: () => void
+}): React.JSX.Element {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="size-4" />
+            Skill created — try it now?
+          </DialogTitle>
+          <DialogDescription>
+            Send this sample request to {agentName} and watch whether {skillName || 'the skill'}{' '}
+            kicks in (the activity line will read &ldquo;Applying skill…&rdquo;).
+          </DialogDescription>
+        </DialogHeader>
+        <p className="rounded-lg border bg-accent/40 p-3 text-sm">{sampleRequest}</p>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            Later
+          </Button>
+          <Button type="button" onClick={onTry}>
+            <MessageSquareText />
+            Try in chat
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1660,26 +2108,30 @@ function DeleteSkillDialog({
   deleting,
   open,
   skillName,
+  source,
   onDelete,
   onOpenChange
 }: {
   deleting: boolean
   open: boolean
   skillName: string
+  source: 'own' | 'library'
   onDelete: () => void
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
+  const unassign = source === 'library'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="size-4 text-status-attention" />
-            Delete skill
+            {unassign ? 'Remove from agent' : 'Delete skill'}
           </DialogTitle>
           <DialogDescription>
-            This removes {skillName || 'this skill'} and its entire skill folder. This cannot be
-            undone.
+            {unassign
+              ? `This removes ${skillName || 'this skill'} from this agent. The library copy stays available for other agents.`
+              : `This removes ${skillName || 'this skill'} and its entire skill folder. This cannot be undone.`}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -1693,7 +2145,7 @@ function DeleteSkillDialog({
           </Button>
           <Button type="button" disabled={deleting} onClick={onDelete}>
             {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            Delete permanently
+            {unassign ? 'Remove from agent' : 'Delete permanently'}
           </Button>
         </DialogFooter>
       </DialogContent>

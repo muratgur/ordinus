@@ -97,6 +97,11 @@ export const conversationParticipants = sqliteTable('conversation_participants',
   providerId: text('provider_id').notNull(),
   model: text('model').notNull(),
   providerSessionRef: text('provider_session_ref'),
+  // ADR-040: JSON map of skillId → SKILL.md mtime announced to THIS session.
+  // Lives and dies with providerSessionRef (written together, reset together);
+  // Codex resume turns carry only the diff against it. Null = nothing
+  // announced yet → the next resume announces the full current set once.
+  announcedSkills: text('announced_skills'),
   status: text('status').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
@@ -183,6 +188,9 @@ export const workRequestAgentSessions = sqliteTable(
     providerId: text('provider_id').notNull(),
     model: text('model').notNull(),
     providerSessionRef: text('provider_session_ref'),
+    // ADR-040: same announced-skills contract as conversation_participants.
+    // Column ships now; the Workboard delta wiring is a known follow-up.
+    announcedSkills: text('announced_skills'),
     status: text('status').notNull(),
     lastRunId: text('last_run_id'),
     createdAt: text('created_at').notNull(),

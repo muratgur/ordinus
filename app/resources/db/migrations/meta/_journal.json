@@ -302,6 +302,13 @@
       "when": 1781175982697,
       "tag": "0042_striped_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1781267546244,
+      "tag": "0043_chief_darkstar",
+      "breakpoints": true
     }
   ]
 }

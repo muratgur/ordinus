@@ -6,8 +6,10 @@ import {
   Code2,
   Database,
   Diamond,
+  Download,
   FolderOpen,
   FolderLock,
+  Library,
   Loader2,
   MonitorCog,
   Plug,
@@ -19,9 +21,14 @@ import {
   ShieldCheck
 } from 'lucide-react'
 import type {
+  Agent,
   AppInfo,
   ConnectorSummary,
   DbStatus,
+  LibrarySkill,
+  LibrarySkillDetail,
+  LocalSkillCandidate,
+  SkillImportPreview,
   ProviderId,
   ProviderStatus,
   SetupStatus,
@@ -49,6 +56,14 @@ import {
   CardHeader,
   CardTitle
 } from '@renderer/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
 import { formatDate } from '@renderer/lib/format'
 import { cn } from '@renderer/lib/utils'
@@ -69,7 +84,13 @@ type SettingsScreenProps = {
   onUpdateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<void>
 }
 
-type SettingsSectionId = 'workspace' | 'providers' | 'ordinus' | 'connections' | 'local-state'
+type SettingsSectionId =
+  | 'workspace'
+  | 'providers'
+  | 'ordinus'
+  | 'connections'
+  | 'skill-library'
+  | 'local-state'
 
 const settingsSections = [
   {
@@ -95,6 +116,12 @@ const settingsSections = [
     label: 'Connections',
     description: 'External systems agents can use',
     icon: Plug
+  },
+  {
+    id: 'skill-library',
+    label: 'Skill library',
+    description: 'Shared skills agents can be assigned',
+    icon: Library
   },
   {
     id: 'local-state',
@@ -194,12 +221,501 @@ export function SettingsScreen({
 
           {activeSection === 'connections' ? <ConnectionsSettingsSection /> : null}
 
+          {activeSection === 'skill-library' ? <SkillLibrarySettingsSection /> : null}
+
           {activeSection === 'local-state' ? (
             <LocalStateSettingsSection appInfo={appInfo} paths={paths} dbStatus={dbStatus} />
           ) : null}
         </section>
       </div>
     </div>
+  )
+}
+
+// ADR-040: the shared skill library — builtin skills ship with the app and
+// refresh on update; agents get them via assignment from their Skills tab.
+// Imported skills join this list when the import flow lands.
+function SkillLibrarySettingsSection(): React.JSX.Element {
+  const [skills, setSkills] = useState<LibrarySkill[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [viewing, setViewing] = useState<LibrarySkillDetail | null>(null)
+  const [viewError, setViewError] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    window.ordinus.skills
+      .listLibrary()
+      .then((list) => {
+        if (active) {
+          setSkills(list)
+          setError('')
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setError(cause instanceof Error ? cause.message : 'Skill library could not be loaded.')
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  async function openSkill(librarySkillId: string): Promise<void> {
+    try {
+      setViewError('')
+      setViewing(await window.ordinus.skills.getLibrarySkill({ librarySkillId }))
+    } catch (cause) {
+      setViewError(cause instanceof Error ? cause.message : 'Skill could not be opened.')
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      <section className="grid gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold leading-6">Skill library</h2>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Shared skills any agent can be assigned from its Skills tab. Ordinus skills ship with
+              the app and refresh on updates; to change one for a single agent, use Copy &amp;
+              customize on that agent.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">
+              {skills.length} skill{skills.length === 1 ? '' : 's'}
+            </Badge>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2.5 text-xs"
+              onClick={() => setImportOpen(true)}
+            >
+              <Download />
+              Import skill
+            </Button>
+          </div>
+        </div>
+
+        {error || viewError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error || viewError}
+          </p>
+        ) : null}
+
+        {loading ? (
+          <div className="grid min-h-[160px] place-items-center text-sm text-muted-foreground">
+            Loading skill library…
+          </div>
+        ) : skills.length === 0 ? (
+          <div className="grid min-h-[160px] place-items-center rounded-md border bg-accent text-sm text-muted-foreground">
+            The skill library is empty
+          </div>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {skills.map((skill) => (
+              <li key={skill.id}>
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent"
+                  onClick={() => void openSkill(skill.id)}
+                >
+                  <span className="grid min-w-0 gap-0.5">
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      <span className="truncate">{skill.name}</span>
+                      <Badge variant="outline" className="shrink-0">
+                        {skill.origin === 'builtin' ? 'Ordinus' : 'Imported'}
+                      </Badge>
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {skill.description}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {new Date(skill.updatedAt).toLocaleDateString()}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <Dialog open={viewing !== null} onOpenChange={(open) => (open ? null : setViewing(null))}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{viewing?.name ?? 'Library skill'}</DialogTitle>
+            <DialogDescription>{viewing?.description}</DialogDescription>
+          </DialogHeader>
+          <pre className="ordinus-scrollbar max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-card p-3 font-mono text-xs leading-5">
+            {viewing?.body ?? ''}
+          </pre>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setViewing(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ImportSkillDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={(skill) =>
+          setSkills((current) =>
+            [...current.filter((existing) => existing.id !== skill.id), skill].sort((left, right) =>
+              left.name.localeCompare(right.name)
+            )
+          )
+        }
+      />
+    </div>
+  )
+}
+
+// ADR-040 §5: import wizard — pick a source (skills found on this machine or
+// a folder), read the full instructions in the trust preview, then import and
+// optionally assign to agents. Security stance: show-and-confirm, executables
+// called out, nothing runs at import time.
+type ImportStep = 'source' | 'preview' | 'assign'
+
+function ImportSkillDialog({
+  open,
+  onOpenChange,
+  onImported
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onImported: (skill: LibrarySkill) => void
+}): React.JSX.Element {
+  const [step, setStep] = useState<ImportStep>('source')
+  const [candidates, setCandidates] = useState<LocalSkillCandidate[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [preview, setPreview] = useState<SkillImportPreview | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [imported, setImported] = useState<LibrarySkill | null>(null)
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set())
+  const [assigning, setAssigning] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!open) {
+      return undefined
+    }
+    let active = true
+
+    async function loadSources(): Promise<void> {
+      try {
+        setStep('source')
+        setPreview(null)
+        setImported(null)
+        setSelectedAgentIds(new Set())
+        setError('')
+        setScanning(true)
+        const [localSkills, agentList] = await Promise.all([
+          window.ordinus.skills.scanLocal(),
+          window.ordinus.agents.list()
+        ])
+        if (active) {
+          setCandidates(localSkills)
+          setAgents(agentList.filter((agent) => !agent.archivedAt))
+        }
+      } catch (cause) {
+        if (active) {
+          setError(cause instanceof Error ? cause.message : 'Local skills could not be scanned.')
+        }
+      } finally {
+        if (active) {
+          setScanning(false)
+        }
+      }
+    }
+
+    void loadSources()
+    return () => {
+      active = false
+    }
+  }, [open])
+
+  async function openPreview(sourcePath: string): Promise<void> {
+    try {
+      setPreviewing(true)
+      setError('')
+      setPreview(await window.ordinus.skills.previewImport({ sourcePath }))
+      setStep('preview')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The skill could not be read.')
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  async function pickFolder(): Promise<void> {
+    try {
+      setError('')
+      const result = await window.ordinus.skills.selectImportFolder()
+      if (!result.cancelled && result.sourcePath) {
+        await openPreview(result.sourcePath)
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The folder could not be opened.')
+    }
+  }
+
+  async function confirmImport(): Promise<void> {
+    if (!preview || importing) {
+      return
+    }
+    try {
+      setImporting(true)
+      setError('')
+      const skill = await window.ordinus.skills.import({ sourcePath: preview.sourcePath })
+      setImported(skill)
+      onImported(skill)
+      setStep('assign')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The skill could not be imported.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  async function assignToAgents(): Promise<void> {
+    if (!imported || assigning) {
+      return
+    }
+    try {
+      setAssigning(true)
+      setError('')
+      for (const agentId of selectedAgentIds) {
+        await window.ordinus.agents.assignLibrarySkill({
+          agentId,
+          librarySkillId: imported.id
+        })
+      }
+      onOpenChange(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The skill could not be assigned.')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  const executableFiles = preview?.files.filter((file) => file.executable) ?? []
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        // Esc/overlay must not abandon an in-flight import or assignment —
+        // the loop would keep running invisibly with nowhere to show errors.
+        if (!nextOpen && (importing || assigning)) {
+          return
+        }
+        onOpenChange(nextOpen)
+      }}
+    >
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col">
+        <DialogHeader>
+          <DialogTitle>
+            {step === 'source'
+              ? 'Import skill'
+              : step === 'preview'
+                ? `Review before importing`
+                : 'Skill imported'}
+          </DialogTitle>
+          <DialogDescription>
+            {step === 'source'
+              ? 'Bring a skill into the shared library from this machine or a folder.'
+              : step === 'preview'
+                ? 'These are instructions your agents will follow. Read them before trusting.'
+                : `${imported?.name ?? 'The skill'} is in the library. Assign it to agents now or later from each agent's Skills tab.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {step === 'source' ? (
+          <div className="ordinus-scrollbar grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
+            {scanning ? (
+              <p className="py-3 text-sm text-muted-foreground">Scanning this machine…</p>
+            ) : candidates.length > 0 ? (
+              candidates.map((candidate) => (
+                <button
+                  key={candidate.sourcePath}
+                  type="button"
+                  className="grid gap-0.5 rounded-lg border bg-card p-3 text-left transition-colors hover:border-ring disabled:opacity-60"
+                  disabled={previewing}
+                  onClick={() => void openPreview(candidate.sourcePath)}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <span className="truncate">{candidate.name}</span>
+                    <Badge variant="outline" className="shrink-0">
+                      {candidate.foundIn}
+                    </Badge>
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {candidate.description}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p className="py-3 text-sm text-muted-foreground">
+                No skills found in the usual CLI folders (~/.claude, ~/.codex, ~/.gemini,
+                ~/.agents).
+              </p>
+            )}
+          </div>
+        ) : null}
+
+        {step === 'preview' && preview ? (
+          <div className="ordinus-scrollbar grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
+            <div>
+              <p className="text-sm font-semibold">{preview.name}</p>
+              <p className="text-xs text-muted-foreground">{preview.description}</p>
+            </div>
+            {executableFiles.length > 0 ? (
+              <p className="rounded-lg border border-status-attention/40 bg-status-attention/10 p-3 text-xs text-status-attention">
+                This skill bundles {executableFiles.length} executable file
+                {executableFiles.length > 1 ? 's' : ''} (
+                {executableFiles.map((file) => file.name).join(', ')}). Agents may run them while
+                applying the skill.
+              </p>
+            ) : null}
+            <pre className="ordinus-scrollbar max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-card p-3 font-mono text-xs leading-5">
+              {preview.body}
+            </pre>
+            {preview.files.length > 1 ? (
+              <p className="text-xs text-muted-foreground">
+                Files: {preview.files.map((file) => file.name).join(' · ')}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {step === 'assign' ? (
+          <div className="ordinus-scrollbar grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
+            {agents.length === 0 ? (
+              <p className="py-3 text-sm text-muted-foreground">No agents yet.</p>
+            ) : (
+              agents.map((agent) => {
+                const checked = selectedAgentIds.has(agent.id)
+                return (
+                  <label
+                    key={agent.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-lg border bg-card p-3"
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-primary"
+                      checked={checked}
+                      onChange={() =>
+                        setSelectedAgentIds((current) => {
+                          const next = new Set(current)
+                          if (checked) {
+                            next.delete(agent.id)
+                          } else {
+                            next.add(agent.id)
+                          }
+                          return next
+                        })
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">{agent.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {agent.role}
+                      </span>
+                    </span>
+                  </label>
+                )
+              })
+            )}
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          {step === 'source' ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={previewing}
+                className="mr-auto"
+                onClick={() => void pickFolder()}
+              >
+                <FolderOpen />
+                Choose folder…
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : null}
+          {step === 'preview' ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={importing}
+                className="mr-auto"
+                onClick={() => setStep('source')}
+              >
+                Back
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={importing}
+                onClick={() => onOpenChange(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" disabled={importing} onClick={() => void confirmImport()}>
+                {importing ? <Loader2 className="animate-spin" /> : <ShieldCheck />}I trust these
+                instructions — import
+              </Button>
+            </>
+          ) : null}
+          {step === 'assign' ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={assigning}
+                onClick={() => onOpenChange(false)}
+              >
+                Done
+              </Button>
+              <Button
+                type="button"
+                disabled={assigning || selectedAgentIds.size === 0}
+                onClick={() => void assignToAgents()}
+              >
+                {assigning ? <Loader2 className="animate-spin" /> : null}
+                Assign to {selectedAgentIds.size || 'selected'} agent
+                {selectedAgentIds.size === 1 ? '' : 's'}
+              </Button>
+            </>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

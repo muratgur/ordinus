@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { OrdinusDatabase } from './db/database'
+import { syncBuiltinLibrarySkills } from './skills/library'
 import { registerIpcHandlers } from './ipc/register'
 import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
@@ -132,6 +133,13 @@ app.whenReady().then(() => {
   })
 
   database.initialize()
+  // ADR-040: refresh the app-shipped skill library on disk so agent CLIs can
+  // read it and app updates propagate to every installation.
+  try {
+    syncBuiltinLibrarySkills()
+  } catch (error) {
+    console.error('Builtin skill library could not be synced:', error)
+  }
   scheduler = registerIpcHandlers(database, runtime, observability)
   scheduler.start()
 

@@ -25,11 +25,16 @@ import {
   AgentMemoryDeactivateInputSchema,
   AgentMemoryListInputSchema,
   AgentMemoryUpdateInputSchema,
+  AgentSkillAssignInputSchema,
+  AgentSkillDraftFromIntentInputSchema,
   AgentSkillCreateInputSchema,
   AgentSkillDeleteInputSchema,
   AgentSkillGetInputSchema,
   AgentSkillUpdateInputSchema,
   AgentSkillsListInputSchema,
+  LibrarySkillGetInputSchema,
+  SkillImportFolderResultSchema,
+  SkillImportSourceInputSchema,
   AgentSetPinnedInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
@@ -147,6 +152,7 @@ import {
 } from '@shared/contracts'
 import type { OrdinusActionEvent, SchedulerEvent } from '@shared/contracts'
 import {
+  assignLibrarySkillToAgent,
   createAgentSkill,
   deleteAgentHome,
   deleteAgentSkill,
@@ -156,6 +162,13 @@ import {
   listAgentSkills,
   updateAgentSkill
 } from '../agents/filesystem'
+import {
+  getBuiltinSkillIds,
+  getLibrarySkill,
+  getLibrarySkillRoot,
+  listLibrarySkills
+} from '../skills/library'
+import { importLibrarySkill, previewImportSkill, scanLocalSkills } from '../skills/import'
 import {
   buildAgentDraftFromProfile,
   buildBlankAgentDraft,
@@ -496,6 +509,16 @@ export function registerIpcHandlers(
     const input = AgentCreateInputSchema.parse(payload)
     const agent = database.createAgent(input)
     ensureAgentHome(agent)
+    // ADR-040: new agents start with the builtin library skills assigned
+    // (each removable from the agent's Skills tab). Best-effort — a failed
+    // default assignment must not fail agent creation.
+    for (const skillId of getBuiltinSkillIds()) {
+      try {
+        assignLibrarySkillToAgent(agent.id, getLibrarySkillRoot(skillId))
+      } catch {
+        // ignore
+      }
+    }
     return agent
   })
   ipcMain.handle(ipcChannels.agentsUpdateInstructions, (_event, payload) => {
@@ -603,6 +626,56 @@ export function registerIpcHandlers(
       throw new Error("Stop this agent's running work before deleting skills.")
     }
     return deleteAgentSkill(input)
+  })
+  // ADR-040: the skill is drafted by the agent that will own it — its own
+  // provider/model and standing instructions shape the draft.
+  ipcMain.handle(ipcChannels.agentsDraftSkill, async (_event, payload) => {
+    const input = AgentSkillDraftFromIntentInputSchema.parse(payload)
+    const agent = database.getAgent(input.agentId)
+    return runtime.generateSkillDraft({
+      providerId: agent.providerId,
+      model: agent.model,
+      agentName: agent.name,
+      agentRole: agent.role,
+      instructions: agent.instructions,
+      request: input.request
+    })
+  })
+  ipcMain.handle(ipcChannels.agentsAssignLibrarySkill, (_event, payload) => {
+    const input = AgentSkillAssignInputSchema.parse(payload)
+    requireAgent(database, input.agentId)
+    return assignLibrarySkillToAgent(input.agentId, getLibrarySkillRoot(input.librarySkillId))
+  })
+  ipcMain.handle(ipcChannels.skillsListLibrary, () => listLibrarySkills())
+  ipcMain.handle(ipcChannels.skillsGetLibrarySkill, (_event, payload) => {
+    const input = LibrarySkillGetInputSchema.parse(payload)
+    return getLibrarySkill(input.librarySkillId)
+  })
+  // ADR-040 §5: import — scan local CLI skill folders, pick a folder, preview
+  // (show-and-confirm), then copy into the library.
+  ipcMain.handle(ipcChannels.skillsScanLocal, () => scanLocalSkills())
+  ipcMain.handle(ipcChannels.skillsSelectImportFolder, async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const options: OpenDialogOptions = {
+      title: 'Choose a skill folder (contains SKILL.md)',
+      properties: ['openDirectory']
+    }
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options)
+
+    return SkillImportFolderResultSchema.parse({
+      cancelled: result.canceled || !result.filePaths[0],
+      sourcePath: result.filePaths[0] ?? ''
+    })
+  })
+  ipcMain.handle(ipcChannels.skillsPreviewImport, (_event, payload) => {
+    const input = SkillImportSourceInputSchema.parse(payload)
+    return previewImportSkill(input.sourcePath)
+  })
+  ipcMain.handle(ipcChannels.skillsImport, (_event, payload) => {
+    const input = SkillImportSourceInputSchema.parse(payload)
+    return importLibrarySkill(input.sourcePath)
   })
   ipcMain.handle(ipcChannels.agentsListMemory, (_event, payload) => {
     const input = AgentMemoryListInputSchema.parse(payload)
@@ -1630,7 +1703,7 @@ function startWorkRequestRuns(
         run: startedRun,
         agent: database.getAgent(startedRun.assignedAgentId),
         message: queuedResume?.message ?? '',
-        providerSessionRef: database.prepareWorkRunProviderSession(startedRun.id)
+        providerSessionRef: database.prepareWorkRunProviderSession(startedRun.id).providerSessionRef
       },
       database.getRequiredInputSummaries(startedRun.id)
     )
@@ -1646,8 +1719,8 @@ function startPreparedWorkRun(
 ): void {
   const requestId = getWorkRequestId(prepared.run)
   const workspaceContext = getWorkRunWorkspaceContext(database, prepared.run)
-  const providerSessionRef =
-    database.prepareWorkRunProviderSession(prepared.run.id) ?? prepared.providerSessionRef
+  const preparedSession = database.prepareWorkRunProviderSession(prepared.run.id)
+  const providerSessionRef = preparedSession.providerSessionRef ?? prepared.providerSessionRef
   const logRef = join('work-requests', requestId, prepared.run.id)
   const logDir = join(getSystemPaths().logs, logRef)
   const startedAt = new Date().toISOString()
@@ -1690,6 +1763,7 @@ function startPreparedWorkRun(
         ),
         connectors: prepared.agent.connectors,
         providerSessionRef,
+        announcedSkills: preparedSession.announcedSkills,
         title: prepared.run.title,
         instruction: prepared.run.instruction,
         expectedOutput: prepared.run.expectedOutput,
@@ -1711,7 +1785,8 @@ function startPreparedWorkRun(
           database.waitForWorkRunInput({
             runId: prepared.run.id,
             providerSessionRef: result.providerSessionRef,
-            outcome: result.outcome
+            outcome: result.outcome,
+            announcedSkills: result.announcedSkills
           })
           observability.markWorkboardWaitingForUser(prepared.run.id, result.outcome.title)
           return
@@ -1731,6 +1806,7 @@ function startPreparedWorkRun(
           resultSummary: result.outcome.summary,
           resultContent: result.outcome.content,
           providerSessionRef: result.providerSessionRef,
+          announcedSkills: result.announcedSkills,
           artifactRefs: fileRefs.artifactRefs,
           changedFiles: fileRefs.changedFiles
         })
@@ -2082,6 +2158,7 @@ async function runConversationAgentTurn(
       ),
       connectors: agentTurn.agent.connectors,
       providerSessionRef: agentTurn.providerSessionRef,
+      announcedSkills: agentTurn.announcedSkills,
       message: agentTurn.message,
       logRef,
       eventLogPath: join(logDir, 'events.jsonl'),
@@ -2297,7 +2374,8 @@ function saveConversationTurnCompletion(
       providerSessionRef: result.providerSessionRef,
       outcome,
       logRef: result.logRef,
-      sessionReset: result.sessionReset
+      sessionReset: result.sessionReset,
+      announcedSkills: result.announcedSkills
     })
     if (outcome.outcome === 'needs_input') {
       observability.markConversationWaitingForUser(turnId, outcome.title)

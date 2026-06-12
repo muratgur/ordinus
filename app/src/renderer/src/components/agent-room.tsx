@@ -13,6 +13,7 @@ import { InspectGutterButton, LiveStatusRow, RunInspectorSheet } from './run-ins
 import { AgentAvatar } from './agent-avatar'
 import { CopyButton } from './copy-button'
 import { MarkdownContent } from './markdown-content'
+import { TurnFullResponse } from './turn-full-response'
 import { FilesTouched } from './files-touched'
 import { QuestionPanel } from './question-panel'
 import { Button } from './ui/button'
@@ -33,10 +34,15 @@ import { Button } from './ui/button'
  */
 export function AgentRoom({
   agent,
-  onRoomChanged
+  onRoomChanged,
+  composerSeed,
+  onComposerSeedConsumed
 }: {
   agent: Agent
   onRoomChanged?: () => void
+  /** ADR-040: prefill handed over by other tabs (skill trial), consumed once. */
+  composerSeed?: string
+  onComposerSeedConsumed?: () => void
 }): React.JSX.Element {
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -96,6 +102,28 @@ export function AgentRoom({
       cancelled = true
     }
   }, [agent.id, onRoomChanged])
+
+  // ADR-040: consume a composer seed handed over by another tab (e.g. the
+  // skill trial). One-shot — consumed immediately so a tab roundtrip does not
+  // resurrect it over the user's typing.
+  useEffect(() => {
+    // Wait out the room-open reset (it clears the composer via a microtask);
+    // consuming after loading settles keeps the seed from being clobbered.
+    if (!composerSeed || loading) {
+      return undefined
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) {
+        return
+      }
+      setMessage(composerSeed)
+      onComposerSeedConsumed?.()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [composerSeed, loading, onComposerSeedConsumed])
 
   // Stream by polling the conversation while a turn is running.
   useEffect(() => {
@@ -499,6 +527,10 @@ function TranscriptTurn({
         )}
         {turn.truncated ? (
           <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
+        ) : null}
+
+        {turn.status === 'completed' && turn.resultContent.trim() ? (
+          <TurnFullResponse content={turn.resultContent} />
         ) : null}
 
         {turn.status === 'completed' ? (

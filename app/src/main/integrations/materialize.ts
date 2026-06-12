@@ -113,20 +113,34 @@ export async function materializeCodexConnectors(
  * is shared. To keep per-agent scoping (and stay safe under concurrent turns)
  * this builds a turn-private home: auth files are symlinked back to the real
  * home, and only settings.json is rewritten with this agent's connectors.
+ *
+ * ADR-040: the same private home doubles as the skill discovery root — a
+ * `skills` symlink under `.gemini/` makes the agent's canonical skills folder
+ * a native user-tier skills location, so the home is also built when the agent
+ * has skills even without connectors.
  */
 export async function materializeGeminiConnectors(
   connectorIds: string[],
   sourceConfigDir: string,
   destHomeDir: string,
-  additionalServers: ReadonlyArray<AdditionalMcpServer> = []
+  additionalServers: ReadonlyArray<AdditionalMcpServer> = [],
+  skillsRoot: string | null = null
 ): Promise<{ home: string | null; cleanup: () => void }> {
   const usable = await collectUsableConnectors(connectorIds)
-  if (usable.length === 0 && additionalServers.length === 0) {
+  if (usable.length === 0 && additionalServers.length === 0 && !skillsRoot) {
     return { home: null, cleanup: () => {} }
   }
 
   const destConfigDir = join(destHomeDir, '.gemini')
   mkdirSync(destConfigDir, { recursive: true })
+
+  if (skillsRoot) {
+    try {
+      symlinkSync(skillsRoot, join(destConfigDir, 'skills'), 'junction')
+    } catch {
+      // Best-effort: discovery degrades to "no skills" rather than failing the turn.
+    }
+  }
 
   let baseSettings: Record<string, unknown> = {}
   const sourceSettingsPath = join(sourceConfigDir, 'settings.json')

@@ -691,7 +691,10 @@ export const AgentSkillSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   relativePath: z.string().min(1),
-  updatedAt: z.string()
+  updatedAt: z.string(),
+  // ADR-040: 'own' lives in the agent folder; 'library' is a shared library
+  // skill assigned to this agent (a symlink — removing it only unassigns).
+  source: z.enum(['own', 'library']).default('own')
 })
 
 export const AgentSkillDetailSchema = AgentSkillSchema.extend({
@@ -726,6 +729,81 @@ export const AgentSkillDeleteInputSchema = AgentSkillGetInputSchema
 
 export const AgentSkillDeleteResultSchema = z.object({
   deletedSkillId: z.string().min(1)
+})
+
+// ADR-040: shared skill library. Builtin skills ship with the app (synced to
+// userData on launch, not deletable); imported skills arrive via the import
+// flow. Assignment to an agent is a symlink in that agent's skills folder.
+export const LibrarySkillSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  origin: z.enum(['builtin', 'imported']),
+  updatedAt: z.string()
+})
+
+export const LibrarySkillDetailSchema = LibrarySkillSchema.extend({
+  body: z.string()
+})
+
+export const LibrarySkillGetInputSchema = z.object({
+  librarySkillId: z.string().min(1)
+})
+
+export const AgentSkillAssignInputSchema = z.object({
+  agentId: z.string().min(1),
+  librarySkillId: z.string().min(1)
+})
+
+// ADR-040 §5: import. Candidates come from scanning local CLI skill folders
+// (~/.claude, ~/.codex, ~/.gemini, ~/.agents) or a user-picked folder; every
+// import passes a show-and-confirm preview before the library copy is made.
+export const LocalSkillCandidateSchema = z.object({
+  sourcePath: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  /** Human label of where it was found, e.g. "Claude (~/.claude/skills)". */
+  foundIn: z.string().min(1)
+})
+
+export const SkillImportPreviewSchema = z.object({
+  sourcePath: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  body: z.string(),
+  files: z.array(
+    z.object({
+      name: z.string().min(1),
+      executable: z.boolean()
+    })
+  )
+})
+
+export const SkillImportSourceInputSchema = z.object({
+  sourcePath: z.string().min(1)
+})
+
+export const SkillImportFolderResultSchema = z.object({
+  cancelled: z.boolean(),
+  sourcePath: z.string()
+})
+
+// ADR-040: conversational skill creation — the owning agent drafts the skill
+// from a free-text description; sampleRequest feeds the A-lite trial.
+export const AgentSkillDraftFromIntentInputSchema = z.object({
+  agentId: z.string().min(1),
+  request: z
+    .string()
+    .trim()
+    .min(12, 'Describe what the skill should do in a bit more detail.')
+    .max(2000)
+})
+
+export const AgentSkillDraftSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(500),
+  body: z.string().trim().min(1).max(16_000),
+  sampleRequest: z.string().trim().min(1).max(300)
 })
 
 export const AgentMemoryRuleSchema = z.object({
@@ -1306,7 +1384,12 @@ export const WorkRunCompleteInputSchema = WorkRunActionInputSchema.extend({
   artifactRef: z.string().trim().max(500).optional(),
   artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
   changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([]),
-  providerSessionRef: z.string().trim().min(1).optional()
+  providerSessionRef: z.string().trim().min(1).optional(),
+  // ADR-040: skill set this run's turn announced to the provider session;
+  // persisted with the session ref (see work_request_agent_sessions). Keys are
+  // skill folder slugs, values are mtime strings — both bounded like every
+  // other field on this renderer-reachable schema.
+  announcedSkills: z.record(z.string().max(120), z.string().max(40)).optional()
 })
 
 export const WorkRunFailInputSchema = WorkRunActionInputSchema.extend({
@@ -1578,7 +1661,9 @@ export const ObservedRunEventKindSchema = z.enum([
   'command',
   'output',
   'metric',
-  'error'
+  'error',
+  // ADR-040: a skill was activated / its SKILL.md was read this turn.
+  'skill'
 ])
 export const ObservedRunEventSourceSchema = z.enum([
   'provider',
@@ -2013,6 +2098,16 @@ export type AgentSkillCreateInput = z.infer<typeof AgentSkillCreateInputSchema>
 export type AgentSkillUpdateInput = z.infer<typeof AgentSkillUpdateInputSchema>
 export type AgentSkillDeleteInput = z.infer<typeof AgentSkillDeleteInputSchema>
 export type AgentSkillDeleteResult = z.infer<typeof AgentSkillDeleteResultSchema>
+export type LibrarySkill = z.infer<typeof LibrarySkillSchema>
+export type LibrarySkillDetail = z.infer<typeof LibrarySkillDetailSchema>
+export type LibrarySkillGetInput = z.infer<typeof LibrarySkillGetInputSchema>
+export type AgentSkillAssignInput = z.infer<typeof AgentSkillAssignInputSchema>
+export type AgentSkillDraftFromIntentInput = z.infer<typeof AgentSkillDraftFromIntentInputSchema>
+export type AgentSkillDraft = z.infer<typeof AgentSkillDraftSchema>
+export type LocalSkillCandidate = z.infer<typeof LocalSkillCandidateSchema>
+export type SkillImportPreview = z.infer<typeof SkillImportPreviewSchema>
+export type SkillImportSourceInput = z.infer<typeof SkillImportSourceInputSchema>
+export type SkillImportFolderResult = z.infer<typeof SkillImportFolderResultSchema>
 export type AgentMemoryRule = z.infer<typeof AgentMemoryRuleSchema>
 export type AgentMemoryListInput = z.infer<typeof AgentMemoryListInputSchema>
 export type AgentMemoryAddInput = z.infer<typeof AgentMemoryAddInputSchema>
