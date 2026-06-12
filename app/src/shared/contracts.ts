@@ -481,11 +481,32 @@ export const ConnectorSummarySchema = z.object({
   /** Installed package version for local connectors; null until first Connect. */
   installedVersion: z.string().nullable().default(null),
   /** True when Connect opens the server's own sign-in window (ADR-041). */
-  interactiveLogin: z.boolean().default(false)
+  interactiveLogin: z.boolean().default(false),
+  /** True when Connect needs the pairing dialog (phone → code, ADR-042). */
+  pairingLogin: z.boolean().default(false)
 })
 
 export const ConnectorActionInputSchema = z.object({
   connectorId: ConnectorIdSchema
+})
+
+// ADR-042: Connect for pairing-login connectors carries the phone number the
+// device-linking code is requested for. Digits only, country code included.
+export const ConnectorConnectInputSchema = z.object({
+  connectorId: ConnectorIdSchema,
+  phone: z
+    .string()
+    .regex(/^[0-9]{7,15}$/, 'Phone must be digits only, with country code.')
+    .optional()
+})
+
+// ADR-042: pairing-login progress pushed main → renderer while a Connect is
+// in flight. `code` is only present on 'pairing-code'.
+export const ConnectorPairingEventSchema = z.object({
+  connectorId: ConnectorIdSchema,
+  event: z.enum(['pairing-code', 'paired', 'error']),
+  code: z.string().optional(),
+  reason: z.string().optional()
 })
 
 // ADR-041: the real tool catalog is discovered from the server (tools/list)
@@ -510,6 +531,8 @@ export type ConnectorKind = z.infer<typeof ConnectorKindSchema>
 export type ConnectorHealth = z.infer<typeof ConnectorHealthSchema>
 export type ConnectorSummary = z.infer<typeof ConnectorSummarySchema>
 export type ConnectorActionInput = z.infer<typeof ConnectorActionInputSchema>
+export type ConnectorConnectInput = z.infer<typeof ConnectorConnectInputSchema>
+export type ConnectorPairingEvent = z.infer<typeof ConnectorPairingEventSchema>
 export type ConnectorTool = z.infer<typeof ConnectorToolSchema>
 export type ConnectorToolsResult = z.infer<typeof ConnectorToolsResultSchema>
 export type ConnectorSetEnabledToolsInput = z.infer<typeof ConnectorSetEnabledToolsInputSchema>

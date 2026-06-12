@@ -32,6 +32,8 @@ import type {
   AgentMemoryUpdateInput,
   AgentReflectionSummary,
   ConnectorActionInput,
+  ConnectorConnectInput,
+  ConnectorPairingEvent,
   ConnectorSetEnabledToolsInput,
   ConnectorSummary,
   ConnectorToolsResult,
@@ -464,8 +466,16 @@ const ordinus = {
   },
   connectors: {
     list: async (): Promise<ConnectorSummary[]> => ipcRenderer.invoke(ipcChannels.connectorsList),
-    connect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
+    connect: async (input: ConnectorConnectInput): Promise<ConnectorSummary[]> =>
       ipcRenderer.invoke(ipcChannels.connectorsConnect, input),
+    // ADR-042: pairing-login progress (device-linking code etc.) pushed while
+    // connect() is still in flight. Returns an unsubscribe function.
+    onPairingEvent: (callback: (event: ConnectorPairingEvent) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ConnectorPairingEvent): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.connectorsPairingEvent, listener)
+      return () => ipcRenderer.off(ipcChannels.connectorsPairingEvent, listener)
+    },
     disconnect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
       ipcRenderer.invoke(ipcChannels.connectorsDisconnect, input),
     listTools: async (input: ConnectorActionInput): Promise<ConnectorToolsResult> =>

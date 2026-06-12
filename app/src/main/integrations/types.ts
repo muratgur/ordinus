@@ -10,10 +10,12 @@ export type ConnectorAuthMethod = 'oauth' | 'api-key' | 'none'
 export type LocalConnectorRuntime = 'uv' | 'electron-node'
 
 // ADR-041: how a session is established at Connect time. 'none' means the
-// server needs no login (connected == installed). 'interactive' is reserved
-// for servers like LinkedIn that open their own login window; implemented
-// when the first such connector ships.
-export type LocalConnectorLoginMode = 'none' | 'interactive'
+// server needs no login (connected == installed). 'interactive' is for
+// servers like LinkedIn that open their own login window. 'pairing'
+// (ADR-042) is for servers like WhatsApp that emit a device-linking code the
+// Ordinus UI must display: the login child prints line-delimited JSON events
+// on stdout and exits 0 once paired.
+export type LocalConnectorLoginMode = 'none' | 'interactive' | 'pairing'
 
 export type LocalConnectorSpec = {
   runtime: LocalConnectorRuntime
@@ -38,6 +40,12 @@ export type LocalConnectorSpec = {
   nativeHttp?: boolean
   /** Heavy servers (e.g. Chromium-carrying) get an idle shutdown timer. */
   heavy?: boolean
+  /**
+   * ADR-042: 'persistent' servers are also ingesters (e.g. WhatsApp's live
+   * message stream) — they start when the app boots (if connected), are
+   * never idle-reaped, and are restarted after unexpected exits.
+   */
+  lifecycle?: 'persistent'
   loginMode: LocalConnectorLoginMode
   /**
    * Safe-default tool allowlist. Tools outside this list — including tools

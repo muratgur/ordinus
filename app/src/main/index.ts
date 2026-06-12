@@ -9,7 +9,7 @@ import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
 import { SchedulerService } from './scheduler/service'
 import { shutdownOrdinusMcpServer } from './ordinus-mcp/lifecycle'
-import { initConnectorService } from './integrations/service'
+import { initConnectorService, startPersistentConnectors } from './integrations/service'
 import { shutdownLocalMcp } from './local-mcp/supervisor'
 
 app.setName('Ordinus')
@@ -138,6 +138,9 @@ app.whenReady().then(() => {
   // ADR-041: wire durable local-connector state into the connector service
   // and the local MCP supervisor.
   initConnectorService(database)
+  // ADR-042: connected persistent connectors (WhatsApp) start ingesting now,
+  // not at first tool call.
+  startPersistentConnectors()
   // ADR-040: refresh the app-shipped skill library on disk so agent CLIs can
   // read it and app updates propagate to every installation.
   try {

@@ -5,6 +5,8 @@ import type {
   AgentDeleteResult,
   AgentDraft,
   ConnectorActionInput,
+  ConnectorConnectInput,
+  ConnectorPairingEvent,
   ConnectorSetEnabledToolsInput,
   ConnectorSummary,
   ConnectorToolsResult,
@@ -303,7 +305,8 @@ export type OrdinusApi = {
   }
   connectors: {
     list: () => Promise<ConnectorSummary[]>
-    connect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
+    connect: (input: ConnectorConnectInput) => Promise<ConnectorSummary[]>
+    onPairingEvent: (callback: (event: ConnectorPairingEvent) => void) => () => void
     disconnect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
     listTools: (input: ConnectorActionInput) => Promise<ConnectorToolsResult>
     setEnabledTools: (input: ConnectorSetEnabledToolsInput) => Promise<ConnectorToolsResult>

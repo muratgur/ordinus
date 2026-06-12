@@ -18,7 +18,8 @@
 
 import { createServer, type Server as HttpServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -28,6 +29,15 @@ import { getConnectorManifest } from '../integrations/registry'
 import { spawn } from 'node:child_process'
 import { ensureConnectorInstalled, requireLocalSpec } from './runtime-bootstrap'
 import { getConnectorHomeDir, getConnectorSessionDir } from './paths'
+
+// ADR-042: a pairing-mode server that detects a revoked session drops this
+// marker in its session dir and exits; the supervisor maps that to the
+// "Reconnect required" state instead of crash accounting.
+const LOGGED_OUT_MARKER = 'logged-out'
+
+function hasLoggedOutMarker(connectorId: string): boolean {
+  return existsSync(join(getConnectorSessionDir(connectorId), LOGGED_OUT_MARKER))
+}
 
 const IDLE_TIMEOUT_MS = 5 * 60_000
 const REAPER_INTERVAL_MS = 60_000
@@ -44,7 +54,7 @@ export type DiscoveredTool = { name: string; description: string }
  */
 export type LocalConnectorStateAccess = {
   getEnabledTools: (connectorId: string) => string[]
-  setHealth: (connectorId: string, health: 'ok' | 'unhealthy') => void
+  setHealth: (connectorId: string, health: 'ok' | 'unhealthy' | 'reconnect-required') => void
 }
 
 type RunningServer = {
@@ -63,6 +73,8 @@ type SupervisorState = {
   failures: Map<string, number[]>
   reaper: NodeJS.Timeout | null
   access: LocalConnectorStateAccess | null
+  /** Set during will-quit so delayed persistent restarts cannot respawn. */
+  shuttingDown: boolean
 }
 
 const state: SupervisorState = {
@@ -73,7 +85,8 @@ const state: SupervisorState = {
   pendingStarts: new Map(),
   failures: new Map(),
   reaper: null,
-  access: null
+  access: null,
+  shuttingDown: false
 }
 
 export function initLocalMcpSupervisor(access: LocalConnectorStateAccess): void {
@@ -132,6 +145,12 @@ async function resolveChildLaunch(
 
 /** Spawn the connector's process and connect an MCP client over stdio. */
 async function startServer(connectorId: string): Promise<RunningServer> {
+  // A revoked session would just boot, detect loggedOut, and exit again —
+  // refuse up front so agents get a clear error instead of a churn loop.
+  if (hasLoggedOutMarker(connectorId)) {
+    state.access?.setHealth(connectorId, 'reconnect-required')
+    throw new Error(`${connectorId} session expired — reconnect from Settings → Connections.`)
+  }
   const launch = await resolveChildLaunch(connectorId)
 
   const transport = new StdioClientTransport({
@@ -143,6 +162,17 @@ async function startServer(connectorId: string): Promise<RunningServer> {
   const client = new Client({ name: 'ordinus-local-mcp', version: '1.0.0' })
   await client.connect(transport)
 
+  // The pipe MUST be drained: an unread stderr fills its buffer (~64KB) and
+  // then blocks the child's writes, stalling its event loop — a real hazard
+  // for persistent servers that log reconnects over weeks. Servers are
+  // expected to keep stderr to status lines (never message content).
+  transport.stderr?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString().trim()
+    if (text) {
+      console.error(`[local-mcp] ${connectorId} stderr: ${text}`)
+    }
+  })
+
   // The SDK owns the child process it spawned; closing the client closes the
   // transport, which terminates the child.
   const running: RunningServer = {
@@ -152,10 +182,35 @@ async function startServer(connectorId: string): Promise<RunningServer> {
   }
 
   transport.onclose = () => {
-    // Unexpected exit (we did not remove the entry first) counts as a failure.
+    // Unexpected exit (we did not remove the entry first). A `logged-out`
+    // marker in the session dir (ADR-042) means the server detected a revoked
+    // session and exited deliberately — surface "Reconnect required" instead
+    // of counting it as a crash. Session data stays; only Disconnect deletes.
     if (state.servers.get(connectorId) === running) {
       state.servers.delete(connectorId)
-      recordFailure(connectorId)
+      if (hasLoggedOutMarker(connectorId)) {
+        console.log(`[local-mcp] ${connectorId} session revoked — reconnect required`)
+        state.access?.setHealth(connectorId, 'reconnect-required')
+      } else {
+        recordFailure(connectorId)
+        // Persistent servers are ingesters — a dead child means messages stop
+        // landing in the store, so restart instead of waiting for traffic.
+        // recordFailure above still applies the rapid-failure threshold; once
+        // unhealthy we stop trying until the next explicit start.
+        const manifest = getConnectorManifest(connectorId)
+        const failures = state.failures.get(connectorId)?.length ?? 0
+        if (manifest.local?.lifecycle === 'persistent' && failures < FAILURE_THRESHOLD) {
+          console.log(`[local-mcp] ${connectorId} persistent server exited — restarting in 5s`)
+          setTimeout(() => {
+            if (state.shuttingDown) {
+              return
+            }
+            ensureServer(connectorId).catch((err) => {
+              console.error(`[local-mcp] ${connectorId} restart failed:`, err)
+            })
+          }, 5_000).unref()
+        }
+      }
     }
   }
 
@@ -250,6 +305,104 @@ async function runInteractiveLoginOnce(connectorId: string, timeoutMs: number): 
 }
 
 /**
+ * ADR-042 pairing login (WhatsApp-class servers): run the server's `--login`
+ * flow as a one-shot headless process. Unlike interactive login the server
+ * has no window of its own — it emits line-delimited JSON events on stdout
+ * (`pairing-code`, `paired`, `error`) which are forwarded to the caller so
+ * the renderer can display the device-linking code. Same contract otherwise:
+ * resolves on exit 0, rejects on non-zero exit or timeout. "Get a new code"
+ * is simply a fresh runPairingLogin call after the previous one settled.
+ */
+export type PairingLoginEvent = {
+  event: 'pairing-code' | 'paired' | 'error'
+  code?: string
+  reason?: string
+}
+
+const pairingChildren = new Map<string, ReturnType<typeof spawn>>()
+
+export function runPairingLogin(
+  connectorId: string,
+  phone: string,
+  onEvent: (event: PairingLoginEvent) => void,
+  timeoutMs = 5 * 60_000
+): Promise<void> {
+  // Unlike interactive login, a new pairing request SUPERSEDES the in-flight
+  // one: pairing codes expire in ~1 min and "Get a new code" restarts the
+  // login run (ADR-042). Killing the old child rejects its promise; the
+  // dialog ignores results from superseded attempts.
+  pairingChildren.get(connectorId)?.kill()
+  return runPairingLoginOnce(connectorId, phone, onEvent, timeoutMs)
+}
+
+async function runPairingLoginOnce(
+  connectorId: string,
+  phone: string,
+  onEvent: (event: PairingLoginEvent) => void,
+  timeoutMs: number
+): Promise<void> {
+  const launch = await resolveChildLaunch(connectorId, ['--login'])
+  console.log(`[local-mcp] ${connectorId} pairing login starting`)
+  await new Promise<void>((resolve, reject) => {
+    // The phone number travels via env, not argv — argv is visible to every
+    // local process (`ps`) for the lifetime of the login child.
+    const child = spawn(launch.command, launch.args, {
+      env: { ...launch.env, ORDINUS_WA_PHONE: phone },
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    pairingChildren.set(connectorId, child)
+    let lastError: string | null = null
+    let buffer = ''
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      buffer += chunk
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue
+        }
+        try {
+          const event = JSON.parse(line) as PairingLoginEvent
+          if (event.event === 'error') {
+            lastError = event.reason ?? 'Pairing failed.'
+          }
+          // Never echo event payloads to the log — the pairing code is a
+          // credential equivalent while valid.
+          onEvent(event)
+        } catch {
+          // Non-JSON noise on stdout is ignored, not fatal.
+        }
+      }
+    })
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error('Pairing timed out — the code was not entered on the phone.'))
+    }, timeoutMs)
+    child.once('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      if (pairingChildren.get(connectorId) === child) {
+        pairingChildren.delete(connectorId)
+      }
+      if (code === 0) {
+        resolve()
+      } else if (signal !== null) {
+        reject(new Error('Pairing was superseded by a new attempt.'))
+      } else {
+        reject(
+          new Error(lastError ?? `Pairing was not completed (exit code ${code ?? 'unknown'}).`)
+        )
+      }
+    })
+  })
+  console.log(`[local-mcp] ${connectorId} pairing login completed`)
+}
+
+/**
  * Disconnect: stop the child AND revoke the proxy token, so any live CLI
  * session still holding the old URL gets 404s instead of silently restarting
  * a connector the user just disconnected. A fresh token is minted on the
@@ -279,7 +432,8 @@ function ensureReaper(): void {
     const now = Date.now()
     for (const [connectorId, running] of state.servers) {
       const manifest = getConnectorManifest(connectorId)
-      if (!manifest.local?.heavy) {
+      // Persistent servers are never reaped (ADR-042), heavy or not.
+      if (!manifest.local?.heavy || manifest.local.lifecycle === 'persistent') {
         continue
       }
       if (running.inFlight === 0 && now - running.lastUsedAt > IDLE_TIMEOUT_MS) {
@@ -414,6 +568,14 @@ export async function getLocalConnectorUrl(connectorId: string): Promise<string>
   return `http://127.0.0.1:${state.port}/local/${connectorId}/${token}`
 }
 
+/**
+ * ADR-042: start a persistent connector without waiting for traffic (app
+ * boot, post-Connect). Errors surface through the failure/health machinery.
+ */
+export async function ensureLocalConnectorRunning(connectorId: string): Promise<void> {
+  await ensureServer(connectorId)
+}
+
 /** Install (if needed), start, and ask the server for its real tool catalog. */
 export async function discoverConnectorTools(connectorId: string): Promise<DiscoveredTool[]> {
   const running = await ensureServer(connectorId)
@@ -424,6 +586,7 @@ export async function discoverConnectorTools(connectorId: string): Promise<Disco
 
 /** will-quit: stop every child and unbind the proxy. Idempotent. */
 export async function shutdownLocalMcp(): Promise<void> {
+  state.shuttingDown = true
   if (state.reaper) {
     clearInterval(state.reaper)
     state.reaper = null

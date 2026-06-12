@@ -60,6 +60,35 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
       ]
     }
   },
+  whatsapp: {
+    id: 'whatsapp',
+    label: 'WhatsApp',
+    transport: 'mcp-stdio',
+    authMethod: 'none',
+    kind: 'local',
+    local: {
+      // ADR-042: first Ordinus-authored MCP server — Baileys-based, lives in
+      // the self-contained sub-package app/resources/whatsapp-mcp (its own
+      // node_modules, never in the app bundle). Baileys pin rides the
+      // sub-package's package.json; upgrades ship with app releases.
+      runtime: 'electron-node',
+      package: 'whatsapp-mcp/server.mjs',
+      // Session credentials AND the message store live in the deletable
+      // session dir: Disconnect wipes the WhatsApp session and all synced
+      // message history together (ADR-042 trust story).
+      sessionDirArgs: ['--auth-dir', '${sessionDir}'],
+      // ADR-042: the server is also a live-message ingester — it runs for the
+      // app's lifetime while connected instead of being idle-reaped (store
+      // freshness; reconnect churn is itself an automation signal).
+      lifecycle: 'persistent',
+      loginMode: 'pairing',
+      // Read tools are born enabled — the user explicitly linked their own
+      // messages, and a WhatsApp connector that cannot read them is useless.
+      // send_message acts outwardly as the user: born disabled (ADR-041 rule),
+      // opt-in from Settings → Connections.
+      defaultEnabledTools: ['search_contacts', 'list_chats', 'get_messages']
+    }
+  },
   atlassian: {
     id: 'atlassian',
     label: 'Atlassian',

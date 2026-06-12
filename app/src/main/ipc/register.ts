@@ -47,6 +47,7 @@ import {
   AgentCreateInputSchema,
   AppInfoSchema,
   ConnectorActionInputSchema,
+  ConnectorConnectInputSchema,
   ConnectorSetEnabledToolsInputSchema,
   ConversationCancelTurnInputSchema,
   FileReadInputSchema,
@@ -1046,8 +1047,18 @@ export function registerIpcHandlers(
   })
   ipcMain.handle(ipcChannels.connectorsList, () => listConnectors())
   ipcMain.handle(ipcChannels.connectorsConnect, (_event, payload) => {
-    const input = ConnectorActionInputSchema.parse(payload)
-    return connectConnector(input.connectorId)
+    const input = ConnectorConnectInputSchema.parse(payload)
+    // ADR-042: pairing progress (the device-linking code) streams to the
+    // renderer dialog while this invoke is still in flight — same broadcast
+    // mechanism as schedulesChanged.
+    return connectConnector(input.connectorId, {
+      phone: input.phone,
+      onPairingEvent: (event) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send(ipcChannels.connectorsPairingEvent, event)
+        }
+      }
+    })
   })
   ipcMain.handle(ipcChannels.connectorsDisconnect, (_event, payload) => {
     const input = ConnectorActionInputSchema.parse(payload)

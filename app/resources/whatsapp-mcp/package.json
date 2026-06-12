@@ -1,0 +1,11 @@
+{
+  "name": "whatsapp-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ordinus WhatsApp connector — self-contained MCP server sub-package (ADR-042). Dependencies live here, never in the app bundle.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "baileys": "7.0.0-rc13"
+  }
+}

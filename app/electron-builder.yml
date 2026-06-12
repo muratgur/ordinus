@@ -25,6 +25,14 @@ extraResources:
     to: profiles
   - from: resources/ordinus-knowledge
     to: ordinus-knowledge
+  # ADR-042: self-contained WhatsApp MCP sub-package — its node_modules ship
+  # as-is (pure JS, no native modules) so the electron-node child can run it
+  # from process.resourcesPath without any install step.
+  - from: resources/whatsapp-mcp
+    to: whatsapp-mcp
+    filter:
+      - '**/*'
+      - '!poc-auth/**'
 win:
   executableName: ordinus
   icon: build/icon.ico

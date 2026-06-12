@@ -138,6 +138,9 @@ export const ipcChannels = {
   connectorsDisconnect: 'connectors:disconnect',
   connectorsListTools: 'connectors:list-tools',
   connectorsSetEnabledTools: 'connectors:set-enabled-tools',
+  // ADR-042: pairing-login progress (main → renderer), e.g. the WhatsApp
+  // device-linking code the Connect dialog must display.
+  connectorsPairingEvent: 'connectors:pairing-event',
   filesRead: 'files:read',
   schedulesList: 'schedules:list',
   schedulesGet: 'schedules:get',

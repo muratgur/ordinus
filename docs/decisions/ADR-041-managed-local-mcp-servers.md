@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted — amended by ADR-042 (adds `lifecycle: 'persistent'` as an
+opt-out of the idle reaper, and `loginMode: 'pairing'` for code-based
+device linking)
 
 ## Date
 

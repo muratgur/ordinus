@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
   CheckCircle2,
@@ -23,6 +23,7 @@ import {
 import type {
   Agent,
   AppInfo,
+  ConnectorPairingEvent,
   ConnectorSummary,
   ConnectorTool,
   DbStatus,
@@ -726,6 +727,9 @@ function ConnectionsSettingsSection(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
+  // ADR-042: pairing-login connectors (WhatsApp) connect through a dialog
+  // that collects the phone number and displays the device-linking code.
+  const [pairingConnector, setPairingConnector] = useState<ConnectorSummary | null>(null)
 
   useEffect(() => {
     let active = true
@@ -833,19 +837,34 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                   ) : null}
                 </div>
                 {connector.connected ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busyId === connector.id}
-                    onClick={() => void runAction(connector.id, 'disconnect')}
-                  >
-                    Disconnect
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {connector.pairingLogin && connector.health === 'reconnect-required' ? (
+                      <Button
+                        size="sm"
+                        disabled={busyId === connector.id}
+                        onClick={() => setPairingConnector(connector)}
+                      >
+                        Reconnect
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busyId === connector.id}
+                      onClick={() => void runAction(connector.id, 'disconnect')}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
                 ) : (
                   <Button
                     size="sm"
                     disabled={busyId === connector.id}
-                    onClick={() => void runAction(connector.id, 'connect')}
+                    onClick={() =>
+                      connector.pairingLogin
+                        ? setPairingConnector(connector)
+                        : void runAction(connector.id, 'connect')
+                    }
                   >
                     {busyId === connector.id
                       ? connector.kind === 'local'
@@ -859,7 +878,163 @@ function ConnectionsSettingsSection(): React.JSX.Element {
           </ul>
         )}
       </section>
+      <PairingConnectDialog
+        // Remount per connector open so the dialog always starts fresh —
+        // no reset effect needed.
+        key={pairingConnector?.id ?? 'closed'}
+        connector={pairingConnector}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPairingConnector(null)
+          }
+        }}
+        onConnected={(next) => {
+          setConnectors(next)
+          setPairingConnector(null)
+        }}
+      />
     </div>
+  )
+}
+
+// ADR-042: pairing-login Connect flow (WhatsApp-class connectors). The user
+// enters their phone number, the login child requests a device-linking code,
+// and the code streams back over connectors:pairing-event while the connect
+// invoke is still in flight. "Get a new code" simply restarts the run —
+// codes expire after about a minute.
+function PairingConnectDialog({
+  connector,
+  onOpenChange,
+  onConnected
+}: {
+  connector: ConnectorSummary | null
+  onOpenChange: (open: boolean) => void
+  onConnected: (next: ConnectorSummary[]) => void
+}): React.JSX.Element {
+  const [phone, setPhone] = useState('')
+  const [stage, setStage] = useState<'phone' | 'pairing' | 'error'>('phone')
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  // "Get a new code" supersedes the in-flight login run (the main process
+  // kills the old child); its rejected promise must not clobber the new
+  // attempt's UI state, so each attempt gets an id and stale ones are ignored.
+  const attemptRef = useRef(0)
+
+  const startPairing = useCallback(async () => {
+    if (!connector) {
+      return
+    }
+    const digits = phone.replace(/\D/g, '')
+    const thisAttempt = ++attemptRef.current
+    setStage('pairing')
+    setCode('')
+    setError('')
+    const unsubscribe = window.ordinus.connectors.onPairingEvent((event: ConnectorPairingEvent) => {
+      if (event.connectorId !== connector.id) {
+        return
+      }
+      if (event.event === 'pairing-code' && event.code) {
+        setCode(event.code)
+      }
+    })
+    try {
+      const next = await window.ordinus.connectors.connect({
+        connectorId: connector.id,
+        phone: digits
+      })
+      onConnected(next)
+    } catch (cause) {
+      if (attemptRef.current === thisAttempt) {
+        setError(cause instanceof Error ? cause.message : 'Pairing failed.')
+        setStage('error')
+      }
+    } finally {
+      unsubscribe()
+    }
+  }, [connector, phone, onConnected])
+
+  const phoneDigits = phone.replace(/\D/g, '')
+
+  return (
+    <Dialog open={connector !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Connect {connector?.label}</DialogTitle>
+          <DialogDescription>
+            {connector?.label} doesn’t officially support third-party clients. Ordinus keeps usage
+            conservative, but connecting is at your own discretion.
+          </DialogDescription>
+        </DialogHeader>
+        {stage === 'phone' ? (
+          <div className="grid gap-2">
+            <label className="text-sm font-medium" htmlFor="pairing-phone">
+              Phone number
+            </label>
+            <Input
+              id="pairing-phone"
+              type="tel"
+              autoFocus
+              placeholder="+90 5XX XXX XX XX"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              The number of the account you want to link, with country code.
+            </p>
+          </div>
+        ) : null}
+        {stage === 'pairing' ? (
+          <div className="grid gap-3">
+            {code ? (
+              <>
+                <div className="grid place-items-center rounded-md border bg-accent px-4 py-6 font-mono text-3xl tracking-[0.3em]">
+                  {code}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  On your phone, open {connector?.label} → Settings → Linked Devices → Link a Device
+                  → “Link with phone number instead”, then enter this code. It expires in about a
+                  minute.
+                </p>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Requesting a linking code…
+              </div>
+            )}
+          </div>
+        ) : null}
+        {stage === 'error' ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          {stage === 'phone' ? (
+            <Button
+              type="button"
+              disabled={phoneDigits.length < 7}
+              onClick={() => void startPairing()}
+            >
+              Get linking code
+            </Button>
+          ) : null}
+          {stage === 'pairing' && code ? (
+            <Button type="button" variant="outline" onClick={() => void startPairing()}>
+              Get a new code
+            </Button>
+          ) : null}
+          {stage === 'error' ? (
+            <Button type="button" onClick={() => void startPairing()}>
+              Try again
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
