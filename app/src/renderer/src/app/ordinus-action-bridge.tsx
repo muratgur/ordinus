@@ -20,14 +20,24 @@ import type { WorkboardDraftReviewState } from '@renderer/screens/workboard-draf
 
 export type OrdinusActionBridgeProps = {
   onWorkboardPlanReady: (state: WorkboardDraftReviewState) => void
+  // ADR-044: the plan was started elsewhere (Telegram). Close the open review
+  // surface for the matching request.
+  onWorkboardPlanDismissed: (request: string) => void
 }
 
-export function OrdinusActionBridge({ onWorkboardPlanReady }: OrdinusActionBridgeProps): null {
+export function OrdinusActionBridge({
+  onWorkboardPlanReady,
+  onWorkboardPlanDismissed
+}: OrdinusActionBridgeProps): null {
   const navigate = useNavigate()
 
   useEffect(() => {
     const off = window.ordinus.ordinus.onActionEvent((event: OrdinusActionEvent) => {
       switch (event.kind) {
+        case 'workboard_plan_dismissed': {
+          onWorkboardPlanDismissed(event.request)
+          break
+        }
         case 'workboard_plan_ready': {
           // Re-parse the plan (it's typed as unknown across the IPC boundary
           // to dodge a forward-reference issue; see contracts.ts header).
@@ -73,7 +83,7 @@ export function OrdinusActionBridge({ onWorkboardPlanReady }: OrdinusActionBridg
       }
     })
     return off
-  }, [navigate, onWorkboardPlanReady])
+  }, [navigate, onWorkboardPlanReady, onWorkboardPlanDismissed])
 
   return null
 }

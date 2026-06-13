@@ -232,7 +232,14 @@ function App(): React.JSX.Element {
         planOperations={planOperations.operations}
         onReviewOperation={routeOperationIntoReview}
       />
-      <OrdinusActionBridge onWorkboardPlanReady={setWorkboardDraftReview} />
+      <OrdinusActionBridge
+        onWorkboardPlanReady={setWorkboardDraftReview}
+        onWorkboardPlanDismissed={(request) =>
+          setWorkboardDraftReview((prev) =>
+            prev.plan && prev.context?.request === request ? emptyWorkboardDraftReviewState : prev
+          )
+        }
+      />
       <Routes>
         <Route
           element={

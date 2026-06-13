@@ -90,6 +90,8 @@ export type OrdinusSessionService = {
     conversationId: string
     message: string
     displayMessage?: string
+    // ADR-044: origin of the user turn ('telegram' when sent from the phone).
+    source?: string
   }): Promise<OrdinusTurnOutcome>
   /**
    * Resolve a pending needs_input request: validate the answers, record them
@@ -99,6 +101,8 @@ export type OrdinusSessionService = {
   answerInputRequest(input: {
     requestId: string
     answers: InteractionAnswer[]
+    // ADR-044: origin of the resume turn ('telegram' when answered from the phone).
+    source?: string
   }): Promise<OrdinusTurnOutcome>
   isTurnRunning(conversationId: string): boolean
   /** Conversation ids with an in-flight turn. Lets a (re)mounted renderer
@@ -215,7 +219,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           conversationId: conversation.id,
           kind: 'user',
           content: input.displayMessage ?? input.message,
-          turnId: null
+          turnId: null,
+          source: input.source
         })
 
         // Boot or reuse the singleton MCP server. The handle's URL is the same
@@ -429,7 +434,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
       return this.sendTurn({
         conversationId,
         message: continuationMessage,
-        displayMessage: answerSummary
+        displayMessage: answerSummary,
+        source: input.source
       })
     }
   }

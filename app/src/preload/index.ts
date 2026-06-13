@@ -37,6 +37,8 @@ import type {
   ConnectorSetEnabledToolsInput,
   ConnectorSummary,
   ConnectorToolsResult,
+  TelegramStatus,
+  TelegramConnectInput,
   AgentProfileCatalog,
   AgentSkill,
   AgentSkillCreateInput,
@@ -338,6 +340,14 @@ const ordinus = {
   conversations: {
     list: async (): Promise<ConversationListItem[]> =>
       ipcRenderer.invoke(ipcChannels.conversationsList),
+    // ADR-044: main → renderer when a room changes from outside the renderer
+    // (e.g. a Telegram-driven worker turn). Returns an unsubscribe function.
+    onChanged: (callback: (payload: { conversationId: string }) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload: { conversationId: string }): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.conversationsChanged, listener)
+      return () => ipcRenderer.off(ipcChannels.conversationsChanged, listener)
+    },
     listAgentRoomSummaries: async (): Promise<AgentRoomSummary[]> =>
       ipcRenderer.invoke(ipcChannels.conversationsListAgentRoomSummaries),
     get: async (input: ConversationGetInput): Promise<ConversationDetail> =>
@@ -491,6 +501,23 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.connectorsListTools, input),
     setEnabledTools: async (input: ConnectorSetEnabledToolsInput): Promise<ConnectorToolsResult> =>
       ipcRenderer.invoke(ipcChannels.connectorsSetEnabledTools, input)
+  },
+  // ADR-044: Telegram inbound remote-access channel.
+  telegram: {
+    getStatus: async (): Promise<TelegramStatus> =>
+      ipcRenderer.invoke(ipcChannels.telegramGetStatus),
+    connect: async (input: TelegramConnectInput): Promise<TelegramStatus> =>
+      ipcRenderer.invoke(ipcChannels.telegramConnect, input),
+    disconnect: async (): Promise<TelegramStatus> =>
+      ipcRenderer.invoke(ipcChannels.telegramDisconnect),
+    // Live status pushed main → renderer (token validated, pairing code,
+    // owner paired, error). Returns an unsubscribe function.
+    onStatusEvent: (callback: (status: TelegramStatus) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload: TelegramStatus): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.telegramStatusEvent, listener)
+      return () => ipcRenderer.off(ipcChannels.telegramStatusEvent, listener)
+    }
   },
   files: {
     read: async (input: FileReadInput): Promise<FileContent> =>

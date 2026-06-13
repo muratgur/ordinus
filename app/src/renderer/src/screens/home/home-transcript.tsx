@@ -17,6 +17,7 @@
 
 import { useEffect, useRef } from 'react'
 import { Loader2, AlertCircle, Bookmark, Check } from 'lucide-react'
+import { MessageSourceBadge } from '@renderer/components/message-source-badge'
 import { CopyButton } from '@renderer/components/copy-button'
 import { MarkdownContent } from '@renderer/components/markdown-content'
 import { TurnFullResponse } from '@renderer/components/turn-full-response'
@@ -170,9 +171,12 @@ function TranscriptItem({
               <Check className="size-3" /> Added to memory
             </span>
           ) : null}
-          <p className="max-w-[85%] select-text whitespace-pre-wrap break-words rounded-2xl bg-primary/10 px-3.5 py-2 text-sm text-foreground/90 [overflow-wrap:anywhere]">
-            {message.text}
-          </p>
+          <div className="flex max-w-[85%] flex-col items-end gap-0.5">
+            <p className="select-text whitespace-pre-wrap break-words rounded-2xl bg-primary/10 px-3.5 py-2 text-sm text-foreground/90 [overflow-wrap:anywhere]">
+              {message.text}
+            </p>
+            <MessageSourceBadge source={message.source} />
+          </div>
         </div>
       )
     case 'assistant':

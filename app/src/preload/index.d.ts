@@ -10,6 +10,8 @@ import type {
   ConnectorSetEnabledToolsInput,
   ConnectorSummary,
   ConnectorToolsResult,
+  TelegramStatus,
+  TelegramConnectInput,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
   AgentArchiveInput,
@@ -243,6 +245,7 @@ export type OrdinusApi = {
   }
   conversations: {
     list: () => Promise<ConversationListItem[]>
+    onChanged: (callback: (payload: { conversationId: string }) => void) => () => void
     listAgentRoomSummaries: () => Promise<AgentRoomSummary[]>
     get: (input: ConversationGetInput) => Promise<ConversationDetail>
     createDirect: (input: ConversationCreateDirectInput) => Promise<ConversationDetail>
@@ -313,6 +316,12 @@ export type OrdinusApi = {
     cancelConnect: (input: ConnectorActionInput) => Promise<void>
     listTools: (input: ConnectorActionInput) => Promise<ConnectorToolsResult>
     setEnabledTools: (input: ConnectorSetEnabledToolsInput) => Promise<ConnectorToolsResult>
+  }
+  telegram: {
+    getStatus: () => Promise<TelegramStatus>
+    connect: (input: TelegramConnectInput) => Promise<TelegramStatus>
+    disconnect: () => Promise<TelegramStatus>
+    onStatusEvent: (callback: (status: TelegramStatus) => void) => () => void
   }
   files: {
     read: (input: FileReadInput) => Promise<FileContent>

@@ -16,6 +16,7 @@ import {
   Plug,
   PlugZap,
   RefreshCcw,
+  Smartphone,
   Sparkles,
   Terminal,
   Unplug,
@@ -72,6 +73,7 @@ import { Input } from '@renderer/components/ui/input'
 import { formatDate } from '@renderer/lib/format'
 import { cn } from '@renderer/lib/utils'
 import { OrdinusSettingsSection } from './settings/ordinus-settings-section'
+import { RemoteAccessSection } from './settings/remote-access-section'
 
 type SettingsScreenProps = {
   appInfo: AppInfo | null
@@ -92,6 +94,7 @@ type SettingsSectionId =
   | 'workspace'
   | 'providers'
   | 'ordinus'
+  | 'remote-access'
   | 'connections'
   | 'skill-library'
   | 'local-state'
@@ -114,6 +117,12 @@ const settingsSections = [
     label: 'Ordinus',
     description: 'Persona, provider, and model for the in-app assistant',
     icon: Sparkles
+  },
+  {
+    id: 'remote-access',
+    label: 'Remote access',
+    description: 'Reach Ordinus from your phone via Telegram',
+    icon: Smartphone
   },
   {
     id: 'connections',
@@ -222,6 +231,8 @@ export function SettingsScreen({
           ) : null}
 
           {activeSection === 'ordinus' ? <OrdinusSettingsSection /> : null}
+
+          {activeSection === 'remote-access' ? <RemoteAccessSection /> : null}
 
           {activeSection === 'connections' ? <ConnectionsSettingsSection /> : null}
 

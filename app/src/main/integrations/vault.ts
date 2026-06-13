@@ -191,3 +191,21 @@ export function deleteByoClient(connectorId: string): void {
 export function hasByoClient(connectorId: string): boolean {
   return readByoClient(connectorId) !== null
 }
+
+// ADR-044: the Telegram bot token, encrypted at rest like connector tokens.
+// Telegram is not a connector, but the vault is the app's single
+// OS-encryption utility, so it owns this secret too. Keyed separately so it
+// never collides with a connector id.
+const TELEGRAM_TOKEN_KEY = 'telegram:bot-token'
+
+export function storeTelegramToken(token: string): void {
+  setEntry(TELEGRAM_TOKEN_KEY, token)
+}
+
+export function readTelegramToken(): string | null {
+  return getEntry<string>(TELEGRAM_TOKEN_KEY)
+}
+
+export function deleteTelegramToken(): void {
+  deleteEntry(TELEGRAM_TOKEN_KEY)
+}

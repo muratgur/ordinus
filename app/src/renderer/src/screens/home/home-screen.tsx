@@ -95,6 +95,7 @@ function turnToMessage(turn: OrdinusConversationTurn): HomeMessage {
         kind: 'user',
         id: turn.id,
         text: turn.content,
+        source: turn.source,
         at: turn.createdAt
       }
     case 'assistant':
@@ -537,9 +538,22 @@ export function HomeScreen(): React.JSX.Element {
     })()
     const off = window.ordinus.ordinus.onActionEvent((event: OrdinusActionEvent) => {
       if (event.kind === 'turn_started') {
-        setPendingTurnLabelsByConversation((prev) =>
-          prev[event.conversationId] ? prev : { ...prev, [event.conversationId]: THINKING_LABEL }
-        )
+        // A local send already set this label (in handleSend, before sendTurn);
+        // a turn started elsewhere (Telegram) has not. We use that to tell them
+        // apart without a new event field.
+        let externallyStarted = false
+        setPendingTurnLabelsByConversation((prev) => {
+          externallyStarted = !prev[event.conversationId]
+          return prev[event.conversationId]
+            ? prev
+            : { ...prev, [event.conversationId]: THINKING_LABEL }
+        })
+        // Only pull in the persisted user message for turns we did NOT initiate.
+        // A local send already rendered its optimistic bubble; reloading here
+        // would swap it for a different-id persisted row and flicker every send.
+        if (externallyStarted) {
+          void reloadConversation(event.conversationId).catch(() => {})
+        }
       } else if (event.kind === 'turn_settled') {
         setPendingTurnLabelsByConversation((prev) => {
           if (!prev[event.conversationId]) return prev
@@ -603,6 +617,7 @@ export function HomeScreen(): React.JSX.Element {
         kind: 'user',
         id: newId('u'),
         text: displayText,
+        source: null,
         at: nowIso()
       })
       touchConversation(conversationId, displayText)

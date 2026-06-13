@@ -173,6 +173,7 @@ import {
   ordinusMemory,
   ordinusSingleton,
   pendingPlans,
+  telegramState,
   workRequestAgentSessions,
   workRequests,
   workRunContextReferences,
@@ -336,6 +337,7 @@ type PreparedContextReference = {
 }
 type WorkRequestAgentSession = typeof workRequestAgentSessions.$inferSelect
 export type LocalConnectorStateRow = typeof localConnectorState.$inferSelect
+export type TelegramStateRow = typeof telegramState.$inferSelect
 
 export class OrdinusDatabase {
   private readonly databasePath: string
@@ -363,6 +365,7 @@ export class OrdinusDatabase {
         ordinusConversationTurns,
         ordinusMemory,
         ordinusSingleton,
+        telegramState,
         workRequestAgentSessions,
         workRequests,
         workRunContextReferences,
@@ -732,6 +735,74 @@ export class OrdinusDatabase {
       .run()
   }
 
+  // ADR-044 — Telegram inbound subsystem state (single row, id=1). Returns
+  // null when the user has never connected a bot. The token is NOT here —
+  // it lives in the vault.
+  getTelegramState(): TelegramStateRow | null {
+    return this.db.select().from(telegramState).where(eq(telegramState.id, 1)).get() ?? null
+  }
+
+  // Upsert the single Telegram state row. Partial — only provided fields
+  // change; the rest are preserved (or seeded on first write). Disconnect
+  // uses clearTelegramState() instead.
+  updateTelegramState(input: {
+    botUsername?: string | null
+    ownerUserId?: string | null
+    ownerName?: string | null
+    ownerChatId?: string | null
+    pairedAt?: string | null
+    ordinusConversationId?: string | null
+    activeAgentId?: string | null
+    lastUpdateOffset?: number
+  }): void {
+    const now = new Date().toISOString()
+    const current = this.getTelegramState()
+    if (!current) {
+      this.db
+        .insert(telegramState)
+        .values({
+          id: 1,
+          botUsername: input.botUsername ?? null,
+          ownerUserId: input.ownerUserId ?? null,
+          ownerName: input.ownerName ?? null,
+          ownerChatId: input.ownerChatId ?? null,
+          pairedAt: input.pairedAt ?? null,
+          ordinusConversationId: input.ordinusConversationId ?? null,
+          activeAgentId: input.activeAgentId ?? null,
+          lastUpdateOffset: input.lastUpdateOffset ?? 0,
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      return
+    }
+    this.db
+      .update(telegramState)
+      .set({
+        botUsername: input.botUsername === undefined ? current.botUsername : input.botUsername,
+        ownerUserId: input.ownerUserId === undefined ? current.ownerUserId : input.ownerUserId,
+        ownerName: input.ownerName === undefined ? current.ownerName : input.ownerName,
+        ownerChatId: input.ownerChatId === undefined ? current.ownerChatId : input.ownerChatId,
+        pairedAt: input.pairedAt === undefined ? current.pairedAt : input.pairedAt,
+        ordinusConversationId:
+          input.ordinusConversationId === undefined
+            ? current.ordinusConversationId
+            : input.ordinusConversationId,
+        activeAgentId:
+          input.activeAgentId === undefined ? current.activeAgentId : input.activeAgentId,
+        lastUpdateOffset: input.lastUpdateOffset ?? current.lastUpdateOffset,
+        updatedAt: now
+      })
+      .where(eq(telegramState.id, 1))
+      .run()
+  }
+
+  // Disconnect: wipe the row entirely (the token is wiped from the vault by
+  // the subsystem). Owner seal and conversation link both gone.
+  clearTelegramState(): void {
+    this.db.delete(telegramState).where(eq(telegramState.id, 1)).run()
+  }
+
   // ADR-029 M7 — Archive an existing Ordinus conversation. Used by the
   // provider-change dialog when the user opts to clean-slate after switching
   // provider, and by the frozen banner's "Start fresh" path.
@@ -771,6 +842,7 @@ export class OrdinusDatabase {
     artifactRefs: string[]
     changedFiles: string[]
     turnId: string | null
+    source: string | null
     createdAt: string
   }> {
     const rows = this.db
@@ -788,6 +860,7 @@ export class OrdinusDatabase {
       artifactRefs: parseJsonStringArray(row.artifactRefs),
       changedFiles: parseJsonStringArray(row.changedFiles),
       turnId: row.turnId,
+      source: row.source,
       createdAt: row.createdAt
     }))
   }
@@ -800,6 +873,7 @@ export class OrdinusDatabase {
     artifactRefs?: string[]
     changedFiles?: string[]
     turnId?: string | null
+    source?: string | null
   }): {
     id: string
     conversationId: string
@@ -809,6 +883,7 @@ export class OrdinusDatabase {
     artifactRefs: string[]
     changedFiles: string[]
     turnId: string | null
+    source: string | null
     createdAt: string
   } {
     const id = `oturn-${randomUUID()}`
@@ -832,6 +907,7 @@ export class OrdinusDatabase {
           artifactRefs: JSON.stringify(input.artifactRefs ?? []),
           changedFiles: JSON.stringify(input.changedFiles ?? []),
           turnId: input.turnId ?? null,
+          source: input.source ?? null,
           createdAt: now
         })
         .run()
@@ -851,6 +927,7 @@ export class OrdinusDatabase {
       artifactRefs: input.artifactRefs ?? [],
       changedFiles: input.changedFiles ?? [],
       turnId: input.turnId ?? null,
+      source: input.source ?? null,
       createdAt: now
     }
   }
@@ -4251,7 +4328,8 @@ export class OrdinusDatabase {
       targetParticipants.map((participant) => ({
         participantId: participant.id,
         instruction: parsed.message
-      }))
+      })),
+      parsed.source
     )
   }
 
@@ -4298,6 +4376,7 @@ export class OrdinusDatabase {
           error: '',
           logRef: '',
           truncated: userTurn.truncated,
+          source: parsed.source ?? null,
           createdAt: now,
           updatedAt: now
         })
@@ -4460,7 +4539,9 @@ export class OrdinusDatabase {
   private prepareConversationAssignments(
     detail: ConversationDetail,
     userMessage: string,
-    assignments: OrchestrationAssignment[]
+    assignments: OrchestrationAssignment[],
+    // ADR-044: origin of the user turn ('telegram' when sent from the phone).
+    source?: string | null
   ): PreparedConversationTurn {
     const participantsById = new Map(
       detail.participants.map((participant) => [participant.id, participant])
@@ -4515,6 +4596,7 @@ export class OrdinusDatabase {
           error: '',
           logRef: '',
           truncated: userTurn.truncated,
+          source: source ?? null,
           createdAt: now,
           updatedAt: now
         })
@@ -4693,6 +4775,9 @@ export class OrdinusDatabase {
   answerConversationInputRequest(input: {
     requestId: string
     answers: InteractionAnswer[]
+    // ADR-044: origin of the answer turn ('telegram' when answered from the
+    // phone). Read from raw input — the parse schema below strips unknown keys.
+    source?: string
   }): PreparedConversationTurn {
     const parsed = ConversationAnswerInputRequestInputSchema.parse(input)
     const request = this.getConversationInputRequest(parsed.requestId)
@@ -4751,6 +4836,7 @@ export class OrdinusDatabase {
           error: '',
           logRef: '',
           truncated: userTurn.truncated,
+          source: input.source ?? null,
           createdAt: now,
           updatedAt: now
         })

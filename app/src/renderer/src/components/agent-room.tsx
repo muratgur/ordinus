@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Bookmark, Check, Loader2, Square } from 'lucide-react'
+import { MessageSourceBadge } from '@renderer/components/message-source-badge'
 import type {
   Agent,
   ConversationDetail,
@@ -61,6 +62,12 @@ export function AgentRoom({
     () => detail?.turns.find((turn) => turn.status === 'running') ?? null,
     [detail]
   )
+  // Mirror of runningTurn for the onChanged listener (which subscribes once and
+  // would otherwise read a stale value) so it can defer to the 1200ms poll.
+  const runningTurnRef = useRef(false)
+  useEffect(() => {
+    runningTurnRef.current = Boolean(runningTurn)
+  }, [runningTurn])
   const pendingRequest = useMemo(
     () => detail?.inputRequests.find((request) => request.status === 'pending') ?? null,
     [detail]
@@ -141,6 +148,35 @@ export function AgentRoom({
     }, 1200)
     return () => window.clearInterval(timer)
   }, [conversationId, runningTurn, onRoomChanged])
+
+  // ADR-044: a turn started from outside the renderer (Telegram) won't show in
+  // the polling effect above, because this room's `detail` has no running turn
+  // to trigger it. Refetch on the conversations:changed broadcast so the
+  // externally-sent message + thinking indicator (and later the reply) appear
+  // live, then the running-turn poll above takes over.
+  useEffect(() => {
+    if (!conversationId) {
+      return
+    }
+    return window.ordinus.conversations.onChanged((payload) => {
+      if (payload.conversationId !== conversationId) {
+        return
+      }
+      // While a turn is running the 1200ms poll already covers updates; only
+      // refetch here to kick off (no running turn yet) or catch the settle,
+      // so the broadcast pair per turn doesn't stack a refetch storm on the poll.
+      if (runningTurnRef.current) {
+        return
+      }
+      window.ordinus.conversations
+        .get({ conversationId })
+        .then((next) => {
+          setDetail(next)
+          onRoomChanged?.()
+        })
+        .catch(() => {})
+    })
+  }, [conversationId, onRoomChanged])
 
   // Keep pinned to the latest message unless the user scrolled up.
   useEffect(() => {
@@ -485,6 +521,7 @@ function TranscriptTurn({
     return (
       <UserMessage
         content={turn.content}
+        source={turn.source}
         remembered={remembered}
         remembering={remembering}
         onRemember={onRemember}
@@ -557,11 +594,13 @@ function SessionResetNote(): React.JSX.Element {
 // with the hover "Remember" bookmark kept from the bubble era.
 function UserMessage({
   content,
+  source,
   remembered,
   remembering,
   onRemember
 }: {
   content: string
+  source?: string | null
   remembered?: boolean
   remembering?: boolean
   onRemember?: () => void
@@ -598,7 +637,9 @@ function UserMessage({
         <span className="flex items-center gap-1 pr-1 text-[11px] text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-1 motion-safe:duration-300">
           <Check className="size-3" /> Added to memory
         </span>
-      ) : null}
+      ) : (
+        <MessageSourceBadge source={source ?? null} />
+      )}
     </div>
   )
 }

@@ -148,6 +148,17 @@ export const ipcChannels = {
   // ADR-042: pairing-login progress (main → renderer), e.g. the WhatsApp
   // device-linking code the Connect dialog must display.
   connectorsPairingEvent: 'connectors:pairing-event',
+  // ADR-044: Telegram inbound remote-access subsystem.
+  telegramGetStatus: 'telegram:get-status',
+  telegramConnect: 'telegram:connect',
+  telegramDisconnect: 'telegram:disconnect',
+  // main → renderer: live status changes (token validated, pairing code,
+  // owner paired, error) so the Remote access panel re-renders without polling.
+  telegramStatusEvent: 'telegram:status-event',
+  // ADR-044: a conversation (agent room) changed from outside the renderer —
+  // e.g. a Telegram-initiated worker turn. The open room refetches so the
+  // message + thinking indicator appear live, not only on remount.
+  conversationsChanged: 'conversations:changed',
   filesRead: 'files:read',
   schedulesList: 'schedules:list',
   schedulesGet: 'schedules:get',

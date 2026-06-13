@@ -16,6 +16,8 @@ export type HomeMessage =
       kind: 'user'
       id: string
       text: string
+      // ADR-044: 'telegram' when sent from the phone; the bubble shows a badge.
+      source: string | null
       at: string
     }
   | {

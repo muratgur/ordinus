@@ -227,6 +227,13 @@ export const OrdinusActionEventSchema = z.discriminatedUnion('kind', [
     // file). The renderer narrows via WorkboardDraftPlanSchema.parse.
     plan: z.unknown()
   }),
+  // ADR-044: a proposed plan was started elsewhere (the owner tapped Start on
+  // Telegram). The desktop closes its open plan-review surface for the matching
+  // request so it doesn't linger after the work is already running.
+  z.object({
+    kind: z.literal('workboard_plan_dismissed'),
+    request: z.string()
+  }),
   z.object({
     kind: z.literal('schedule_created'),
     scheduleId: z.string(),
@@ -381,6 +388,9 @@ export const OrdinusConversationTurnSchema = z.object({
   artifactRefs: z.array(z.string()).default([]),
   changedFiles: z.array(z.string()).default([]),
   turnId: z.string().nullable(),
+  // ADR-044: 'telegram' when the user turn was sent from the phone; null on
+  // desktop. The transcript shows a small "via Telegram" badge.
+  source: z.string().nullable().default(null),
   createdAt: z.string()
 })
 
@@ -547,6 +557,38 @@ export type ConnectorConnectInput = z.infer<typeof ConnectorConnectInputSchema>
 export type ConnectorPairingEvent = z.infer<typeof ConnectorPairingEventSchema>
 export type ConnectorTool = z.infer<typeof ConnectorToolSchema>
 export type ConnectorToolsResult = z.infer<typeof ConnectorToolsResultSchema>
+
+// ADR-044: Telegram inbound remote-access channel. A single-owner bot that
+// lets the user reach Ordinus from their phone. NOT a connector (no agent
+// tool, no egress) — its own trigger-source subsystem driven over the Bot API.
+export const TelegramConnectionStatusSchema = z.enum([
+  'disconnected', // no token stored
+  'awaiting-pairing', // token valid + listening, owner not yet sealed
+  'connected', // owner sealed + listening
+  'error' // token rejected or polling failed
+])
+
+export const TelegramStatusSchema = z.object({
+  status: TelegramConnectionStatusSchema,
+  // @username from getMe, once the token validates. null before that.
+  botUsername: z.string().nullable(),
+  // Six-digit code the user must type to the bot (`/pair 123456`) to seal
+  // ownership. Present only while `awaiting-pairing`.
+  pairingCode: z.string().nullable(),
+  // Display name of the sealed owner, once paired.
+  ownerName: z.string().nullable(),
+  // Human-readable failure reason when `status === 'error'`.
+  error: z.string().nullable()
+})
+
+export const TelegramConnectInputSchema = z.object({
+  // The BotFather token. Trimmed; never logged or echoed back to the renderer.
+  token: z.string().trim().min(1)
+})
+
+export type TelegramConnectionStatus = z.infer<typeof TelegramConnectionStatusSchema>
+export type TelegramStatus = z.infer<typeof TelegramStatusSchema>
+export type TelegramConnectInput = z.infer<typeof TelegramConnectInputSchema>
 export type ConnectorSetEnabledToolsInput = z.infer<typeof ConnectorSetEnabledToolsInputSchema>
 
 export const WorkspaceUpdateSystemDefaultInputSchema = z.object({
@@ -1134,6 +1176,9 @@ export const ConversationTurnSchema = z.object({
   changedFiles: z.array(WorkspaceRelativePathSchema),
   truncated: z.boolean(),
   sessionReset: z.boolean().default(false),
+  // ADR-044: 'telegram' when the user turn was sent from the phone; null on
+  // desktop. The room renders a small "via Telegram" badge.
+  source: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -1212,7 +1257,9 @@ export const ConversationCreateManualInputSchema = z.object({
 export const ConversationSendTurnInputSchema = z.object({
   conversationId: z.string().min(1),
   targetParticipantIds: z.array(z.string().min(1)).max(8).optional(),
-  message: z.string().trim().min(1, 'Message is required.').max(64_000)
+  message: z.string().trim().min(1, 'Message is required.').max(64_000),
+  // ADR-044: 'telegram' when sent from the phone; the room shows a small badge.
+  source: z.string().optional()
 })
 
 export const ConversationUpdateRoutingModeInputSchema = z.object({

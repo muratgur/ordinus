@@ -127,6 +127,9 @@ export const conversationTurns = sqliteTable('conversation_turns', {
   // True when the provider session could not resume and a fresh session was
   // started for this turn (ADR-013 fallback). The room shows a gentle note.
   sessionReset: integer('session_reset', { mode: 'boolean' }).notNull().default(false),
+  // ADR-044: origin of a user turn ('telegram' when sent from the phone). Null
+  // for desktop-originated turns. Lets the room show a small "via Telegram" badge.
+  source: text('source'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })
@@ -499,6 +502,9 @@ export const ordinusConversationTurns = sqliteTable(
     // initiated the cycle, since the runtime turnId is only minted in the
     // backend after the user message is recorded.
     turnId: text('turn_id'),
+    // ADR-044: origin of the user turn ('telegram' when sent from the phone).
+    // Null for desktop-originated turns. Lets the transcript show a small badge.
+    source: text('source'),
     createdAt: text('created_at').notNull()
   },
   (table) => ({
@@ -555,5 +561,35 @@ export const localConnectorState = sqliteTable('local_connector_state', {
     .default([]),
   enabledTools: text('enabled_tools', { mode: 'json' }).$type<string[]>().notNull().default([]),
   lastHealth: text('last_health').notNull().default('ok'),
+  updatedAt: text('updated_at').notNull()
+})
+
+// ADR-044: single-row state for the Telegram inbound subsystem. The bot token
+// is NOT here — it lives encrypted in the vault. This row holds the
+// non-secret bits needed to resume listening and enforce the single-owner
+// lock across restarts.
+//   - botUsername: @name from getMe, cached for display.
+//   - ownerUserId / ownerName: sealed at pairing; null until the user types
+//     the pairing code. The owner lock rejects every other sender.
+//   - ownerChatId: where replies are sent (== ownerUserId for a private chat,
+//     but stored explicitly since the Bot API keys sends by chat).
+//   - pairedAt: null while awaiting pairing.
+//   - ordinusConversationId: the dedicated phone-session Ordinus conversation
+//     (find-or-create); inbound turns dispatch here in Phase 1.
+//   - lastUpdateOffset: getUpdates cursor, persisted so a restart resumes
+//     where it left off (and Phase 2 catch-up can reason about the gap).
+export const telegramState = sqliteTable('telegram_state', {
+  id: integer('id').primaryKey(),
+  botUsername: text('bot_username'),
+  ownerUserId: text('owner_user_id'),
+  ownerName: text('owner_name'),
+  ownerChatId: text('owner_chat_id'),
+  pairedAt: text('paired_at'),
+  ordinusConversationId: text('ordinus_conversation_id'),
+  // ADR-044 Phase 2b: the active Telegram recipient. null = Ordinus (default);
+  // otherwise the worker agent the owner switched to via /agents.
+  activeAgentId: text('active_agent_id'),
+  lastUpdateOffset: integer('last_update_offset').notNull().default(0),
+  createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })

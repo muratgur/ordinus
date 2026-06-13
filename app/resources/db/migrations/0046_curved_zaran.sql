@@ -1,0 +1,1 @@
+ALTER TABLE `telegram_state` ADD `active_agent_id` text;

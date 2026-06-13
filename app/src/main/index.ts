@@ -8,6 +8,7 @@ import { registerIpcHandlers } from './ipc/register'
 import { createObservabilityService } from './observability/service'
 import { createRuntimeService } from './runtime'
 import { SchedulerService } from './scheduler/service'
+import type { TelegramSubsystem } from './telegram/subsystem'
 import { shutdownOrdinusMcpServer } from './ordinus-mcp/lifecycle'
 import { initConnectorService, startPersistentConnectors } from './integrations/service'
 import { shutdownLocalMcp } from './local-mcp/supervisor'
@@ -18,6 +19,7 @@ const database = new OrdinusDatabase()
 const runtime = createRuntimeService()
 const observability = createObservabilityService(database)
 let scheduler: SchedulerService | null = null
+let telegram: TelegramSubsystem | null = null
 
 const preferredWindowSize = {
   width: 1440,
@@ -148,8 +150,14 @@ app.whenReady().then(() => {
   } catch (error) {
     console.error('Builtin skill library could not be synced:', error)
   }
-  scheduler = registerIpcHandlers(database, runtime, observability)
+  const handlers = registerIpcHandlers(database, runtime, observability)
+  scheduler = handlers.scheduler
   scheduler.start()
+  // ADR-044: resume Telegram listening if a bot was previously connected.
+  telegram = handlers.telegram
+  void telegram.start().catch((err: unknown) => {
+    console.error('[main] Telegram subsystem failed to start:', err)
+  })
 
   // ADR-029 follow-up — Pre-warm the provider-status cache so the renderer's
   // first call (App.tsx Phase 2 setupGetStatus → runtime.getProviderStatuses)
@@ -182,8 +190,10 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   // ADR-041: local connector children must die with the app — same deferred
   // quit pattern as the internal MCP server.
-  void Promise.allSettled([shutdownOrdinusMcpServer(), shutdownLocalMcp()]).then(() => {
-    database.close()
-    app.exit(0)
-  })
+  void Promise.allSettled([shutdownOrdinusMcpServer(), shutdownLocalMcp(), telegram?.stop()]).then(
+    () => {
+      database.close()
+      app.exit(0)
+    }
+  )
 })

@@ -1,4 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  shell,
+  Tray,
+  type OpenDialogOptions
+} from 'electron'
+import trayIconAsset from '../../../resources/icon.png?asset'
 import {
   existsSync,
   mkdirSync,
@@ -49,6 +60,8 @@ import {
   ConnectorActionInputSchema,
   ConnectorConnectInputSchema,
   ConnectorSetEnabledToolsInputSchema,
+  TelegramConnectInputSchema,
+  type TelegramStatus,
   ConversationCancelTurnInputSchema,
   FileReadInputSchema,
   FileContentSchema,
@@ -120,6 +133,8 @@ import {
   validateWorkboardDraftPlanDependencies,
   type Agent,
   type AgentTurnOutcome,
+  type InteractionAnswer,
+  type InteractionQuestion,
   type ConversationDetail,
   type ConversationDeletePreview,
   type ProviderId,
@@ -184,6 +199,8 @@ import type { OrdinusToolContext } from '../ordinus-tools/types'
 import type { RuntimeWorkRunInput } from '../runtime/adapters/types'
 import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { createOrdinusSessionService } from '../ordinus/session'
+import { createTelegramSubsystem, type TelegramSubsystem } from '../telegram/subsystem'
+import { storeTelegramToken, readTelegramToken, deleteTelegramToken } from '../integrations/vault'
 import { listPendingConfirmations, resolvePendingConfirmation } from '../ordinus/confirmation'
 import {
   cancelConnect,
@@ -224,7 +241,7 @@ export function registerIpcHandlers(
   database: OrdinusDatabase,
   runtime: RuntimeService,
   observability: ObservabilityService
-): SchedulerService {
+): { scheduler: SchedulerService; telegram: TelegramSubsystem } {
   const broadcastSchedulerEvent = (event: SchedulerEvent): void => {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send(ipcChannels.schedulesChanged, event)
@@ -271,11 +288,27 @@ export function registerIpcHandlers(
   // ADR-029 M5: action events flow main → renderer via webContents broadcast.
   // Mirrors the `schedulesChanged` pattern above so there's only one event
   // delivery mechanism in the app.
+  //
+  // ADR-044 Phase 2: in-process listeners join the renderer broadcast so the
+  // Telegram subsystem can react to confirmation/input-request lifecycle events
+  // (its turns block inside the MCP server and only surface via this bus).
+  const ordinusEventListeners = new Set<(event: OrdinusActionEvent) => void>()
   const ordinusEvents = {
     publish(event: OrdinusActionEvent): void {
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(ipcChannels.ordinusActionEvent, event)
       }
+      for (const listener of ordinusEventListeners) {
+        try {
+          listener(event)
+        } catch (err) {
+          console.error('[ordinus-events] in-process listener failed:', err)
+        }
+      }
+    },
+    subscribe(listener: (event: OrdinusActionEvent) => void): () => void {
+      ordinusEventListeners.add(listener)
+      return () => ordinusEventListeners.delete(listener)
     }
   }
   activeOrdinusToolContext = { database, observability, runtime, events: ordinusEvents }
@@ -854,6 +887,9 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.conversationsAnswerInputRequest, async (_event, payload) => {
     const input = ConversationAnswerInputRequestInputSchema.parse(payload)
     const prepared = database.answerConversationInputRequest(input)
+    // ADR-044: a worker question answered on the desktop must pre-empt the
+    // Telegram-side wait for the same request (parity with the Ordinus path).
+    ordinusEvents.publish({ kind: 'input_request_resolved', requestId: input.requestId })
     startPreparedConversationTurns(database, runtime, observability, prepared)
 
     return database.getConversation({ conversationId: prepared.conversationId })
@@ -861,6 +897,7 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.conversationsCancelInputRequest, (_event, payload) => {
     const input = ConversationCancelInputRequestInputSchema.parse(payload)
     const detail = database.cancelConversationInputRequest(input)
+    ordinusEvents.publish({ kind: 'input_request_resolved', requestId: input.requestId })
     const request = detail.inputRequests.find((item) => item.id === input.requestId)
     if (request) {
       observability.markConversationCancelled(request.turnId)
@@ -1212,7 +1249,197 @@ export function registerIpcHandlers(
     return onboarding.complete(input.agentId)
   })
 
-  return scheduler
+  // ADR-044 Phase 2b — worker-agent room driving for Telegram. Wraps the
+  // conversation engine (fire-and-forget at the IPC layer) into awaitable calls
+  // that return the turn outcome, so a phone message to a specific agent gets
+  // its answer back. Worker needs_input rides the same conversationInputRequests
+  // path the desktop uses.
+  // ADR-044: tell an open agent room to refetch when a turn is driven from
+  // outside the renderer (Telegram). Emitted after the user turn is persisted
+  // (so the message + running indicator show) and after it settles (the reply).
+  const broadcastConversationChanged = (conversationId: string): void => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(ipcChannels.conversationsChanged, { conversationId })
+    }
+  }
+  // Run prepared agent turns to completion and return the (last) outcome — the
+  // awaitable analogue of fire-and-forget startPreparedConversationTurns. Ensures
+  // the working dir first (the same guard startPreparedConversationTurns applies)
+  // so a Telegram-driven turn against a fresh room doesn't run without it.
+  const runPreparedTurnsAwaiting = async (
+    prepared: PreparedConversationTurn
+  ): Promise<AgentTurnOutcome | null> => {
+    const workspace = database.getWorkspaceConfig()
+    if (workspace) {
+      const conversation = database.getConversation({ conversationId: prepared.conversationId })
+      ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, conversation.workingRoot)
+    }
+    let outcome: AgentTurnOutcome | null = null
+    for (const agentTurn of prepared.agentTurns) {
+      outcome = await runConversationAgentTurn(database, runtime, observability, agentTurn)
+    }
+    return outcome
+  }
+  const telegramAgents = {
+    list: (): Array<{ id: string; name: string; role: string }> =>
+      database
+        .listAgents()
+        .filter((agent) => agent.enabled)
+        .map((agent) => ({ id: agent.id, name: agent.name, role: agent.role })),
+    roomConversationId: (agentId: string): string => database.getOrCreateAgentRoom({ agentId }).id,
+    sendRoomTurn: async (input: {
+      agentId: string
+      message: string
+    }): Promise<{ conversationId: string; outcome: AgentTurnOutcome | null }> => {
+      const room = database.getOrCreateAgentRoom({ agentId: input.agentId })
+      if (room.turns.some((turn) => turn.status === 'running')) {
+        throw new Error('Bu agent şu an meşgul.')
+      }
+      const prepared = database.prepareConversationTurn({
+        conversationId: room.id,
+        message: input.message,
+        source: 'telegram'
+      })
+      broadcastConversationChanged(room.id)
+      try {
+        return { conversationId: room.id, outcome: await runPreparedTurnsAwaiting(prepared) }
+      } finally {
+        broadcastConversationChanged(room.id)
+      }
+    },
+    answerRoomInputRequest: async (input: {
+      requestId: string
+      answers: InteractionAnswer[]
+      source?: string
+    }): Promise<{ outcome: AgentTurnOutcome | null }> => {
+      const prepared = database.answerConversationInputRequest(input)
+      broadcastConversationChanged(prepared.conversationId)
+      try {
+        return { outcome: await runPreparedTurnsAwaiting(prepared) }
+      } finally {
+        broadcastConversationChanged(prepared.conversationId)
+      }
+    },
+    listPendingInputRequests: (
+      conversationId: string
+    ): Array<{
+      requestId: string
+      title: string
+      detail: string
+      questions: InteractionQuestion[]
+    }> =>
+      database
+        .getConversation({ conversationId })
+        .inputRequests.filter((request) => request.status === 'pending')
+        .map((request) => ({
+          requestId: request.id,
+          title: request.title,
+          detail: request.detail,
+          questions: request.questions
+        })),
+    cancelInputRequest: (conversationId: string, requestId: string): boolean => {
+      const stillPending = database
+        .getConversation({ conversationId })
+        .inputRequests.some((request) => request.id === requestId && request.status === 'pending')
+      if (!stillPending) return false
+      database.cancelConversationInputRequest({ requestId })
+      return true
+    }
+  }
+
+  // ADR-044 — Telegram inbound subsystem. Reuses the same ordinusSession the
+  // desktop drives, so a phone message and a desktop message land in the same
+  // Ordinus conversation machinery. Status changes are pushed to every window.
+  const telegram = createTelegramSubsystem({
+    database,
+    ordinusSession,
+    agents: telegramAgents,
+    vault: {
+      storeToken: storeTelegramToken,
+      readToken: readTelegramToken,
+      deleteToken: deleteTelegramToken
+    },
+    onStatus: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(ipcChannels.telegramStatusEvent, status)
+      }
+      updateTelegramTray(status)
+    },
+    // Reuse the same Ordinus event bus the desktop drives, so a Telegram-driven
+    // cancel/approve closes the desktop's open panel.
+    publishOrdinusEvent: (event) => ordinusEvents.publish(event),
+    // Subscribe to the bus so confirmation/input lifecycle events reach Telegram.
+    onOrdinusEvent: (listener) => ordinusEvents.subscribe(listener),
+    // ADR-044 Phase 2c: start a plan Ordinus proposed (workboard_plan_ready),
+    // when the owner taps Start on Telegram. Same path the desktop review uses.
+    startProposedPlan: (input) => {
+      const parsed = WorkboardStartRequestPlanInputSchema.parse({
+        originalRequest: input.originalRequest,
+        plan: input.plan
+      })
+      const request = database.createWorkRequestPlan(parsed)
+      startWorkRequestRuns(database, runtime, observability, request.id)
+      // Close the desktop plan-review surface that opened for this same plan.
+      ordinusEvents.publish({ kind: 'workboard_plan_dismissed', request: input.originalRequest })
+    }
+  })
+  ipcMain.handle(ipcChannels.telegramGetStatus, () => telegram.getStatus())
+  ipcMain.handle(ipcChannels.telegramConnect, (_event, payload: unknown) => {
+    const input = TelegramConnectInputSchema.parse(payload)
+    return telegram.connect(input.token)
+  })
+  ipcMain.handle(ipcChannels.telegramDisconnect, async () => {
+    await telegram.disconnect()
+    return telegram.getStatus()
+  })
+
+  // ADR-044 Phase 3: a menu-bar/tray indicator that the bot is listening. Shown
+  // only while Telegram is set up (created on connect, removed on disconnect).
+  let telegramTray: Tray | null = null
+  function updateTelegramTray(status: TelegramStatus): void {
+    if (status.status === 'disconnected') {
+      telegramTray?.destroy()
+      telegramTray = null
+      return
+    }
+    if (!telegramTray) {
+      const image = nativeImage.createFromPath(trayIconAsset).resize({ width: 18, height: 18 })
+      telegramTray = new Tray(image)
+    }
+    const tooltip =
+      status.status === 'connected'
+        ? `Ordinus — Telegram dinliyor${status.botUsername ? ` (@${status.botUsername})` : ''}`
+        : status.status === 'awaiting-pairing'
+          ? 'Ordinus — Telegram eşleştirme bekliyor'
+          : 'Ordinus — Telegram hatası'
+    telegramTray.setToolTip(tooltip)
+    telegramTray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: tooltip, enabled: false },
+        { type: 'separator' },
+        {
+          label: 'Ordinus’u Göster',
+          click: () => {
+            const window = BrowserWindow.getAllWindows()[0]
+            if (window) {
+              if (window.isMinimized()) window.restore()
+              window.show()
+              window.focus()
+            }
+          }
+        },
+        {
+          label: 'Telegram Bağlantısını Kes',
+          click: () => {
+            void telegram.disconnect()
+          }
+        }
+      ])
+    )
+  }
+  updateTelegramTray(telegram.getStatus())
+
+  return { scheduler, telegram }
 }
 
 function requireAgent(database: OrdinusDatabase, agentId: string): void {
@@ -2163,7 +2390,9 @@ async function runConversationAgentTurn(
   observability: ObservabilityService,
   agentTurn: PreparedConversationAgentTurn,
   options?: { suppressNeedsInput?: boolean }
-): Promise<void> {
+  // ADR-044: returns the turn outcome so a Telegram-driven room turn can reply
+  // with the result (desktop callers ignore it — the result is also persisted).
+): Promise<AgentTurnOutcome | null> {
   const workspace = database.getWorkspaceConfig()
   if (!workspace) {
     throw new Error('Choose a workspace before running conversations.')
@@ -2219,8 +2448,10 @@ async function runConversationAgentTurn(
       observability: observationSink
     })
     saveConversationTurnCompletion(database, observability, agentTurn, result, options)
+    return result.outcome
   } catch (error) {
     saveConversationTurnFailure(database, observability, agentTurn.agentTurnId, error, logRef)
+    return null
   }
 }
 
