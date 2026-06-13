@@ -6,7 +6,17 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out', 'resources/dev-fixtures'] },
+  // resources/* sub-packages are plain-JS child-runtime code (ADR-041/042),
+  // not part of the app's TypeScript lint surface.
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      'resources/dev-fixtures',
+      'resources/whatsapp-mcp'
+    ]
+  },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],
