@@ -186,8 +186,10 @@ import { composeInstructionsWithMemory } from '../agents/memory-render'
 import { createOrdinusSessionService } from '../ordinus/session'
 import { listPendingConfirmations, resolvePendingConfirmation } from '../ordinus/confirmation'
 import {
+  cancelConnect,
   connectConnector,
   disconnectConnector,
+  forgetConnectorClient,
   listConnectorTools,
   listConnectors,
   setConnectorEnabledTools
@@ -245,6 +247,20 @@ export function registerIpcHandlers(
   )
 
   ipcMain.handle(ipcChannels.systemGetPaths, () => getSystemPaths())
+  ipcMain.handle(ipcChannels.systemOpenExternal, async (_event, payload) => {
+    // Only https — never file:/javascript:/other schemes from the renderer.
+    const url = typeof payload === 'string' ? payload : ''
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      throw new Error('Invalid URL.')
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new Error('Only https links can be opened.')
+    }
+    await shell.openExternal(parsed.toString())
+  })
   ipcMain.handle(ipcChannels.dbGetStatus, () => database.getStatus())
 
   // ADR-029 M3: Ordinus conversation surface. Renderer (M4) will consume these.
@@ -1053,6 +1069,8 @@ export function registerIpcHandlers(
     // mechanism as schedulesChanged.
     return connectConnector(input.connectorId, {
       phone: input.phone,
+      // ADR-043: first-time BYO-OAuth setup carries the user's OAuth client.
+      oauthClient: input.oauthClient,
       onPairingEvent: (event) => {
         for (const window of BrowserWindow.getAllWindows()) {
           window.webContents.send(ipcChannels.connectorsPairingEvent, event)
@@ -1063,6 +1081,15 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.connectorsDisconnect, (_event, payload) => {
     const input = ConnectorActionInputSchema.parse(payload)
     return disconnectConnector(input.connectorId)
+  })
+  ipcMain.handle(ipcChannels.connectorsForgetClient, (_event, payload) => {
+    const input = ConnectorActionInputSchema.parse(payload)
+    return forgetConnectorClient(input.connectorId)
+  })
+  ipcMain.handle(ipcChannels.connectorsCancelConnect, (_event, payload) => {
+    const input = ConnectorActionInputSchema.parse(payload)
+    cancelConnect(input.connectorId)
+    return null
   })
   ipcMain.handle(ipcChannels.connectorsListTools, (_event, payload) => {
     const input = ConnectorActionInputSchema.parse(payload)

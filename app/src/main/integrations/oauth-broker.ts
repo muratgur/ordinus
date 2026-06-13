@@ -1,14 +1,23 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { getConnectorManifest } from './registry'
 import { discoverAuthServer, registerClient, type RegisteredClient } from './mcp-oauth'
 import { readCredential, storeCredential } from './vault'
-import type { StoredCredential } from './types'
+import type { ByoOAuthClient, StoredCredential } from './types'
 
 function base64Url(input: Buffer): string {
   return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+// PKCE verifier + S256 challenge + anti-forgery state, shared by both the DCR
+// and the static-client (BYO) authorization-code flows.
+function createPkceParams(): { verifier: string; challenge: string; state: string } {
+  const verifier = base64Url(randomBytes(32))
+  const challenge = base64Url(createHash('sha256').update(verifier).digest())
+  const state = base64Url(randomBytes(16))
+  return { verifier, challenge, state }
 }
 
 function readTokenResponse(
@@ -65,9 +74,7 @@ export async function authorizeConnector(connectorId: string): Promise<void> {
     throw new Error(`${manifest.label} does not advertise a dynamic client registration endpoint.`)
   }
 
-  const verifier = base64Url(randomBytes(32))
-  const challenge = base64Url(createHash('sha256').update(verifier).digest())
-  const state = base64Url(randomBytes(16))
+  const { verifier, challenge, state } = createPkceParams()
   const scopes = manifest.scopes ?? meta.scopesSupported ?? []
 
   const credential = await new Promise<StoredCredential>((rawResolve, rawReject) => {
@@ -186,6 +193,184 @@ export async function authorizeConnector(connectorId: string): Promise<void> {
   })
 
   storeCredential(connectorId, credential)
+}
+
+/**
+ * ADR-043: translate raw OAuth error codes (from the consent callback or the
+ * token response) into a fix the user can act on in the BYO wizard.
+ */
+function translateOAuthError(code: string | undefined, fallback: string): string {
+  switch (code) {
+    case 'access_denied':
+      return (
+        'Google denied access. Most often your account is not on the app’s Test users list — ' +
+        'add yourself under Audience → Test users in the consent screen, then try again. ' +
+        '(If you saw the consent screen and clicked Cancel, just retry and Allow.)'
+      )
+    case 'invalid_client':
+    case 'unauthorized_client':
+      return 'The Client ID or Client secret looks wrong — re-copy them from your OAuth client and try again.'
+    case 'redirect_uri_mismatch':
+      return 'Redirect mismatch — make sure the OAuth client type is "Desktop app", not "Web application".'
+    case 'admin_policy_enforced':
+      return 'Your Google Workspace administrator has blocked this app from being authorized.'
+    case 'org_internal':
+      return 'This OAuth client is restricted to its organization; use an account in that organization.'
+    default:
+      return fallback
+  }
+}
+
+// ADR-043: in-flight BYO authorizations, keyed by connector. The value aborts
+// the flow (closes the loopback server, rejects the promise) — used to cancel
+// from the UI and to supersede a stale attempt.
+const pendingStaticAuth = new Map<string, (reason: string) => void>()
+
+/** Cancel an in-flight BYO authorization (dialog Cancel). No-op if none. */
+export function cancelStaticClientAuth(connectorId: string): void {
+  pendingStaticAuth.get(connectorId)?.('Google sign-in was cancelled.')
+}
+
+/**
+ * ADR-043: authorize a 'byo-oauth' connector against the user's own ("bring
+ * your own") OAuth client — loopback + PKCE, but with a static client_id/secret
+ * (no Dynamic Client Registration) and the manifest's fixed authorization/token
+ * endpoints. `access_type=offline` + `prompt=consent` are required to obtain a
+ * refresh token. Returns the credential; the caller persists it (so token and
+ * BYO-client storage stay ordered together).
+ */
+export async function authorizeStaticClient(
+  connectorId: string,
+  client: ByoOAuthClient
+): Promise<StoredCredential> {
+  const manifest = getConnectorManifest(connectorId)
+  if (!manifest.byoOAuth) {
+    throw new Error(`Connector ${connectorId} is not a BYO-OAuth connector.`)
+  }
+  const { authorizationEndpoint, tokenEndpoint } = manifest.byoOAuth
+  const scopes = manifest.scopes ?? []
+  const { verifier, challenge, state } = createPkceParams()
+
+  // A new attempt for the same connector supersedes any in-flight one — closes
+  // the prior loopback server instead of stacking listeners (e.g. the user
+  // retries after abandoning a consent tab).
+  pendingStaticAuth.get(connectorId)?.('A new sign-in attempt was started.')
+
+  return new Promise<StoredCredential>((rawResolve, rawReject) => {
+    let redirectUri = ''
+    let settled = false
+    let timer: NodeJS.Timeout | null = null
+
+    const finish = (): void => {
+      if (timer) clearTimeout(timer)
+      if (pendingStaticAuth.get(connectorId) === abort) {
+        pendingStaticAuth.delete(connectorId)
+      }
+      server.close()
+    }
+    const resolve = (value: StoredCredential): void => {
+      if (settled) return
+      settled = true
+      finish()
+      rawResolve(value)
+    }
+    const reject = (cause: Error): void => {
+      if (settled) return
+      settled = true
+      finish()
+      rawReject(cause)
+    }
+    // Registered so cancelStaticClientAuth (dialog Cancel) and a superseding
+    // attempt can tear this flow down without waiting for the timeout.
+    const abort = (reason: string): void => reject(new Error(reason))
+    pendingStaticAuth.set(connectorId, abort)
+
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '', 'http://127.0.0.1')
+      const code = url.searchParams.get('code')
+      const returnedState = url.searchParams.get('state')
+      const errorCode = url.searchParams.get('error') ?? undefined
+      // Desktop clients use a bare loopback redirect, so accept any path — but
+      // only the redirect carries `code`/`error`. Ignore everything else (the
+      // browser also fetches /favicon.ico, which would otherwise race the
+      // in-flight token exchange and reject the whole flow).
+      if (!code && !errorCode) {
+        res.writeHead(404).end()
+        return
+      }
+      res
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end('<html><body>You can close this tab and return to Ordinus.</body></html>')
+      if (errorCode || !code || returnedState !== state) {
+        reject(
+          new Error(
+            translateOAuthError(
+              errorCode,
+              'Google sign-in was cancelled or returned an invalid response.'
+            )
+          )
+        )
+        return
+      }
+      void (async () => {
+        try {
+          const json = await postToken(tokenEndpoint, {
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: redirectUri,
+            code_verifier: verifier,
+            client_id: client.clientId,
+            client_secret: client.clientSecret
+          })
+          resolve(
+            readTokenResponse(json, {
+              tokenEndpoint,
+              clientId: client.clientId,
+              clientSecret: client.clientSecret
+            })
+          )
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          const match = /"error"\s*:\s*"([a-z_]+)"/.exec(message)?.[1]
+          reject(new Error(translateOAuthError(match, message)))
+        }
+      })()
+    })
+
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address() as AddressInfo | null
+      if (!address) {
+        reject(new Error('Could not start the OAuth callback server.'))
+        return
+      }
+      redirectUri = `http://127.0.0.1:${address.port}`
+
+      const authorizeUrl = new URL(authorizationEndpoint)
+      authorizeUrl.searchParams.set('response_type', 'code')
+      authorizeUrl.searchParams.set('client_id', client.clientId)
+      authorizeUrl.searchParams.set('redirect_uri', redirectUri)
+      if (scopes.length > 0) {
+        authorizeUrl.searchParams.set('scope', scopes.join(' '))
+      }
+      authorizeUrl.searchParams.set('state', state)
+      authorizeUrl.searchParams.set('code_challenge', challenge)
+      authorizeUrl.searchParams.set('code_challenge_method', 'S256')
+      // Required to receive a refresh token (and to receive it again on
+      // re-consent during a weekly Testing-mode reconnect).
+      authorizeUrl.searchParams.set('access_type', 'offline')
+      authorizeUrl.searchParams.set('prompt', 'consent')
+
+      // The system browser, NOT an embedded BrowserWindow: Google rejects OAuth
+      // in embedded webviews ("disallowed_useragent"). The loopback server above
+      // catches the redirect. This is the flow validated in the Phase 0 PoC.
+      timer = setTimeout(
+        () => reject(new Error('Google sign-in timed out — the consent screen was not completed.')),
+        3 * 60_000
+      )
+      void shell.openExternal(authorizeUrl.toString())
+    })
+  })
 }
 
 export async function refreshCredential(

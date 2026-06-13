@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { StoredCredential } from './types'
+import type { ByoOAuthClient, StoredCredential } from './types'
 
 // Each entry is `<prefix><base64 payload>`. Base64 (standard or URL-safe)
 // never contains ':', so the colon-prefixed marker is an unambiguous
@@ -169,4 +169,25 @@ export function hasCredential(connectorId: string): boolean {
   // exist while being undecodable: legacy ciphertext on a build where
   // safeStorage broke, a plain: entry in a packaged build, corrupted bytes.
   return readCredential(connectorId) !== null
+}
+
+// ADR-043: the BYO OAuth client (clientId/clientSecret) is encrypted at rest
+// alongside tokens but keyed separately so Disconnect (token wipe) leaves it
+// intact for one-click reconnect.
+const byoClientKey = (connectorId: string): string => `byo:${connectorId}`
+
+export function storeByoClient(connectorId: string, client: ByoOAuthClient): void {
+  setEntry(byoClientKey(connectorId), client)
+}
+
+export function readByoClient(connectorId: string): ByoOAuthClient | null {
+  return getEntry<ByoOAuthClient>(byoClientKey(connectorId))
+}
+
+export function deleteByoClient(connectorId: string): void {
+  deleteEntry(byoClientKey(connectorId))
+}
+
+export function hasByoClient(connectorId: string): boolean {
+  return readByoClient(connectorId) !== null
 }

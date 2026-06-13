@@ -483,7 +483,11 @@ export const ConnectorSummarySchema = z.object({
   /** True when Connect opens the server's own sign-in window (ADR-041). */
   interactiveLogin: z.boolean().default(false),
   /** True when Connect needs the pairing dialog (phone → code, ADR-042). */
-  pairingLogin: z.boolean().default(false)
+  pairingLogin: z.boolean().default(false),
+  /** ADR-043: True when Connect uses the BYO-OAuth setup wizard (Google). */
+  byoOAuthLogin: z.boolean().default(false),
+  /** ADR-043: True when a BYO OAuth client is already stored (reconnect skips the wizard). */
+  byoClientConfigured: z.boolean().default(false)
 })
 
 export const ConnectorActionInputSchema = z.object({
@@ -497,6 +501,14 @@ export const ConnectorConnectInputSchema = z.object({
   phone: z
     .string()
     .regex(/^[0-9]{7,15}$/, 'Phone must be digits only, with country code.')
+    .optional(),
+  // ADR-043: first-time BYO-OAuth setup carries the user's OAuth client. Absent
+  // on reconnect — the stored client is reused. Never logged or echoed back.
+  oauthClient: z
+    .object({
+      clientId: z.string().min(1),
+      clientSecret: z.string().min(1)
+    })
     .optional()
 })
 

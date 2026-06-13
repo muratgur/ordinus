@@ -1,13 +1,24 @@
 import { rmSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   ConnectorSummary,
   ConnectorToolsResult,
   ConnectorSetEnabledToolsInput,
   ConnectorPairingEvent
 } from '@shared/contracts'
+import type { ByoOAuthClient } from './types'
 import { getConnectorManifest, listConnectorManifests } from './registry'
-import { authorizeConnector } from './oauth-broker'
-import { deleteCredential, hasCredential } from './vault'
+import { authorizeConnector, authorizeStaticClient, cancelStaticClientAuth } from './oauth-broker'
+import {
+  deleteByoClient,
+  deleteCredential,
+  hasByoClient,
+  hasCredential,
+  readByoClient,
+  readCredential,
+  storeByoClient,
+  storeCredential
+} from './vault'
 import type { OrdinusDatabase } from '../db/database'
 import {
   type DiscoveredTool,
@@ -20,6 +31,7 @@ import {
 } from '../local-mcp/supervisor'
 import { installedVersionOf } from '../local-mcp/runtime-bootstrap'
 import { getConnectorSessionDir } from '../local-mcp/paths'
+import { LOGGED_OUT_MARKER } from '../local-mcp/protocol'
 
 // ADR-041: the connector service needs durable local-connector state. The
 // database instance is injected once at boot (see main/index.ts); the
@@ -34,8 +46,35 @@ export function initConnectorService(db: OrdinusDatabase): void {
       if (db.getLocalConnectorState(connectorId)) {
         db.upsertLocalConnectorState(connectorId, { lastHealth: health })
       }
-    }
+    },
+    getSecretEnv: (connectorId) => secretEnvFor(connectorId)
   })
+}
+
+/**
+ * ADR-043: build the secret env injected into a connector's child at spawn.
+ * For byo-oauth connectors (Google) this hands the server the OAuth token and
+ * the client it self-refreshes with — read fresh from the vault each spawn, so
+ * the child never reaches back into the main process. Empty for everything
+ * else (the env merge is then a no-op).
+ */
+function secretEnvFor(connectorId: string): Record<string, string> {
+  const manifest = getConnectorManifest(connectorId)
+  if (manifest.local?.loginMode !== 'byo-oauth') {
+    return {}
+  }
+  const credential = readCredential(connectorId)
+  const client = readByoClient(connectorId)
+  if (!credential || !client || !credential.refreshToken) {
+    return {}
+  }
+  return {
+    ORDINUS_GOOGLE_ACCESS_TOKEN: credential.accessToken,
+    ORDINUS_GOOGLE_REFRESH_TOKEN: credential.refreshToken,
+    ORDINUS_GOOGLE_CLIENT_ID: client.clientId,
+    ORDINUS_GOOGLE_CLIENT_SECRET: client.clientSecret,
+    ORDINUS_GOOGLE_TOKEN_URI: credential.tokenEndpoint ?? 'https://oauth2.googleapis.com/token'
+  }
 }
 
 /**
@@ -126,7 +165,11 @@ export function listConnectors(): ConnectorSummary[] {
             : ('ok' as const),
         installedVersion: state?.installedVersion ?? null,
         interactiveLogin: manifest.local?.loginMode === 'interactive',
-        pairingLogin: manifest.local?.loginMode === 'pairing'
+        pairingLogin: manifest.local?.loginMode === 'pairing',
+        // ADR-043: byoOAuthLogin tells the UI to use the BYO setup wizard;
+        // byoClientConfigured lets it skip the paste step on reconnect.
+        byoOAuthLogin: manifest.local?.loginMode === 'byo-oauth',
+        byoClientConfigured: manifest.local?.loginMode === 'byo-oauth' && hasByoClient(manifest.id)
       }
     }
     return {
@@ -139,7 +182,9 @@ export function listConnectors(): ConnectorSummary[] {
       health: 'ok' as const,
       installedVersion: null,
       interactiveLogin: false,
-      pairingLogin: false
+      pairingLogin: false,
+      byoOAuthLogin: false,
+      byoClientConfigured: false
     }
   })
 }
@@ -148,6 +193,7 @@ export async function connectConnector(
   connectorId: string,
   options?: {
     phone?: string
+    oauthClient?: ByoOAuthClient
     onPairingEvent?: (event: ConnectorPairingEvent) => void
   }
 ): Promise<ConnectorSummary[]> {
@@ -173,6 +219,30 @@ export async function connectConnector(
         options?.onPairingEvent?.({ connectorId, ...event })
       })
     }
+    if (manifest.local?.loginMode === 'byo-oauth') {
+      // ADR-043: first-time setup supplies the OAuth client; reconnect reuses
+      // the stored one (no wizard redo). authorizeStaticClient runs the
+      // main-process loopback/PKCE consent and returns the token; persist both.
+      const client = options?.oauthClient ?? readByoClient(connectorId)
+      if (!client) {
+        throw new Error('Google setup is incomplete — provide your OAuth client to connect.')
+      }
+      if (options?.oauthClient) {
+        storeByoClient(connectorId, options.oauthClient)
+      }
+      const credential = await authorizeStaticClient(connectorId, client)
+      // Without a refresh token the server can never self-refresh and would be
+      // silently dead after the access token expires. Fail loudly here rather
+      // than persist a credential that spawns an unusable connector.
+      if (!credential.refreshToken) {
+        throw new Error(
+          'Google did not return a refresh token. Re-run setup and make sure you grant access when prompted (the app must request offline access).'
+        )
+      }
+      storeCredential(connectorId, credential)
+      // A successful (re)auth supersedes any prior "Reconnect required" state.
+      rmSync(join(getConnectorSessionDir(connectorId), LOGGED_OUT_MARKER), { force: true })
+    }
     const tools = await discoverConnectorTools(connectorId)
     persistDiscoveredCatalog(connectorId, tools)
     // A reconnected persistent connector should resume ingesting immediately.
@@ -187,6 +257,18 @@ export async function connectConnector(
   return listConnectors()
 }
 
+/**
+ * ADR-043: cancel an in-flight Connect. For byo-oauth this aborts the loopback
+ * OAuth flow (the user closed the wizard mid-consent) so it doesn't linger
+ * until the timeout. No-op for other connectors.
+ */
+export function cancelConnect(connectorId: string): void {
+  const manifest = getConnectorManifest(connectorId)
+  if (manifest.local?.loginMode === 'byo-oauth') {
+    cancelStaticClientAuth(connectorId)
+  }
+}
+
 export async function disconnectConnector(connectorId: string): Promise<ConnectorSummary[]> {
   const manifest = getConnectorManifest(connectorId)
   if (manifest.kind === 'local') {
@@ -195,10 +277,33 @@ export async function disconnectConnector(connectorId: string): Promise<Connecto
     // data. Installed runtime + package stay so reconnecting is cheap.
     await revokeLocalConnector(connectorId)
     rmSync(getConnectorSessionDir(connectorId), { recursive: true, force: true })
+    // ADR-043: byo-oauth connectors also keep OAuth tokens in the vault — wipe
+    // them on Disconnect. The BYO client is intentionally kept so reconnect is
+    // one click; "Remove setup" (forgetConnectorClient) clears that.
+    if (manifest.local?.loginMode === 'byo-oauth') {
+      deleteCredential(connectorId)
+    }
     requireDb().deleteLocalConnectorState(connectorId)
     return listConnectors()
   }
   deleteCredential(connectorId)
+  return listConnectors()
+}
+
+/**
+ * ADR-043: forget a BYO-OAuth connector's stored OAuth client entirely (the
+ * "Remove setup" action). Fully tears down first if connected, then drops the
+ * client so the next Connect starts the wizard from scratch.
+ */
+export async function forgetConnectorClient(connectorId: string): Promise<ConnectorSummary[]> {
+  const manifest = getConnectorManifest(connectorId)
+  if (manifest.local?.loginMode !== 'byo-oauth') {
+    throw new Error(`Connector ${connectorId} has no stored OAuth client.`)
+  }
+  if (isLocalConnectorConnected(connectorId)) {
+    await disconnectConnector(connectorId)
+  }
+  deleteByoClient(connectorId)
   return listConnectors()
 }
 

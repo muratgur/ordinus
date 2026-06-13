@@ -158,7 +158,9 @@ const ordinus = {
     getInfo: async (): Promise<AppInfo> => ipcRenderer.invoke(ipcChannels.appGetInfo)
   },
   system: {
-    getPaths: async (): Promise<SystemPaths> => ipcRenderer.invoke(ipcChannels.systemGetPaths)
+    getPaths: async (): Promise<SystemPaths> => ipcRenderer.invoke(ipcChannels.systemGetPaths),
+    openExternal: async (url: string): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.systemOpenExternal, url)
   },
   db: {
     getStatus: async (): Promise<DbStatus> => ipcRenderer.invoke(ipcChannels.dbGetStatus)
@@ -478,6 +480,13 @@ const ordinus = {
     },
     disconnect: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
       ipcRenderer.invoke(ipcChannels.connectorsDisconnect, input),
+    // ADR-043: forget a BYO-OAuth connector's stored OAuth client ("Remove setup").
+    forgetClient: async (input: ConnectorActionInput): Promise<ConnectorSummary[]> =>
+      ipcRenderer.invoke(ipcChannels.connectorsForgetClient, input),
+    // ADR-043: cancel an in-flight Connect (wizard closed mid-consent).
+    cancelConnect: async (input: ConnectorActionInput): Promise<void> => {
+      await ipcRenderer.invoke(ipcChannels.connectorsCancelConnect, input)
+    },
     listTools: async (input: ConnectorActionInput): Promise<ConnectorToolsResult> =>
       ipcRenderer.invoke(ipcChannels.connectorsListTools, input),
     setEnabledTools: async (input: ConnectorSetEnabledToolsInput): Promise<ConnectorToolsResult> =>

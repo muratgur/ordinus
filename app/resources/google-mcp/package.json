@@ -1,0 +1,10 @@
+{
+  "name": "google-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ordinus Google Workspace connector — self-contained MCP server sub-package (ADR-043). Raw fetch to Google REST, no googleapis SDK; dependencies live here, never in the app bundle.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0"
+  }
+}

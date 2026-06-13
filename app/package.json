@@ -32,7 +32,7 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
-    "postinstall": "electron-builder install-app-deps && npm --prefix resources/whatsapp-mcp install",
+    "postinstall": "electron-builder install-app-deps && npm --prefix resources/whatsapp-mcp install && npm --prefix resources/google-mcp install",
     "db:generate": "drizzle-kit generate",
     "ui:info": "npx shadcn@latest info",
     "ui:add": "npx shadcn@latest add",

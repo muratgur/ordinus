@@ -7,6 +7,7 @@ import {
   Database,
   Diamond,
   Download,
+  ExternalLink,
   FolderOpen,
   FolderLock,
   Library,
@@ -730,6 +731,9 @@ function ConnectionsSettingsSection(): React.JSX.Element {
   // ADR-042: pairing-login connectors (WhatsApp) connect through a dialog
   // that collects the phone number and displays the device-linking code.
   const [pairingConnector, setPairingConnector] = useState<ConnectorSummary | null>(null)
+  // ADR-043: BYO-OAuth connectors (Google) connect through a setup wizard that
+  // walks the user through creating their own OAuth client.
+  const [googleConnector, setGoogleConnector] = useState<ConnectorSummary | null>(null)
 
   useEffect(() => {
     let active = true
@@ -772,6 +776,21 @@ function ConnectionsSettingsSection(): React.JSX.Element {
     }
   }, [])
 
+  // ADR-043: "Remove setup" — drop the stored BYO OAuth client entirely, so the
+  // next Connect restarts the wizard from scratch.
+  const runForget = useCallback(async (connectorId: string) => {
+    try {
+      setBusyId(connectorId)
+      setError('')
+      const next = await window.ordinus.connectors.forgetClient({ connectorId })
+      setConnectors(next)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to remove setup.')
+    } finally {
+      setBusyId('')
+    }
+  }, [])
+
   return (
     <div className="grid gap-4">
       <section className="grid gap-3">
@@ -805,76 +824,113 @@ function ConnectionsSettingsSection(): React.JSX.Element {
           </div>
         ) : (
           <ul className="divide-y rounded-md border">
-            {connectors.map((connector) => (
-              <li key={connector.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{connector.label}</span>
-                    <Badge variant={connector.connected ? 'default' : 'secondary'}>
-                      {connector.connected ? 'Connected' : 'Not connected'}
-                    </Badge>
-                    {connector.health === 'unhealthy' ? (
-                      <Badge variant="failed">Unhealthy</Badge>
+            {connectors.map((connector) => {
+              // Same button in both the connected and not-connected branches —
+              // it depends only on whether a BYO client is stored.
+              const removeSetupButton = connector.byoClientConfigured ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busyId === connector.id}
+                  onClick={() => void runForget(connector.id)}
+                >
+                  Remove setup
+                </Button>
+              ) : null
+              return (
+                <li
+                  key={connector.id}
+                  className="flex items-center justify-between gap-4 px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{connector.label}</span>
+                      <Badge variant={connector.connected ? 'default' : 'secondary'}>
+                        {connector.connected ? 'Connected' : 'Not connected'}
+                      </Badge>
+                      {connector.health === 'unhealthy' ? (
+                        <Badge variant="failed">Unhealthy</Badge>
+                      ) : null}
+                      {connector.health === 'reconnect-required' ? (
+                        <Badge variant="attention">Reconnect required</Badge>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {connector.kind === 'local'
+                        ? `Runs on this computer · managed by Ordinus${
+                            connector.installedVersion ? ` · v${connector.installedVersion}` : ''
+                          }`
+                        : `${connector.transport} · ${connector.authMethod}`}
+                    </p>
+                    {connector.interactiveLogin && !connector.connected ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Connect opens a sign-in window — log in to your account there to finish.
+                      </p>
                     ) : null}
-                    {connector.health === 'reconnect-required' ? (
-                      <Badge variant="attention">Reconnect required</Badge>
+                    {connector.byoOAuthLogin && !connector.connected ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {connector.byoClientConfigured
+                          ? 'Reconnect re-approves access in a Google window (personal apps re-auth periodically).'
+                          : 'Connect walks you through creating your own Google app — your data stays under your permissions.'}
+                      </p>
+                    ) : null}
+                    {connector.kind === 'local' && connector.connected ? (
+                      <LocalConnectorTools connectorId={connector.id} />
                     ) : null}
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {connector.kind === 'local'
-                      ? `Runs on this computer · managed by Ordinus${
-                          connector.installedVersion ? ` · v${connector.installedVersion}` : ''
-                        }`
-                      : `${connector.transport} · ${connector.authMethod}`}
-                  </p>
-                  {connector.interactiveLogin && !connector.connected ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Connect opens a sign-in window — log in to your account there to finish.
-                    </p>
-                  ) : null}
-                  {connector.kind === 'local' && connector.connected ? (
-                    <LocalConnectorTools connectorId={connector.id} />
-                  ) : null}
-                </div>
-                {connector.connected ? (
-                  <div className="flex shrink-0 items-center gap-2">
-                    {connector.pairingLogin && connector.health === 'reconnect-required' ? (
+                  {connector.connected ? (
+                    <div className="flex shrink-0 items-center gap-2">
+                      {(connector.pairingLogin || connector.byoOAuthLogin) &&
+                      connector.health === 'reconnect-required' ? (
+                        <Button
+                          size="sm"
+                          disabled={busyId === connector.id}
+                          onClick={() =>
+                            connector.byoOAuthLogin
+                              ? setGoogleConnector(connector)
+                              : setPairingConnector(connector)
+                          }
+                        >
+                          Reconnect
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busyId === connector.id}
+                        onClick={() => void runAction(connector.id, 'disconnect')}
+                      >
+                        Disconnect
+                      </Button>
+                      {removeSetupButton}
+                    </div>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-2">
                       <Button
                         size="sm"
                         disabled={busyId === connector.id}
-                        onClick={() => setPairingConnector(connector)}
+                        onClick={() =>
+                          connector.pairingLogin
+                            ? setPairingConnector(connector)
+                            : connector.byoOAuthLogin
+                              ? setGoogleConnector(connector)
+                              : void runAction(connector.id, 'connect')
+                        }
                       >
-                        Reconnect
+                        {busyId === connector.id
+                          ? connector.kind === 'local'
+                            ? 'Preparing…'
+                            : 'Connecting…'
+                          : connector.byoClientConfigured
+                            ? 'Reconnect'
+                            : 'Connect'}
                       </Button>
-                    ) : null}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busyId === connector.id}
-                      onClick={() => void runAction(connector.id, 'disconnect')}
-                    >
-                      Disconnect
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    disabled={busyId === connector.id}
-                    onClick={() =>
-                      connector.pairingLogin
-                        ? setPairingConnector(connector)
-                        : void runAction(connector.id, 'connect')
-                    }
-                  >
-                    {busyId === connector.id
-                      ? connector.kind === 'local'
-                        ? 'Preparing…'
-                        : 'Connecting…'
-                      : 'Connect'}
-                  </Button>
-                )}
-              </li>
-            ))}
+                      {removeSetupButton}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>
@@ -891,6 +947,19 @@ function ConnectionsSettingsSection(): React.JSX.Element {
         onConnected={(next) => {
           setConnectors(next)
           setPairingConnector(null)
+        }}
+      />
+      <GoogleConnectDialog
+        key={googleConnector ? `google-${googleConnector.id}` : 'google-closed'}
+        connector={googleConnector}
+        onOpenChange={(open) => {
+          if (!open) {
+            setGoogleConnector(null)
+          }
+        }}
+        onConnected={(next) => {
+          setConnectors(next)
+          setGoogleConnector(null)
         }}
       />
     </div>
@@ -1029,6 +1098,223 @@ function PairingConnectDialog({
           ) : null}
           {stage === 'error' ? (
             <Button type="button" onClick={() => void startPairing()}>
+              Try again
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ADR-043: BYO-OAuth Connect flow (Google). First-time setup walks the user
+// through creating their OWN Google Cloud OAuth client (deep-linked into the
+// console), then they paste the downloaded client JSON. Connect hands the
+// client to the main process, which runs the loopback/PKCE consent in a Google
+// window; on success the connector is connected. Reconnect (client already
+// stored) skips straight to the consent — used for the weekly Testing-mode
+// re-auth. No Ordinus-owned app, no verification, no CASA: every request runs
+// under the user's own app and consent.
+const GOOGLE_CONSOLE_STEPS = [
+  {
+    label: 'Create a Google Cloud project (or pick an existing one)',
+    url: 'https://console.cloud.google.com/projectcreate'
+  },
+  {
+    label: 'Enable the Gmail, Calendar & Drive APIs — one click',
+    url: 'https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com'
+  },
+  {
+    label:
+      'Configure the consent screen: choose External, add your own email under Test users, leave it in Testing',
+    url: 'https://console.cloud.google.com/auth/overview'
+  },
+  {
+    label: 'Create an OAuth client → application type “Desktop app” → then Download JSON',
+    url: 'https://console.cloud.google.com/auth/clients'
+  }
+]
+
+function parseGoogleClientJson(text: string): { clientId: string; clientSecret: string } | null {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    // Desktop clients download as { "installed": { client_id, client_secret } };
+    // accept "web" and a flat object too, in case the user pasted a sub-object.
+    const node = (parsed.installed ?? parsed.web ?? parsed) as Record<string, unknown>
+    const clientId = node.client_id
+    const clientSecret = node.client_secret
+    if (
+      typeof clientId === 'string' &&
+      typeof clientSecret === 'string' &&
+      clientId &&
+      clientSecret
+    ) {
+      return { clientId, clientSecret }
+    }
+  } catch {
+    // not JSON
+  }
+  return null
+}
+
+function GoogleConnectDialog({
+  connector,
+  onOpenChange,
+  onConnected
+}: {
+  connector: ConnectorSummary | null
+  onOpenChange: (open: boolean) => void
+  onConnected: (next: ConnectorSummary[]) => void
+}): React.JSX.Element {
+  const reconnect = connector?.byoClientConfigured ?? false
+  const [stage, setStage] = useState<'setup' | 'authorizing' | 'error'>('setup')
+  const [json, setJson] = useState('')
+  const [error, setError] = useState('')
+
+  const parsedClient = useMemo(() => parseGoogleClientJson(json), [json])
+
+  const startConnect = useCallback(
+    async (oauthClient?: { clientId: string; clientSecret: string }) => {
+      if (!connector) {
+        return
+      }
+      setStage('authorizing')
+      setError('')
+      try {
+        const next = await window.ordinus.connectors.connect({
+          connectorId: connector.id,
+          oauthClient
+        })
+        onConnected(next)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Could not connect Google.')
+        setStage('error')
+      }
+    },
+    [connector, onConnected]
+  )
+
+  // Closing the dialog mid-consent aborts the in-flight loopback OAuth so it
+  // doesn't linger in the main process until the timeout.
+  const requestClose = useCallback(() => {
+    if (stage === 'authorizing' && connector) {
+      void window.ordinus.connectors.cancelConnect({ connectorId: connector.id })
+    }
+    onOpenChange(false)
+  }, [stage, connector, onOpenChange])
+
+  // Reconnect reuses the stored client (no payload); first-time setup needs the
+  // pasted client. Shared by the Connect/Reconnect and Try-again buttons.
+  const submit = useCallback(() => {
+    if (reconnect) return void startConnect()
+    if (parsedClient) return void startConnect(parsedClient)
+  }, [reconnect, parsedClient, startConnect])
+
+  return (
+    <Dialog open={connector !== null} onOpenChange={(open) => !open && requestClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{reconnect ? 'Reconnect Google' : 'Connect Google'}</DialogTitle>
+          <DialogDescription>
+            Ordinus uses <span className="font-medium">your own</span> Google app, so your data
+            stays under your permissions — there’s no Ordinus-owned app in the middle.
+          </DialogDescription>
+        </DialogHeader>
+
+        {stage === 'setup' && !reconnect ? (
+          <div className="grid gap-3">
+            <ol className="grid gap-2">
+              {GOOGLE_CONSOLE_STEPS.map((step, index) => (
+                <li key={step.url} className="flex items-start gap-2 text-sm">
+                  <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-accent text-xs font-medium">
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 leading-6">{step.label}</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => void window.ordinus.system.openExternal(step.url)}
+                  >
+                    Open
+                    <ExternalLink className="ml-1 size-3" />
+                  </Button>
+                </li>
+              ))}
+            </ol>
+            <div className="grid gap-1.5">
+              <label className="text-sm font-medium" htmlFor="google-client-json">
+                Paste the downloaded client JSON
+              </label>
+              <textarea
+                id="google-client-json"
+                autoFocus
+                rows={5}
+                spellCheck={false}
+                placeholder={'{ "installed": { "client_id": "…", "client_secret": "…", … } }'}
+                value={json}
+                onChange={(event) => setJson(event.target.value)}
+                className={cn(
+                  'w-full resize-none rounded-md border bg-transparent px-3 py-2 font-mono text-xs leading-5 shadow-sm',
+                  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                {json && !parsedClient
+                  ? 'That doesn’t look like a Desktop OAuth client JSON yet — paste the whole downloaded file.'
+                  : 'We read only the Client ID and secret, encrypt them on this machine, and never send them anywhere but Google.'}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {stage === 'setup' && reconnect ? (
+          <p className="text-sm leading-6 text-muted-foreground">
+            Personal Google apps in test mode re-authorize about once a week — this is Google’s
+            rule, not a limit Ordinus adds. Click Reconnect, then choose your account and Allow in
+            the Google window (you’ll pass your own app’s “unverified” screen via Advanced →
+            Continue).
+          </p>
+        ) : null}
+
+        {stage === 'authorizing' ? (
+          <div className="grid gap-2 py-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin" />
+              Waiting for Google sign-in…
+            </div>
+            <p className="leading-6">
+              A Google window opened — pick your account and click Allow. For your own app you’ll
+              see “Google hasn’t verified this app”; choose{' '}
+              <span className="font-medium">Advanced → Go to … (unsafe)</span> to continue. It’s
+              your app, so this is expected.
+            </p>
+          </div>
+        ) : null}
+
+        {stage === 'error' ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={requestClose}>
+            Cancel
+          </Button>
+          {stage === 'setup' && !reconnect ? (
+            <Button type="button" disabled={!parsedClient} onClick={submit}>
+              Connect
+            </Button>
+          ) : null}
+          {stage === 'setup' && reconnect ? (
+            <Button type="button" onClick={submit}>
+              Reconnect
+            </Button>
+          ) : null}
+          {stage === 'error' ? (
+            <Button type="button" onClick={submit}>
               Try again
             </Button>
           ) : null}

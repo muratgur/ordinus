@@ -29,11 +29,7 @@ import { getConnectorManifest } from '../integrations/registry'
 import { spawn } from 'node:child_process'
 import { ensureConnectorInstalled, requireLocalSpec } from './runtime-bootstrap'
 import { getConnectorHomeDir, getConnectorSessionDir } from './paths'
-
-// ADR-042: a pairing-mode server that detects a revoked session drops this
-// marker in its session dir and exits; the supervisor maps that to the
-// "Reconnect required" state instead of crash accounting.
-const LOGGED_OUT_MARKER = 'logged-out'
+import { LOGGED_OUT_MARKER } from './protocol'
 
 function hasLoggedOutMarker(connectorId: string): boolean {
   return existsSync(join(getConnectorSessionDir(connectorId), LOGGED_OUT_MARKER))
@@ -55,6 +51,10 @@ export type DiscoveredTool = { name: string; description: string }
 export type LocalConnectorStateAccess = {
   getEnabledTools: (connectorId: string) => string[]
   setHealth: (connectorId: string, health: 'ok' | 'unhealthy' | 'reconnect-required') => void
+  // ADR-043: per-connector secret env injected into the child at spawn (e.g.
+  // Google's OAuth access/refresh tokens from the vault). Kept behind the
+  // access boundary so the supervisor stays vault-free. Defaults to none.
+  getSecretEnv?: (connectorId: string) => Record<string, string>
 }
 
 type RunningServer = {
@@ -138,7 +138,10 @@ async function resolveChildLaunch(
     USERPROFILE: homeDir,
     XDG_DATA_HOME: homeDir,
     XDG_CACHE_HOME: homeDir,
-    XDG_CONFIG_HOME: homeDir
+    XDG_CONFIG_HOME: homeDir,
+    // ADR-043: connector-specific secrets (Google OAuth tokens) last so they
+    // win, and only ever via the access boundary — never the parent env.
+    ...(state.access?.getSecretEnv?.(connectorId) ?? {})
   }
   return { command: launch.command, args, env }
 }

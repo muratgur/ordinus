@@ -156,6 +156,7 @@ export type OrdinusApi = {
   }
   system: {
     getPaths: () => Promise<SystemPaths>
+    openExternal: (url: string) => Promise<void>
   }
   db: {
     getStatus: () => Promise<DbStatus>
@@ -308,6 +309,8 @@ export type OrdinusApi = {
     connect: (input: ConnectorConnectInput) => Promise<ConnectorSummary[]>
     onPairingEvent: (callback: (event: ConnectorPairingEvent) => void) => () => void
     disconnect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
+    forgetClient: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
+    cancelConnect: (input: ConnectorActionInput) => Promise<void>
     listTools: (input: ConnectorActionInput) => Promise<ConnectorToolsResult>
     setEnabledTools: (input: ConnectorSetEnabledToolsInput) => Promise<ConnectorToolsResult>
   }

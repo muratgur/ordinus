@@ -33,6 +33,14 @@ extraResources:
     filter:
       - '**/*'
       - '!poc-auth/**'
+  # ADR-043: self-contained Google Workspace MCP sub-package — pure JS (raw
+  # fetch, no native modules), ships with its node_modules to run from
+  # process.resourcesPath without an install step.
+  - from: resources/google-mcp
+    to: google-mcp
+    filter:
+      - '**/*'
+      - '!poc.mjs'
 win:
   executableName: ordinus
   icon: build/icon.ico

@@ -14,8 +14,20 @@ export type LocalConnectorRuntime = 'uv' | 'electron-node'
 // servers like LinkedIn that open their own login window. 'pairing'
 // (ADR-042) is for servers like WhatsApp that emit a device-linking code the
 // Ordinus UI must display: the login child prints line-delimited JSON events
-// on stdout and exits 0 once paired.
-export type LocalConnectorLoginMode = 'none' | 'interactive' | 'pairing'
+// on stdout and exits 0 once paired. 'byo-oauth' (ADR-043) is for servers like
+// Google whose login is a main-process OAuth flow against the user's own
+// ("bring your own") OAuth client — Connect runs the forked loopback/PKCE
+// broker (see byoOAuth), not a login child.
+export type LocalConnectorLoginMode = 'none' | 'interactive' | 'pairing' | 'byo-oauth'
+
+// ADR-043: static OAuth endpoints for a 'byo-oauth' connector. The client is
+// user-supplied (no Dynamic Client Registration), so the authorization/token
+// endpoints cannot be discovered — they live in the manifest. Scopes come from
+// the manifest's `scopes`.
+export type ByoOAuthConfig = {
+  authorizationEndpoint: string
+  tokenEndpoint: string
+}
 
 export type LocalConnectorSpec = {
   runtime: LocalConnectorRuntime
@@ -68,6 +80,8 @@ export type ConnectorManifest = {
   scopes?: string[]
   /** Present iff kind === 'local'. */
   local?: LocalConnectorSpec
+  /** ADR-043: present iff local.loginMode === 'byo-oauth'. */
+  byoOAuth?: ByoOAuthConfig
 }
 
 export type StoredCredential = {
@@ -80,6 +94,15 @@ export type StoredCredential = {
   clientId?: string
   clientSecret?: string
   resource?: string
+}
+
+// ADR-043: the user-supplied OAuth client for a 'byo-oauth' connector. Stored
+// separately from the token (StoredCredential) so Disconnect can wipe tokens
+// while keeping the client — reconnect is then one click, not a wizard redo.
+// Cleared only by the explicit "Remove setup" action.
+export type ByoOAuthClient = {
+  clientId: string
+  clientSecret: string
 }
 
 export type MaterializedConnectors = {

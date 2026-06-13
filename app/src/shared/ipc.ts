@@ -1,6 +1,9 @@
 export const ipcChannels = {
   appGetInfo: 'app:get-info',
   systemGetPaths: 'system:get-paths',
+  // ADR-043: open an https URL in the user's default browser (BYO setup wizard
+  // deep-links into the Google Cloud console).
+  systemOpenExternal: 'system:open-external',
   dbGetStatus: 'db:get-status',
   // ADR-029 M3: Ordinus conversation surface. Renderer (M4) consumes these.
   ordinusListConversations: 'ordinus:list-conversations',
@@ -136,6 +139,10 @@ export const ipcChannels = {
   connectorsList: 'connectors:list',
   connectorsConnect: 'connectors:connect',
   connectorsDisconnect: 'connectors:disconnect',
+  // ADR-043: forget a BYO-OAuth connector's stored OAuth client ("Remove setup").
+  connectorsForgetClient: 'connectors:forget-client',
+  // ADR-043: cancel an in-flight Connect (wizard closed mid-consent).
+  connectorsCancelConnect: 'connectors:cancel-connect',
   connectorsListTools: 'connectors:list-tools',
   connectorsSetEnabledTools: 'connectors:set-enabled-tools',
   // ADR-042: pairing-login progress (main → renderer), e.g. the WhatsApp
