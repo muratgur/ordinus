@@ -12,6 +12,7 @@ import type { TelegramSubsystem } from './telegram/subsystem'
 import { shutdownOrdinusMcpServer } from './ordinus-mcp/lifecycle'
 import { initConnectorService, startPersistentConnectors } from './integrations/service'
 import { shutdownLocalMcp } from './local-mcp/supervisor'
+import { ensureBundledNodeOnPath } from './runtime/cli/bundled-node'
 
 app.setName('Ordinus')
 
@@ -135,6 +136,11 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
+
+  // ADR-047: make the bundled Node runtime resolvable to every CLI/npm spawn by
+  // prepending it to this process's PATH. Must run before the provider-status
+  // pre-warm below (the first CLI spawn) and before any managed install.
+  ensureBundledNodeOnPath()
 
   database.initialize()
   // ADR-041: wire durable local-connector state into the connector service

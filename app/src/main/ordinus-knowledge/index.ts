@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app } from 'electron'
+import { resolveResourcePath } from '../paths'
 
 type KnowledgeSection = {
   /** Filename within this directory, without extension — also the section id. */
@@ -39,17 +39,9 @@ const KNOWLEDGE_SECTIONS: ReadonlyArray<KnowledgeSection> = [
 ]
 
 function getKnowledgeFolder(): string {
-  // Mirrors getMigrationsFolder in app/src/main/db/migrations.ts. The .md
-  // files live ONLY under resources/ — there is no src/main/ copy. Editing
-  // them is editing the deployable artifact directly.
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'ordinus-knowledge')
-  }
-  const appPath = join(app.getAppPath(), 'resources', 'ordinus-knowledge')
-  if (existsSync(appPath)) {
-    return appPath
-  }
-  return join(process.cwd(), 'resources', 'ordinus-knowledge')
+  // The .md files live ONLY under resources/ — there is no src/main/ copy.
+  // Editing them is editing the deployable artifact directly.
+  return resolveResourcePath('ordinus-knowledge')
 }
 
 function loadSection(folder: string, section: KnowledgeSection): string | null {

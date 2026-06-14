@@ -7,7 +7,8 @@ import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
   // resources/* sub-packages are plain-JS child-runtime code (ADR-041/042),
-  // not part of the app's TypeScript lint surface.
+  // and scripts/*.cjs are CommonJS build tooling (ADR-047 beforePack hook) —
+  // neither is part of the app's TypeScript lint surface.
   {
     ignores: [
       '**/node_modules',
@@ -16,7 +17,8 @@ export default defineConfig(
       'resources/dev-fixtures',
       'resources/whatsapp-mcp',
       'resources/google-mcp',
-      'resources/x-mcp'
+      'resources/x-mcp',
+      'scripts/**/*.cjs'
     ]
   },
   tseslint.configs.recommended,

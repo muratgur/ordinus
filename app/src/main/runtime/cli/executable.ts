@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
+import { getBundledNodePath } from './bundled-node'
 import { runCapture } from './process'
 
 export type CliExecutable = {
@@ -101,8 +102,11 @@ function normalizeCliExecutable(
 }
 
 function createNodeScriptExecutable(scriptPath: string): CliExecutable {
+  // ADR-047: prefer the absolute path to the bundled Node so this spawn never
+  // depends on a `node` being resolvable on PATH. Falls back to bare `node` in
+  // dev (no bundled runtime), where the developer's system Node is on PATH.
   return {
-    command: 'node',
+    command: getBundledNodePath() ?? 'node',
     baseArgs: [scriptPath],
     shell: false
   }

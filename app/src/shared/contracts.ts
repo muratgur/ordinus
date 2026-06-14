@@ -26,6 +26,20 @@ export const SystemPathsSchema = z.object({
 // so existing imports keep working.
 export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
 
+// ADR-047 §3a: classified cause of a managed-install failure, so onboarding can
+// tell the user what went wrong and what to do instead of one opaque exit code.
+export const InstallErrorCauseSchema = z.enum([
+  'offline', // no connection / registry unreachable (ENOTFOUND, ETIMEDOUT…)
+  'proxy', // a network proxy is blocking the download
+  'tls-cert', // corporate TLS interception / self-signed certificate
+  'permission', // EACCES/EPERM writing the install files
+  'registry', // registry returned an error (E404, 5xx…)
+  'toolchain', // a dependency needs a C/native build toolchain we don't have
+  'unknown' // unclassified (includes post-install resolution failures)
+])
+
+export type InstallErrorCause = z.infer<typeof InstallErrorCauseSchema>
+
 export const ProviderInstallEventSchema = z.discriminatedUnion('phase', [
   z.object({
     phase: z.literal('start'),
@@ -52,6 +66,9 @@ export const ProviderInstallEventSchema = z.discriminatedUnion('phase', [
     phase: z.literal('error'),
     providerId: ProviderIdSchema,
     message: z.string(),
+    // ADR-047 §3a: classified failure cause. Defaults to 'unknown' for legacy
+    // payloads and post-install resolution failures.
+    cause: InstallErrorCauseSchema.default('unknown'),
     stderrTail: z.string().optional()
   })
 ])
@@ -120,6 +137,17 @@ export const OnboardingStateSchema = z.object({
   installErrors: z
     .record(z.string(), z.string())
     .transform((value) => value as Partial<Record<z.infer<typeof ProviderIdSchema>, string>>),
+  // ADR-047 §3a: classified cause per failed provider, parallel to installErrors.
+  // Optional so states persisted before this field still parse.
+  installErrorCauses: z
+    .record(z.string(), InstallErrorCauseSchema)
+    .optional()
+    .transform(
+      (value) =>
+        (value ?? {}) as Partial<
+          Record<z.infer<typeof ProviderIdSchema>, z.infer<typeof InstallErrorCauseSchema>>
+        >
+    ),
   firstAgentId: z.string().nullable(),
   // Lightweight stage transition log for future telemetry. Kept in state so it
   // survives restart and is observable for debugging onboarding drop-off.

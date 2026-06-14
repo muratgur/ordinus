@@ -13,6 +13,14 @@ onboarding flow and the data model (it was never read anywhere). Onboarding's Wo
 collects only the folder. This reinforces this ADR's existing rejection of "change the
 workspace anytime" — ADR-045 makes the folder read-only in Settings after onboarding.
 
+Amended by ADR-047 (Bundled Node runtime and install network resilience): this ADR's
+assumption that Electron's embedded Node alone is enough to `npm install` and run the CLIs
+proved incomplete in the field. `ELECTRON_RUN_AS_NODE` starts npm but does not give npm
+lifecycle scripts or the installed CLI launchers a real `node` on `PATH`, so a machine with
+no Node fails with the opaque "npm install exited with code 1". ADR-047 bundles a real
+standalone Node binary (used only inside Ordinus-spawned processes) and adds install-time
+network-error classification. Read the §1 and Risks notes below together with ADR-047.
+
 ## Date
 
 2026-06-07
@@ -46,6 +54,11 @@ The runtime substrate is in place to do better:
 
 - All three target CLIs ship as pure-Node npm packages (`@anthropic-ai/claude-code`,
   `@openai/codex`, `@google/gemini-cli`). Electron already bundles a Node runtime.
+  **(Corrected by ADR-047: Electron's embedded Node can *start* npm via
+  `ELECTRON_RUN_AS_NODE`, but it is not a `node` executable on `PATH` — npm lifecycle
+  scripts and the installed CLI launchers both need a real `node`, so a separate Node
+  binary must be bundled. "Pure-Node" is also load-bearing at *runtime*, not just
+  install time.)**
 - `findCliExecutable` (`app/src/main/runtime/cli/executable.ts`) already abstracts
   CLI binary discovery and can point at an Ordinus-private prefix without affecting
   any user-level install.
@@ -69,6 +82,12 @@ on behalf of the user**, framed by the colleague-hiring metaphor, and ends by
 landing the user in a chat-ready state with a real agent.
 
 ### 1. Managed CLI install via embedded Node + Ordinus-scoped `npm install`
+
+> **Corrected by ADR-047.** Reusing the Electron Node runtime alone is insufficient:
+> it runs npm but leaves npm's child lifecycle scripts and the installed CLI launchers
+> with no `node` on `PATH`. ADR-047 bundles a real standalone Node binary and prepends
+> its directory to `PATH` (in the child process env only) for both `npm install` and
+> every CLI run. The Ordinus-private prefix described below is unchanged.
 
 Ordinus reuses its bundled Electron Node runtime to `npm install` the selected CLI
 packages into an Ordinus-private prefix (e.g.
@@ -235,7 +254,9 @@ about it, while specialists are one click away for users who do.
 - Embedded `npm install` may fail on networks with strict proxies or behind
   corporate registries. The install service must surface the underlying npm
   error verbatim, with a "use my existing CLI" escape that lets the user point
-  at a PATH-installed binary.
+  at a PATH-installed binary. **(Addressed by ADR-047 §3: stderr error
+  classification with actionable messages, system-proxy passthrough, and
+  retry/backoff — "surface verbatim" alone proved too opaque to act on.)**
 - If any of the three CLIs adds a native module that is not pre-built for the
   Electron Node ABI, `npm install` will try to build from source and likely
   fail on machines without a C toolchain. Mitigation: pin known-good versions

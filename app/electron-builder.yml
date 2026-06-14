@@ -2,6 +2,12 @@ appId: com.muratgur.ordinus
 productName: Ordinus
 copyright: Copyright (c) 2026 Murat Gür
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+# ADR-047: download + verify the matching standalone Node binary into
+# resources/runtime/node for each target before packing. The extraResources
+# entry below then ships it; afterPack asserts it actually got bundled
+# (electron-builder silently skips a missing extraResources source).
+beforePack: scripts/before-pack-node.cjs
+afterPack: scripts/after-pack-node.cjs
 directories:
   buildResources: build
 files:
@@ -19,6 +25,11 @@ asarUnpack:
   # the real filesystem.
   - node_modules/npm/**
 extraResources:
+  # ADR-047: the standalone Node runtime, downloaded per-target by the beforePack
+  # hook above. Must live unpacked on the real filesystem (it's an executable the
+  # CLIs and npm resolve via PATH), so it ships as an extra resource, not in asar.
+  - from: resources/runtime/node
+    to: runtime/node
   - from: resources/db/migrations
     to: db/migrations
   - from: resources/profiles

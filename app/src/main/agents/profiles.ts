@@ -1,6 +1,6 @@
-import { app } from 'electron'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { resolveResourcePath } from '../paths'
 import { renderAgentProfileInstructions } from '@shared/agent-profile-template'
 import {
   AgentProfileCatalogSchema,
@@ -211,16 +211,7 @@ function parseScalar(value: string): string | boolean {
 }
 
 function getProfilesRoot(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'profiles')
-  }
-
-  const appPath = join(app.getAppPath(), 'resources', 'profiles')
-  if (existsSync(appPath)) {
-    return appPath
-  }
-
-  return join(process.cwd(), 'resources', 'profiles')
+  return resolveResourcePath('profiles')
 }
 
 function titleFromId(value: string): string {

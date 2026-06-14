@@ -43,7 +43,8 @@ export class OnboardingService {
       // we don't surface stale "Ready" for something the user deselected.
       installResults: pickKeys(state.installResults, providerIds),
       installPhases: pickKeys(state.installPhases, providerIds),
-      installErrors: pickKeys(state.installErrors, providerIds)
+      installErrors: pickKeys(state.installErrors, providerIds),
+      installErrorCauses: pickKeys(state.installErrorCauses, providerIds)
     }
     return this.database.saveOnboardingState(advanceStage(next, 'workspace'))
   }
@@ -89,11 +90,14 @@ export class OnboardingService {
 
     const clearedErrors = { ...state0.installErrors }
     delete clearedErrors[providerId]
+    const clearedCauses = { ...state0.installErrorCauses }
+    delete clearedCauses[providerId]
     let working = this.database.saveOnboardingState({
       ...state0,
       installResults: { ...state0.installResults, [providerId]: 'installing' },
       installPhases: { ...state0.installPhases, [providerId]: 'start' },
-      installErrors: clearedErrors
+      installErrors: clearedErrors,
+      installErrorCauses: clearedCauses
     })
 
     try {
@@ -105,7 +109,7 @@ export class OnboardingService {
     } catch (error) {
       if (!isStillCurrent() || controller.signal.aborted) return working
       const message = error instanceof Error ? error.message : 'Install crashed unexpectedly.'
-      const event: ProviderInstallEvent = { phase: 'error', providerId, message }
+      const event: ProviderInstallEvent = { phase: 'error', providerId, message, cause: 'unknown' }
       working = this.applyInstallEvent(working, event)
       broadcast({ event, state: working.state })
     } finally {
@@ -163,7 +167,8 @@ export class OnboardingService {
       selectedProviders: [],
       installResults: {},
       installPhases: {},
-      installErrors: {}
+      installErrors: {},
+      installErrorCauses: {}
     }
     return this.database.saveOnboardingState(advanceStage(next, 'providers'))
   }
@@ -180,6 +185,7 @@ export class OnboardingService {
     const state = status.state
     const installResults = { ...state.installResults }
     const installErrors = { ...state.installErrors }
+    const installErrorCauses = { ...state.installErrorCauses }
     const installPhases = { ...state.installPhases }
 
     installPhases[event.providerId] = event.phase
@@ -190,14 +196,17 @@ export class OnboardingService {
       case 'verify':
         installResults[event.providerId] = 'installing'
         delete installErrors[event.providerId]
+        delete installErrorCauses[event.providerId]
         break
       case 'done':
         installResults[event.providerId] = 'installed'
         delete installErrors[event.providerId]
+        delete installErrorCauses[event.providerId]
         break
       case 'error':
         installResults[event.providerId] = 'failed'
         installErrors[event.providerId] = event.message
+        installErrorCauses[event.providerId] = event.cause
         break
     }
 
@@ -205,6 +214,7 @@ export class OnboardingService {
       ...state,
       installResults,
       installErrors,
+      installErrorCauses,
       installPhases
     })
   }

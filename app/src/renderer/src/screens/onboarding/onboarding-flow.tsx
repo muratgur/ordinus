@@ -13,6 +13,7 @@ import {
 import type {
   Agent,
   AgentProfile,
+  InstallErrorCause,
   OnboardingState,
   OnboardingStatus,
   ProviderId
@@ -39,6 +40,21 @@ const PROVIDER_LINKS: Record<ProviderId, { signup: string; plans: string }> = {
     signup: 'https://ai.google.dev/',
     plans: 'https://ai.google.dev/pricing'
   }
+}
+
+// ADR-047 §3a: actionable guidance ("what to do") per classified install-failure
+// cause. Complements the diagnostic message ("what happened") produced in
+// install/classify.ts — both are keyed by InstallErrorCause and must stay in
+// sync; adding a cause to the enum forces an entry here (exhaustive Record).
+const INSTALL_CAUSE_GUIDANCE: Record<InstallErrorCause, string> = {
+  offline: 'Check your internet connection, then try again.',
+  proxy: 'A proxy is blocking the download — check your proxy settings, or ask your IT admin.',
+  'tls-cert':
+    'A corporate network certificate is blocking the download — ask your IT admin to allow registry.npmjs.org.',
+  permission: "Ordinus couldn't write the install files — check folder permissions and try again.",
+  registry: 'The package registry returned an error — try again in a moment.',
+  toolchain: 'This CLI needs a build toolchain that this machine is missing.',
+  unknown: 'Try again. If it keeps failing, check your network or proxy.'
 }
 
 type OnboardingFlowProps = {
@@ -572,6 +588,7 @@ function InstallStage({
             status={state.installResults[providerId] ?? 'pending'}
             phase={state.installPhases[providerId] ?? 'idle'}
             error={state.installErrors[providerId]}
+            errorCause={state.installErrorCauses[providerId]}
             authTimedOut={authTimedOut.has(providerId)}
             onRetry={() => void retryInstall(providerId)}
             onConfirmAuth={() => void confirmAuthed(providerId)}
@@ -595,6 +612,7 @@ function InstallRow({
   status,
   phase,
   error,
+  errorCause,
   authTimedOut,
   onRetry,
   onConfirmAuth
@@ -603,6 +621,7 @@ function InstallRow({
   status: OnboardingState['installResults'][ProviderId]
   phase: OnboardingState['installPhases'][ProviderId]
   error: string | undefined
+  errorCause: InstallErrorCause | undefined
   authTimedOut: boolean
   onRetry: () => void
   onConfirmAuth: () => void
@@ -644,7 +663,12 @@ function InstallRow({
       </div>
       {showProgress ? <InstallProgressBar phase={phase} /> : null}
       {status === 'failed' ? (
-        <ProviderFailureCard providerId={providerId} error={error} onRetry={onRetry} />
+        <ProviderFailureCard
+          providerId={providerId}
+          error={error}
+          errorCause={errorCause}
+          onRetry={onRetry}
+        />
       ) : null}
     </li>
   )
@@ -674,18 +698,22 @@ function InstallProgressBar({
 function ProviderFailureCard({
   providerId,
   error,
+  errorCause,
   onRetry
 }: {
   providerId: ProviderId
   error: string | undefined
+  errorCause: InstallErrorCause | undefined
   onRetry: () => void
 }): React.JSX.Element {
   const links = PROVIDER_LINKS[providerId]
+  const guidance = INSTALL_CAUSE_GUIDANCE[errorCause ?? 'unknown']
   return (
     <div className="border-t bg-muted/30 px-3 py-2 text-xs">
       {error ? (
-        <p className="line-clamp-2 text-muted-foreground [overflow-wrap:anywhere]">{error}</p>
+        <p className="line-clamp-2 text-foreground/80 [overflow-wrap:anywhere]">{error}</p>
       ) : null}
+      <p className="mt-0.5 text-muted-foreground">{guidance}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <a
           href={links.signup}

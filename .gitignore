@@ -48,3 +48,7 @@ Thumbs.db
 # Mascot source renders (ADR-038): local working files, built into app via npm run mascots:build
 docs/Chars/*
 !docs/Chars/README.md
+
+# Bundled Node runtime (ADR-047): downloaded at packaging time by the beforePack
+# hook, never committed.
+app/resources/runtime/

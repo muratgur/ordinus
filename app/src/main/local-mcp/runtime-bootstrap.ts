@@ -6,7 +6,6 @@
 // 'electron-node' connectors (the dev fixture) need no bootstrap at all: the
 // app's own binary re-runs as Node via ELECTRON_RUN_AS_NODE=1.
 
-import { app } from 'electron'
 import { execFile } from 'node:child_process'
 import {
   chmodSync,
@@ -24,6 +23,7 @@ import { promisify } from 'node:util'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import { getLocalMcpPaths } from './paths'
+import { resolveResourcePath } from '../paths'
 import type { ConnectorManifest, LocalConnectorSpec } from '../integrations/types'
 
 const execFileAsync = promisify(execFile)
@@ -162,9 +162,7 @@ export async function ensureConnectorInstalled(
   const spec = requireLocalSpec(manifest)
 
   if (spec.runtime === 'electron-node') {
-    const script = app.isPackaged
-      ? join(process.resourcesPath, spec.package)
-      : join(app.getAppPath(), 'resources', spec.package)
+    const script = resolveResourcePath(spec.package)
     if (!existsSync(script)) {
       throw new Error(`Local connector script not found: ${script}`)
     }

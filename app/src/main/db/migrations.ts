@@ -1,18 +1,7 @@
-import { app } from 'electron'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { resolveResourcePath } from '../paths'
 
 export const databaseSchemaVersion = 38
 
 export function getMigrationsFolder(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'db', 'migrations')
-  }
-
-  const appPath = join(app.getAppPath(), 'resources', 'db', 'migrations')
-  if (existsSync(appPath)) {
-    return appPath
-  }
-
-  return join(process.cwd(), 'resources', 'db', 'migrations')
+  return resolveResourcePath('db', 'migrations')
 }

@@ -4,7 +4,9 @@ import type { ProviderId, ProviderInstallEvent } from '@shared/contracts'
 import { getSystemPaths } from '../../../paths'
 import { findCliExecutable, type CliExecutable } from '../executable'
 import { runCapture } from '../process'
+import { classifyNpmError, isTransientCause } from './classify'
 import { runNpm } from './npm-runner'
+import { resolveInstallProxyEnv } from './proxy'
 
 /**
  * Managed install of provider CLIs into an Ordinus-scoped npm prefix.
@@ -114,35 +116,65 @@ export async function* installProvider(
     message: `Resolving ${pkg.packageName}…`
   }
 
+  // ADR-047 §4: isolate npm's cache under the Ordinus prefix so a corrupt or
+  // version-incompatible shared user cache (e.g. the Node 24/25 ECOMPROMISED
+  // bug) can't break our install. We deliberately do NOT override --userconfig:
+  // the user's ~/.npmrc may carry the corporate proxy/registry we need.
+  const cacheDir = join(paths.cliPrefix, 'cache')
+  ensureDirectory(cacheDir)
+
+  // ADR-047 §3b: pass a system proxy through when one isn't already configured.
+  const proxyEnv = await resolveInstallProxyEnv()
+  const env = { ...process.env, ...proxyEnv }
+
   // We pass `-g` together with `--prefix` so npm uses its global-install
   // layout (`<prefix>/lib/node_modules/<pkg>/` + `<prefix>/bin/<binary>`).
   // Without `-g`, npm treats this as a local install and puts bins under
   // `<prefix>/node_modules/.bin/`, which mismatches our `cliBin` resolution
   // and breaks the runtime CLI lookup.
-  const installResult = await runNpm(
-    [
-      'install',
-      '-g',
-      pkg.packageName,
-      '--prefix',
-      paths.cliPrefix,
-      '--no-audit',
-      '--no-fund',
-      '--omit=dev',
-      '--loglevel=error'
-    ],
-    {
-      cwd: paths.cliPrefix,
-      env: process.env,
-      signal: options.signal
+  const npmArgs = [
+    'install',
+    '-g',
+    pkg.packageName,
+    '--prefix',
+    paths.cliPrefix,
+    '--cache',
+    cacheDir,
+    '--no-audit',
+    '--no-fund',
+    '--omit=dev',
+    '--loglevel=error',
+    // ADR-047 §3c: let npm itself retry flaky registry fetches.
+    '--fetch-retries=3',
+    '--fetch-timeout=60000'
+  ]
+
+  // ADR-047 §3c: outer retry for whole-process transient failures (network
+  // blips), on top of npm's own per-request retries. Deterministic causes
+  // (proxy/tls/permission/toolchain) are not retried — they won't self-heal.
+  const MAX_ATTEMPTS = 2
+  let installResult = await runNpm(npmArgs, { cwd: paths.cliPrefix, env, signal: options.signal })
+
+  for (let attempt = 1; installResult.code !== 0 && attempt < MAX_ATTEMPTS; attempt++) {
+    const { cause } = classifyNpmError(installResult.stderrTail, installResult.code)
+    if (!isTransientCause(cause) || options.signal?.aborted) break
+    yield {
+      phase: 'download',
+      providerId,
+      message: `Install attempt ${attempt} failed — retrying…`
     }
-  )
+    await delay(attempt * 1_500, options.signal)
+    if (options.signal?.aborted) break
+    installResult = await runNpm(npmArgs, { cwd: paths.cliPrefix, env, signal: options.signal })
+  }
 
   if (installResult.code !== 0) {
+    const { cause, message } = classifyNpmError(installResult.stderrTail, installResult.code)
     yield {
       phase: 'error',
       providerId,
-      message: `npm install exited with code ${installResult.code ?? 'null'}.`,
+      message,
+      cause,
       stderrTail: installResult.stderrTail || undefined
     }
     return
@@ -155,7 +187,8 @@ export async function* installProvider(
     yield {
       phase: 'error',
       providerId,
-      message: `Package ${pkg.packageName} installed but declares no bin entries.`
+      message: `Package ${pkg.packageName} installed but declares no bin entries.`,
+      cause: 'unknown'
     }
     return
   }
@@ -165,7 +198,8 @@ export async function* installProvider(
     yield {
       phase: 'error',
       providerId,
-      message: `Package ${pkg.packageName} installed but its bin (${binCandidates.join(', ')}) is not in ${paths.cliBin}.`
+      message: `Package ${pkg.packageName} installed but its bin (${binCandidates.join(', ')}) is not in ${paths.cliBin}.`,
+      cause: 'unknown'
     }
     return
   }
@@ -178,6 +212,7 @@ export async function* installProvider(
       phase: 'error',
       providerId,
       message: `Installed CLI at ${resolvedBin.command} failed --version (${verify.reason}).`,
+      cause: 'unknown',
       stderrTail: verify.stderrTail
     }
     return
@@ -270,4 +305,19 @@ function ensureDirectory(path: string): void {
   if (!existsSync(path)) {
     mkdirSync(path, { recursive: true })
   }
+}
+
+/** Abortable delay for the install retry backoff (ADR-047 §3c). */
+function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true }
+    )
+  })
 }

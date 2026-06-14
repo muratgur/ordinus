@@ -5,3 +5,5 @@ out/
 .DS_Store
 .eslintcache
 *.log*
+# Bundled Node runtime (ADR-047): downloaded at packaging time, never committed.
+resources/runtime/
