@@ -15,7 +15,8 @@ export default defineConfig(
       '**/out',
       'resources/dev-fixtures',
       'resources/whatsapp-mcp',
-      'resources/google-mcp'
+      'resources/google-mcp',
+      'resources/x-mcp'
     ]
   },
   tseslint.configs.recommended,

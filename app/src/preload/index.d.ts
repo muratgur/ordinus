@@ -7,6 +7,7 @@ import type {
   ConnectorActionInput,
   ConnectorConnectInput,
   ConnectorPairingEvent,
+  ConnectorRedirectLock,
   ConnectorSetEnabledToolsInput,
   ConnectorSummary,
   ConnectorToolsResult,
@@ -159,6 +160,7 @@ export type OrdinusApi = {
   system: {
     getPaths: () => Promise<SystemPaths>
     openExternal: (url: string) => Promise<void>
+    writeClipboard: (text: string) => Promise<void>
   }
   db: {
     getStatus: () => Promise<DbStatus>
@@ -315,6 +317,7 @@ export type OrdinusApi = {
     disconnect: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
     forgetClient: (input: ConnectorActionInput) => Promise<ConnectorSummary[]>
     cancelConnect: (input: ConnectorActionInput) => Promise<void>
+    lockRedirectPort: (input: ConnectorActionInput) => Promise<ConnectorRedirectLock>
     listTools: (input: ConnectorActionInput) => Promise<ConnectorToolsResult>
     setEnabledTools: (input: ConnectorSetEnabledToolsInput) => Promise<ConnectorToolsResult>
   }

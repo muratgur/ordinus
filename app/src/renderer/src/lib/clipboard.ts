@@ -1,7 +1,19 @@
-// Clipboard write with a fallback path. navigator.clipboard can be
-// unavailable or reject silently depending on the Electron context/focus
-// state; the hidden-textarea + execCommand path still works there.
+// Clipboard write with fallbacks. The native Electron clipboard (via IPC) is
+// tried first: it is reliable from any renderer context, including inside a
+// Radix Dialog focus scope where BOTH navigator.clipboard (focus/secure-context
+// rejection) and the execCommand path (the hidden textarea lands outside the
+// dialog's trapped focus scope, so it can't be selected) silently fail.
 export async function copyTextToClipboard(value: string): Promise<boolean> {
+  try {
+    const writeClipboard = window.ordinus?.system?.writeClipboard
+    if (writeClipboard) {
+      await writeClipboard(value)
+      return true
+    }
+  } catch {
+    // Fall through to the browser paths below.
+  }
+
   try {
     await navigator.clipboard.writeText(value)
     return true

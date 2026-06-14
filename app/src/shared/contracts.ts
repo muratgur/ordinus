@@ -490,7 +490,11 @@ export const ConnectorSummarySchema = z.object({
   /** ADR-043: True when Connect uses the BYO-OAuth setup wizard (Google). */
   byoOAuthLogin: z.boolean().default(false),
   /** ADR-043: True when a BYO OAuth client is already stored (reconnect skips the wizard). */
-  byoClientConfigured: z.boolean().default(false)
+  byoClientConfigured: z.boolean().default(false),
+  /** ADR-046: True for a BYO connector that needs a fixed pre-registered loopback
+   * redirect (X) — drives the connect wizard variant (Client-ID-only + Callback
+   * URL lock) without the renderer branching on connector id. */
+  byoFixedRedirect: z.boolean().default(false)
 })
 
 export const ConnectorActionInputSchema = z.object({
@@ -507,12 +511,21 @@ export const ConnectorConnectInputSchema = z.object({
     .optional(),
   // ADR-043: first-time BYO-OAuth setup carries the user's OAuth client. Absent
   // on reconnect — the stored client is reused. Never logged or echoed back.
+  // ADR-046: clientSecret is optional — X's "Native App" is a public client with
+  // no secret; Google's confidential client supplies one.
   oauthClient: z
     .object({
       clientId: z.string().min(1),
-      clientSecret: z.string().min(1)
+      clientSecret: z.string().min(1).optional()
     })
     .optional()
+})
+
+// ADR-046: result of locking a fixedRedirect connector's loopback port — the
+// exact callback URL the user must register in their app (X).
+export const ConnectorRedirectLockSchema = z.object({
+  port: z.number().int().positive(),
+  callbackUrl: z.string().url()
 })
 
 // ADR-042: pairing-login progress pushed main → renderer while a Connect is
@@ -548,6 +561,7 @@ export type ConnectorSummary = z.infer<typeof ConnectorSummarySchema>
 export type ConnectorActionInput = z.infer<typeof ConnectorActionInputSchema>
 export type ConnectorConnectInput = z.infer<typeof ConnectorConnectInputSchema>
 export type ConnectorPairingEvent = z.infer<typeof ConnectorPairingEventSchema>
+export type ConnectorRedirectLock = z.infer<typeof ConnectorRedirectLockSchema>
 export type ConnectorTool = z.infer<typeof ConnectorToolSchema>
 export type ConnectorToolsResult = z.infer<typeof ConnectorToolsResultSchema>
 

@@ -1,10 +1,11 @@
 import { BrowserWindow, shell } from 'electron'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { getConnectorManifest } from './registry'
 import { discoverAuthServer, registerClient, type RegisteredClient } from './mcp-oauth'
-import { readCredential, storeCredential } from './vault'
+import { readCredential, readRedirectPort, storeCredential, storeRedirectPort } from './vault'
 import type { ByoOAuthClient, StoredCredential } from './types'
 
 function base64Url(input: Buffer): string {
@@ -196,10 +197,36 @@ export async function authorizeConnector(connectorId: string): Promise<void> {
 }
 
 /**
- * ADR-043: translate raw OAuth error codes (from the consent callback or the
- * token response) into a fix the user can act on in the BYO wizard.
+ * ADR-043/046: translate raw OAuth error codes (from the consent callback or the
+ * token response) into a fix the user can act on in the BYO wizard. Wording is
+ * per-connector where it matters (the redirect/setup mechanics differ between
+ * Google's Desktop client and X's exactly-registered loopback URI).
  */
-function translateOAuthError(code: string | undefined, fallback: string): string {
+function translateOAuthError(
+  connectorId: string,
+  code: string | undefined,
+  fallback: string
+): string {
+  // Fixed-redirect BYO connectors (X today) fail differently from Google's
+  // any-port Desktop client: the callback URL must match an exactly-registered
+  // value, and the client is public (id only). Key the wording on that manifest
+  // trait, not the connector id, so the next such connector inherits it.
+  const manifest = getConnectorManifest(connectorId)
+  if (manifest.byoOAuth?.fixedRedirect) {
+    const app = `${manifest.label} app`
+    switch (code) {
+      case 'access_denied':
+        return `You declined access in the ${manifest.label} window. Retry and authorize the app to continue.`
+      case 'invalid_client':
+      case 'unauthorized_client':
+        return `The Client ID looks wrong — re-copy it from your ${app}’s OAuth settings and try again.`
+      case 'invalid_request':
+      case 'redirect_uri_mismatch':
+        return `Redirect mismatch — the Callback URL registered in your ${app} must exactly match the one shown during setup (including the port). Re-run setup to see it again.`
+      default:
+        return fallback
+    }
+  }
   switch (code) {
     case 'access_denied':
       return (
@@ -221,6 +248,54 @@ function translateOAuthError(code: string | undefined, fallback: string): string
   }
 }
 
+// ADR-046: candidate loopback ports for a fixedRedirect connector (X). A small,
+// uncommon high-port range keeps the URL stable and easy for the user to
+// sanity-check while leaving room to step over an occupied port.
+const REDIRECT_PORT_RANGE = [8723, 8724, 8725, 8726, 8727, 8728, 8729, 8730]
+
+function tryBind(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createNetServer()
+    probe.once('error', () => resolve(false))
+    probe.once('listening', () => probe.close(() => resolve(true)))
+    probe.listen(port, '127.0.0.1')
+  })
+}
+
+/**
+ * ADR-046: pick a free loopback port for X's fixed redirect, persist it, and
+ * return the exact callback URL the user must register in their X app. Called
+ * when the connect wizard opens — before the client_id is pasted — so the user
+ * can configure the app's Callback URL first. The port is locked (persisted) so
+ * every later Connect/Reconnect binds the same, exactly-registered value.
+ */
+export async function lockRedirectPort(
+  connectorId: string
+): Promise<{ port: number; callbackUrl: string }> {
+  const manifest = getConnectorManifest(connectorId)
+  const path = manifest.byoOAuth?.fixedRedirect?.path
+  if (!path) {
+    throw new Error(`Connector ${connectorId} does not use a fixed redirect port.`)
+  }
+  // Reuse an already-locked port UNCONDITIONALLY: the user may have already
+  // registered its callback URL in their X app, so it must never silently change
+  // (a transient bind by another process would otherwise churn it to a port X
+  // doesn't have registered → redirect_uri_mismatch at consent). If that port is
+  // occupied at actual authorize time, server.listen surfaces a fixable error.
+  // Only first-time setup probes the range for a free port.
+  const existing = readRedirectPort(connectorId)
+  if (existing) {
+    return { port: existing, callbackUrl: `http://127.0.0.1:${existing}${path}` }
+  }
+  for (const port of REDIRECT_PORT_RANGE) {
+    if (await tryBind(port)) {
+      storeRedirectPort(connectorId, port)
+      return { port, callbackUrl: `http://127.0.0.1:${port}${path}` }
+    }
+  }
+  throw new Error('Could not find a free local port for sign-in. Close other apps and try again.')
+}
+
 // ADR-043: in-flight BYO authorizations, keyed by connector. The value aborts
 // the flow (closes the loopback server, rejects the promise) — used to cancel
 // from the UI and to supersede a stale attempt.
@@ -228,7 +303,7 @@ const pendingStaticAuth = new Map<string, (reason: string) => void>()
 
 /** Cancel an in-flight BYO authorization (dialog Cancel). No-op if none. */
 export function cancelStaticClientAuth(connectorId: string): void {
-  pendingStaticAuth.get(connectorId)?.('Google sign-in was cancelled.')
+  pendingStaticAuth.get(connectorId)?.('Sign-in was cancelled.')
 }
 
 /**
@@ -247,7 +322,20 @@ export async function authorizeStaticClient(
   if (!manifest.byoOAuth) {
     throw new Error(`Connector ${connectorId} is not a BYO-OAuth connector.`)
   }
-  const { authorizationEndpoint, tokenEndpoint } = manifest.byoOAuth
+  const { authorizationEndpoint, tokenEndpoint, publicClient, fixedRedirect, extraAuthParams } =
+    manifest.byoOAuth
+  // ADR-046: confidential clients (Google) must carry a secret; public clients
+  // (X "Native App") must not — the token endpoint then takes only the client_id.
+  if (!publicClient && !client.clientSecret) {
+    throw new Error(`Connector ${connectorId} requires a client secret.`)
+  }
+  // ADR-046: a fixedRedirect connector binds the port locked at setup. Without
+  // it the user never registered a matching Callback URL, so fail with a fixable
+  // message rather than binding a random port X would reject.
+  const fixedPort = fixedRedirect ? readRedirectPort(connectorId) : null
+  if (fixedRedirect && !fixedPort) {
+    throw new Error('Sign-in setup is incomplete — re-run setup so the callback URL can be locked.')
+  }
   const scopes = manifest.scopes ?? []
   const { verifier, challenge, state } = createPkceParams()
 
@@ -305,8 +393,9 @@ export async function authorizeStaticClient(
         reject(
           new Error(
             translateOAuthError(
+              connectorId,
               errorCode,
-              'Google sign-in was cancelled or returned an invalid response.'
+              'Sign-in was cancelled or returned an invalid response.'
             )
           )
         )
@@ -320,7 +409,7 @@ export async function authorizeStaticClient(
             redirect_uri: redirectUri,
             code_verifier: verifier,
             client_id: client.clientId,
-            client_secret: client.clientSecret
+            ...(client.clientSecret ? { client_secret: client.clientSecret } : {})
           })
           resolve(
             readTokenResponse(json, {
@@ -332,19 +421,37 @@ export async function authorizeStaticClient(
         } catch (cause) {
           const message = cause instanceof Error ? cause.message : String(cause)
           const match = /"error"\s*:\s*"([a-z_]+)"/.exec(message)?.[1]
-          reject(new Error(translateOAuthError(match, message)))
+          reject(new Error(translateOAuthError(connectorId, match, message)))
         }
       })()
     })
 
-    server.on('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address() as AddressInfo | null
-      if (!address) {
-        reject(new Error('Could not start the OAuth callback server.'))
+    // ADR-046: a fixedRedirect connector (X) binds its locked port; if that port
+    // is busy the bind fails here — surface a fixable message instead of the raw
+    // EADDRINUSE. Dynamic-port connectors (Google) can't realistically collide.
+    server.on('error', (cause) => {
+      if (fixedPort) {
+        reject(
+          new Error(
+            `Couldn't open the sign-in callback on port ${fixedPort} — another app may be using it. ` +
+              'Close it and try again, or re-run setup to pick a new port.'
+          )
+        )
         return
       }
-      redirectUri = `http://127.0.0.1:${address.port}`
+      reject(cause)
+    })
+    const onListening = (): void => {
+      if (fixedRedirect && fixedPort) {
+        redirectUri = `http://127.0.0.1:${fixedPort}${fixedRedirect.path}`
+      } else {
+        const address = server.address() as AddressInfo | null
+        if (!address) {
+          reject(new Error('Could not start the OAuth callback server.'))
+          return
+        }
+        redirectUri = `http://127.0.0.1:${address.port}`
+      }
 
       const authorizeUrl = new URL(authorizationEndpoint)
       authorizeUrl.searchParams.set('response_type', 'code')
@@ -356,20 +463,26 @@ export async function authorizeStaticClient(
       authorizeUrl.searchParams.set('state', state)
       authorizeUrl.searchParams.set('code_challenge', challenge)
       authorizeUrl.searchParams.set('code_challenge_method', 'S256')
-      // Required to receive a refresh token (and to receive it again on
-      // re-consent during a weekly Testing-mode reconnect).
-      authorizeUrl.searchParams.set('access_type', 'offline')
-      authorizeUrl.searchParams.set('prompt', 'consent')
+      // ADR-046: provider-specific authorize params (Google: access_type=offline
+      // + prompt=consent for a refresh token; X: none — offline.access handles it).
+      for (const [key, value] of Object.entries(extraAuthParams ?? {})) {
+        authorizeUrl.searchParams.set(key, value)
+      }
 
-      // The system browser, NOT an embedded BrowserWindow: Google rejects OAuth
+      // The system browser, NOT an embedded BrowserWindow: providers reject OAuth
       // in embedded webviews ("disallowed_useragent"). The loopback server above
-      // catches the redirect. This is the flow validated in the Phase 0 PoC.
+      // catches the redirect. This is the flow validated in the Phase 0 PoCs.
       timer = setTimeout(
-        () => reject(new Error('Google sign-in timed out — the consent screen was not completed.')),
+        () => reject(new Error('Sign-in timed out — the consent screen was not completed.')),
         3 * 60_000
       )
       void shell.openExternal(authorizeUrl.toString())
-    })
+    }
+    if (fixedRedirect && fixedPort) {
+      server.listen(fixedPort, '127.0.0.1', onListening)
+    } else {
+      server.listen(0, '127.0.0.1', onListening)
+    }
   })
 }
 
@@ -389,6 +502,19 @@ export async function refreshCredential(
     ...(existing.resource ? { resource: existing.resource } : {})
   })
   const merged = readTokenResponse(json, { ...existing, refreshToken })
+  // ADR-046: for a rotating (single-use) refresh token — refreshAuthority:'main'
+  // (X) — the token we just sent is now consumed. If the response carried no
+  // fresh refresh_token, readTokenResponse fell back to that consumed value;
+  // persisting it would guarantee the next refresh fails. Treat it as a broken
+  // chain so the caller surfaces "Reconnect required" instead. (Google's
+  // refresh token is stable and legitimately omitted from refresh responses, so
+  // this only applies to main-refresh connectors.)
+  const manifest = getConnectorManifest(connectorId)
+  if (manifest.local?.refreshAuthority === 'main' && merged.refreshToken === refreshToken) {
+    throw new Error(
+      `${connectorId}: token refresh did not return a new refresh token; the session must be reconnected.`
+    )
+  }
   storeCredential(connectorId, merged)
   return merged
 }

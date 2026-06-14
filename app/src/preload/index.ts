@@ -34,6 +34,7 @@ import type {
   ConnectorActionInput,
   ConnectorConnectInput,
   ConnectorPairingEvent,
+  ConnectorRedirectLock,
   ConnectorSetEnabledToolsInput,
   ConnectorSummary,
   ConnectorToolsResult,
@@ -162,7 +163,10 @@ const ordinus = {
   system: {
     getPaths: async (): Promise<SystemPaths> => ipcRenderer.invoke(ipcChannels.systemGetPaths),
     openExternal: async (url: string): Promise<void> =>
-      ipcRenderer.invoke(ipcChannels.systemOpenExternal, url)
+      ipcRenderer.invoke(ipcChannels.systemOpenExternal, url),
+    writeClipboard: async (text: string): Promise<void> => {
+      await ipcRenderer.invoke(ipcChannels.systemWriteClipboard, text)
+    }
   },
   db: {
     getStatus: async (): Promise<DbStatus> => ipcRenderer.invoke(ipcChannels.dbGetStatus)
@@ -498,6 +502,10 @@ const ordinus = {
     cancelConnect: async (input: ConnectorActionInput): Promise<void> => {
       await ipcRenderer.invoke(ipcChannels.connectorsCancelConnect, input)
     },
+    // ADR-046: lock the loopback redirect port (X) and get the callback URL to
+    // register, when the connect wizard opens.
+    lockRedirectPort: async (input: ConnectorActionInput): Promise<ConnectorRedirectLock> =>
+      ipcRenderer.invoke(ipcChannels.connectorsLockRedirectPort, input),
     listTools: async (input: ConnectorActionInput): Promise<ConnectorToolsResult> =>
       ipcRenderer.invoke(ipcChannels.connectorsListTools, input),
     setEnabledTools: async (input: ConnectorSetEnabledToolsInput): Promise<ConnectorToolsResult> =>

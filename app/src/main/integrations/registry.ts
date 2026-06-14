@@ -118,7 +118,11 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
     ],
     byoOAuth: {
       authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-      tokenEndpoint: 'https://oauth2.googleapis.com/token'
+      tokenEndpoint: 'https://oauth2.googleapis.com/token',
+      // Confidential Desktop client with a secret (Basic-less, secret in body —
+      // postToken default). access_type=offline + prompt=consent are required to
+      // receive a refresh token and to re-receive it on weekly Testing reconsent.
+      extraAuthParams: { access_type: 'offline', prompt: 'consent' }
     },
     local: {
       // Second Ordinus-authored MCP server (after WhatsApp): self-contained
@@ -142,6 +146,61 @@ const MANIFESTS: Record<string, ConnectorManifest> = {
         'get_event',
         'search_files',
         'read_file'
+      ]
+    }
+  },
+  x: {
+    id: 'x',
+    label: 'X',
+    transport: 'mcp-stdio',
+    // ADR-046: OAuth against the user's OWN ("bring your own") X developer app —
+    // no Ordinus-owned app, the user pays their own API bill. Connect runs the
+    // forked loopback/PKCE broker (loginMode below), like Google.
+    authMethod: 'oauth',
+    kind: 'local',
+    // Write-heavy intent, light reads. tweet.write/like.write/follows.write back
+    // the (born-disabled) outward tools; offline.access is mandatory for a
+    // refresh token.
+    scopes: [
+      'tweet.read',
+      'tweet.write',
+      'users.read',
+      'like.write',
+      'follows.write',
+      'offline.access'
+    ],
+    byoOAuth: {
+      // ADR-046 Phase 0 finding: the authorize host must be x.com — twitter.com
+      // stalls at login. Token host stays api.twitter.com.
+      authorizationEndpoint: 'https://x.com/i/oauth2/authorize',
+      tokenEndpoint: 'https://api.twitter.com/2/oauth2/token',
+      // Native App → public client (no secret). Phase 0 confirmed.
+      publicClient: true,
+      // X validates the redirect URI by exact match (port + path), so we bind a
+      // fixed port chosen at setup instead of an OS-assigned one.
+      fixedRedirect: { path: '/callback' }
+      // No extraAuthParams: offline.access (above) yields the refresh token; X
+      // needs neither access_type nor prompt.
+    },
+    local: {
+      // Third Ordinus-authored MCP server (after WhatsApp, Google): self-contained
+      // sub-package app/resources/x-mcp, raw fetch to X API v2.
+      runtime: 'electron-node',
+      package: 'x-mcp/server.mjs',
+      sessionDirArgs: ['--session-dir', '${sessionDir}'],
+      heavy: true,
+      loginMode: 'byo-oauth',
+      // ADR-046: X rotates refresh tokens (single-use), so the main process owns
+      // refresh and writes the rotation back — unlike Google's child self-refresh.
+      refreshAuthority: 'main',
+      // Read tools born enabled; all write/interaction tools act outwardly as the
+      // user (a public post is high-stakes), so born disabled — opt in per tool.
+      defaultEnabledTools: [
+        'get_my_profile',
+        'get_tweet',
+        'search_recent_tweets',
+        'get_user_timeline',
+        'get_mentions'
       ]
     }
   }

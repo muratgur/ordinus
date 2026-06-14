@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -209,6 +210,7 @@ import {
   forgetConnectorClient,
   listConnectorTools,
   listConnectors,
+  lockConnectorRedirectPort,
   setConnectorEnabledTools
 } from '../integrations/service'
 import {
@@ -277,6 +279,12 @@ export function registerIpcHandlers(
       throw new Error('Only https links can be opened.')
     }
     await shell.openExternal(parsed.toString())
+  })
+  // Native clipboard write — reliable from any renderer context, including a
+  // Radix Dialog focus scope where navigator.clipboard / execCommand can fail.
+  ipcMain.handle(ipcChannels.systemWriteClipboard, (_event, payload) => {
+    clipboard.writeText(typeof payload === 'string' ? payload : '')
+    return null
   })
   ipcMain.handle(ipcChannels.dbGetStatus, () => database.getStatus())
 
@@ -1137,6 +1145,10 @@ export function registerIpcHandlers(
     const input = ConnectorActionInputSchema.parse(payload)
     cancelConnect(input.connectorId)
     return null
+  })
+  ipcMain.handle(ipcChannels.connectorsLockRedirectPort, (_event, payload) => {
+    const input = ConnectorActionInputSchema.parse(payload)
+    return lockConnectorRedirectPort(input.connectorId)
   })
   ipcMain.handle(ipcChannels.connectorsListTools, (_event, payload) => {
     const input = ConnectorActionInputSchema.parse(payload)

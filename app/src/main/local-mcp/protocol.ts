@@ -10,3 +10,12 @@
 // the same literals locally — keep all copies in sync if this contract changes.
 export const LOGGED_OUT_MARKER = 'logged-out'
 export const EXIT_LOGGED_OUT = 41
+
+// ADR-046: a softer signal than LOGGED_OUT_MARKER, for connectors whose refresh
+// authority is the main process (X). The child can't refresh, so on a 401 it
+// drops this marker and exits non-zero instead of declaring the session dead.
+// The supervisor's pre-spawn refresh hook sees the marker and force-refreshes
+// (ignoring the expiry margin) on the next spawn: a recoverable expiry heals
+// silently, and only a genuinely broken rotation chain escalates to
+// LOGGED_OUT_MARKER + "Reconnect required". Redeclared in app/resources/x-mcp.
+export const TOKEN_REJECTED_MARKER = 'token-rejected'

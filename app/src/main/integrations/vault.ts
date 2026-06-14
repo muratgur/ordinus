@@ -192,6 +192,26 @@ export function hasByoClient(connectorId: string): boolean {
   return readByoClient(connectorId) !== null
 }
 
+// ADR-046: the loopback redirect port locked at setup for a fixedRedirect
+// connector (X). Kept separately from the BYO client because it is chosen and
+// shown to the user (to register in their app) BEFORE the client_id is pasted —
+// the client record does not exist yet at that point. Not a secret, but stored
+// in the vault to share the same lifecycle and persistence as the connector's
+// other credentials. Cleared by "Remove setup" alongside the BYO client.
+const redirectPortKey = (connectorId: string): string => `redir:${connectorId}`
+
+export function storeRedirectPort(connectorId: string, port: number): void {
+  setEntry(redirectPortKey(connectorId), port)
+}
+
+export function readRedirectPort(connectorId: string): number | null {
+  return getEntry<number>(redirectPortKey(connectorId))
+}
+
+export function deleteRedirectPort(connectorId: string): void {
+  deleteEntry(redirectPortKey(connectorId))
+}
+
 // ADR-044: the Telegram bot token, encrypted at rest like connector tokens.
 // Telegram is not a connector, but the vault is the app's single
 // OS-encryption utility, so it owns this secret too. Keyed separately so it

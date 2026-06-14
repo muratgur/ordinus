@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   ConnectorSummary,
@@ -8,10 +8,17 @@ import type {
 } from '@shared/contracts'
 import type { ByoOAuthClient } from './types'
 import { getConnectorManifest, listConnectorManifests } from './registry'
-import { authorizeConnector, authorizeStaticClient, cancelStaticClientAuth } from './oauth-broker'
+import {
+  authorizeConnector,
+  authorizeStaticClient,
+  cancelStaticClientAuth,
+  lockRedirectPort,
+  refreshCredential
+} from './oauth-broker'
 import {
   deleteByoClient,
   deleteCredential,
+  deleteRedirectPort,
   hasByoClient,
   hasCredential,
   readByoClient,
@@ -31,7 +38,7 @@ import {
 } from '../local-mcp/supervisor'
 import { installedVersionOf } from '../local-mcp/runtime-bootstrap'
 import { getConnectorSessionDir } from '../local-mcp/paths'
-import { LOGGED_OUT_MARKER } from '../local-mcp/protocol'
+import { LOGGED_OUT_MARKER, TOKEN_REJECTED_MARKER } from '../local-mcp/protocol'
 
 // ADR-041: the connector service needs durable local-connector state. The
 // database instance is injected once at boot (see main/index.ts); the
@@ -47,8 +54,72 @@ export function initConnectorService(db: OrdinusDatabase): void {
         db.upsertLocalConnectorState(connectorId, { lastHealth: health })
       }
     },
-    getSecretEnv: (connectorId) => secretEnvFor(connectorId)
+    getSecretEnv: (connectorId) => secretEnvFor(connectorId),
+    ensureFreshToken: (connectorId) => ensureFreshTokenFor(connectorId)
   })
+}
+
+/**
+ * ADR-046: pre-spawn token refresh for refreshAuthority:'main' connectors (X).
+ * X rotates refresh tokens on every use, so the main process owns refresh and
+ * writes the rotated token back to the vault (refreshCredential does the
+ * write-back). Refresh only when the access token is missing or within a margin
+ * of expiry, so each spawn does not needlessly burn a rotation. A TERMINAL
+ * failure (revoked / consumed rotation chain / 4xx) marks "Reconnect required"
+ * like the child's logged-out path; a TRANSIENT failure (offline / 5xx) is
+ * rethrown WITHOUT bricking the connector, so the next spawn retries and a
+ * network blip self-heals (the logged-out gate runs before this hook, so a
+ * marker written on a transient error would otherwise be unrecoverable).
+ */
+const REFRESH_MARGIN_MS = 5 * 60_000
+
+async function ensureFreshTokenFor(connectorId: string): Promise<void> {
+  const manifest = getConnectorManifest(connectorId)
+  if (manifest.local?.refreshAuthority !== 'main') {
+    return
+  }
+  const credential = readCredential(connectorId)
+  if (!credential?.refreshToken) {
+    return
+  }
+  const sessionDir = getConnectorSessionDir(connectorId)
+  // A prior child reported a 401 (TOKEN_REJECTED_MARKER): the token was rejected
+  // even though it may still look unexpired locally (e.g. a server-side revoke).
+  // Force a refresh regardless of the expiry margin so we can't loop respawning
+  // with the same rejected token.
+  const forced = existsSync(join(sessionDir, TOKEN_REJECTED_MARKER))
+  if (
+    !forced &&
+    credential.accessToken &&
+    credential.expiresAt &&
+    credential.expiresAt - Date.now() > REFRESH_MARGIN_MS
+  ) {
+    return
+  }
+  try {
+    await refreshCredential(connectorId, credential.refreshToken)
+    // Recovered — clear the rejection signal so the next spawn isn't forced.
+    rmSync(join(sessionDir, TOKEN_REJECTED_MARKER), { force: true })
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause)
+    // Only a genuine auth rejection is terminal (revoked, consumed rotation
+    // chain, or a 4xx from the token endpoint). Escalate THOSE to the logged-out
+    // marker so the supervisor refuses to boot and the badge flips. A transient
+    // failure (offline, 5xx) must NOT write the marker — the logged-out gate runs
+    // before this hook, so a marker here would brick a still-valid session until
+    // a manual reconnect; leaving it lets the next spawn retry and self-heal.
+    const terminal =
+      /invalid_grant|invalid_request|invalid_token|unauthorized_client|did not return a new refresh token|missing refresh metadata/i.test(
+        message
+      ) || /failed:\s*4\d\d/.test(message)
+    if (terminal) {
+      writeFileSync(join(sessionDir, LOGGED_OUT_MARKER), String(Date.now()))
+      if (database?.getLocalConnectorState(connectorId)) {
+        requireDb().upsertLocalConnectorState(connectorId, { lastHealth: 'reconnect-required' })
+      }
+    }
+    throw cause
+  }
 }
 
 /**
@@ -64,8 +135,23 @@ function secretEnvFor(connectorId: string): Record<string, string> {
     return {}
   }
   const credential = readCredential(connectorId)
+  if (!credential) {
+    return {}
+  }
+  // ADR-046: X's refresh authority is the main process — the child is stateless
+  // and receives only a short-lived access token (no refresh token, no client).
+  // The supervisor's ensureFreshToken hook (ensureFreshTokenFor) runs in
+  // resolveChildLaunch BEFORE this, so credential.accessToken here is current
+  // and the rotated refresh token has already been written back to the vault.
+  // Guard the token: an empty one would spawn a child that just 401-loops —
+  // return {} so the connector is visibly unusable instead.
+  if (manifest.local.refreshAuthority === 'main') {
+    return credential.accessToken ? { ORDINUS_X_ACCESS_TOKEN: credential.accessToken } : {}
+  }
+  // Google: confidential child self-refreshes, so it gets the token + the client.
+  // (Read the BYO client only here — the X branch above never needs it.)
   const client = readByoClient(connectorId)
-  if (!credential || !client || !credential.refreshToken) {
+  if (!client || !credential.refreshToken || !client.clientSecret) {
     return {}
   }
   return {
@@ -169,7 +255,8 @@ export function listConnectors(): ConnectorSummary[] {
         // ADR-043: byoOAuthLogin tells the UI to use the BYO setup wizard;
         // byoClientConfigured lets it skip the paste step on reconnect.
         byoOAuthLogin: manifest.local?.loginMode === 'byo-oauth',
-        byoClientConfigured: manifest.local?.loginMode === 'byo-oauth' && hasByoClient(manifest.id)
+        byoClientConfigured: manifest.local?.loginMode === 'byo-oauth' && hasByoClient(manifest.id),
+        byoFixedRedirect: manifest.byoOAuth?.fixedRedirect != null
       }
     }
     return {
@@ -184,7 +271,8 @@ export function listConnectors(): ConnectorSummary[] {
       interactiveLogin: false,
       pairingLogin: false,
       byoOAuthLogin: false,
-      byoClientConfigured: false
+      byoClientConfigured: false,
+      byoFixedRedirect: false
     }
   })
 }
@@ -225,18 +313,20 @@ export async function connectConnector(
       // main-process loopback/PKCE consent and returns the token; persist both.
       const client = options?.oauthClient ?? readByoClient(connectorId)
       if (!client) {
-        throw new Error('Google setup is incomplete — provide your OAuth client to connect.')
+        throw new Error(
+          `${manifest.label} setup is incomplete — provide your OAuth client to connect.`
+        )
       }
       if (options?.oauthClient) {
         storeByoClient(connectorId, options.oauthClient)
       }
       const credential = await authorizeStaticClient(connectorId, client)
-      // Without a refresh token the server can never self-refresh and would be
-      // silently dead after the access token expires. Fail loudly here rather
-      // than persist a credential that spawns an unusable connector.
+      // Without a refresh token the connector is silently dead once the access
+      // token expires (and, for X, the main process can never refresh). Fail
+      // loudly rather than persist a credential that spawns an unusable server.
       if (!credential.refreshToken) {
         throw new Error(
-          'Google did not return a refresh token. Re-run setup and make sure you grant access when prompted (the app must request offline access).'
+          `${manifest.label} did not return a refresh token. Re-run setup and grant access when prompted (the app must request offline access).`
         )
       }
       storeCredential(connectorId, credential)
@@ -304,7 +394,21 @@ export async function forgetConnectorClient(connectorId: string): Promise<Connec
     await disconnectConnector(connectorId)
   }
   deleteByoClient(connectorId)
+  // ADR-046: a fixedRedirect connector's locked port is part of its setup —
+  // clear it too so the next Connect re-locks (and the user re-registers) fresh.
+  deleteRedirectPort(connectorId)
   return listConnectors()
+}
+
+/**
+ * ADR-046: lock the loopback redirect port for a fixedRedirect connector (X)
+ * when the connect wizard opens, returning the exact callback URL the user must
+ * register in their app before pasting the client_id.
+ */
+export function lockConnectorRedirectPort(
+  connectorId: string
+): Promise<{ port: number; callbackUrl: string }> {
+  return lockRedirectPort(connectorId)
 }
 
 export function listConnectorTools(connectorId: string): ConnectorToolsResult {

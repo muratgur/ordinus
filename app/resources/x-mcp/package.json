@@ -1,0 +1,10 @@
+{
+  "name": "x-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ordinus X (Twitter) connector — self-contained MCP server sub-package (ADR-046). Raw fetch to X API v2, no SDK; dependencies live here, never in the app bundle.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0"
+  }
+}

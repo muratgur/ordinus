@@ -41,6 +41,14 @@ extraResources:
     filter:
       - '**/*'
       - '!poc.mjs'
+  # ADR-046: self-contained X (Twitter) MCP sub-package — pure JS (raw fetch to
+  # X API v2, no native modules), ships with its node_modules to run from
+  # process.resourcesPath without an install step.
+  - from: resources/x-mcp
+    to: x-mcp
+    filter:
+      - '**/*'
+      - '!_phase0-poc.mjs'
 win:
   executableName: ordinus
   icon: build/icon.ico

@@ -744,9 +744,10 @@ function ConnectionsSettingsSection(): React.JSX.Element {
   // ADR-042: pairing-login connectors (WhatsApp) connect through a dialog
   // that collects the phone number and displays the device-linking code.
   const [pairingConnector, setPairingConnector] = useState<ConnectorSummary | null>(null)
-  // ADR-043: BYO-OAuth connectors (Google) connect through a setup wizard that
-  // walks the user through creating their own OAuth client.
-  const [googleConnector, setGoogleConnector] = useState<ConnectorSummary | null>(null)
+  // ADR-043/046: all BYO-OAuth connectors (Google, X) route through one shared
+  // wizard. The dialog picks its setup body from the connector's byoFixedRedirect
+  // trait, so there's no per-connector state or id-branching here.
+  const [byoConnector, setByoConnector] = useState<ConnectorSummary | null>(null)
   // ADR-045 B5: every fresh connection opens a consistent intro first (what it
   // does + where the credential lives), then routes to the type-specific flow.
   const [introConnector, setIntroConnector] = useState<ConnectorSummary | null>(null)
@@ -814,7 +815,7 @@ function ConnectionsSettingsSection(): React.JSX.Element {
       if (connector.pairingLogin) {
         setPairingConnector(connector)
       } else if (connector.byoOAuthLogin) {
-        setGoogleConnector(connector)
+        setByoConnector(connector)
       } else {
         void runAction(connector.id, 'connect')
       }
@@ -898,7 +899,7 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                             disabled={busyId === connector.id}
                             onClick={() =>
                               connector.byoOAuthLogin
-                                ? setGoogleConnector(connector)
+                                ? setByoConnector(connector)
                                 : connector.pairingLogin
                                   ? setPairingConnector(connector)
                                   : void runAction(connector.id, 'connect')
@@ -926,7 +927,7 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                             // Reconnect (BYO client already stored) skips the
                             // intro — the user has seen it. Fresh connects open it.
                             connector.byoClientConfigured
-                              ? setGoogleConnector(connector)
+                              ? setByoConnector(connector)
                               : setIntroConnector(connector)
                           }
                         >
@@ -968,17 +969,17 @@ function ConnectionsSettingsSection(): React.JSX.Element {
           setPairingConnector(null)
         }}
       />
-      <GoogleConnectDialog
-        key={googleConnector ? `google-${googleConnector.id}` : 'google-closed'}
-        connector={googleConnector}
+      <ByoOAuthConnectDialog
+        key={byoConnector ? `byo-${byoConnector.id}` : 'byo-closed'}
+        connector={byoConnector}
         onOpenChange={(open) => {
           if (!open) {
-            setGoogleConnector(null)
+            setByoConnector(null)
           }
         }}
         onConnected={(next) => {
           setConnectors(next)
-          setGoogleConnector(null)
+          setByoConnector(null)
         }}
       />
       <ConnectorConnectIntro
@@ -1007,6 +1008,7 @@ const CONNECTOR_DESCRIPTIONS: Record<string, string> = {
   whatsapp: 'Messaging — read and send your WhatsApp chats.',
   atlassian: 'Jira issues and Confluence pages.',
   google: 'Gmail, Google Calendar, and Drive.',
+  x: 'X (Twitter) — read posts and profiles, and post on your behalf.',
   'dev-fixture': 'Local test connector used during development.'
 }
 
@@ -1309,7 +1311,14 @@ function parseGoogleClientJson(text: string): { clientId: string; clientSecret: 
   return null
 }
 
-function GoogleConnectDialog({
+// ADR-043/046: shared shell for BYO-OAuth connect wizards (Google, X). It owns
+// the stage machine, the connect/cancel/abort plumbing, and the footer; the
+// per-connector setup body is injected by the byoFixedRedirect trait (not the
+// connector id), so a new BYO connector adds a setup body + manifest entry with
+// no new dialog and no id-branching.
+type ByoOAuthClientInput = { clientId: string; clientSecret?: string }
+
+function ByoOAuthConnectDialog({
   connector,
   onOpenChange,
   onConnected
@@ -1319,14 +1328,16 @@ function GoogleConnectDialog({
   onConnected: (next: ConnectorSummary[]) => void
 }): React.JSX.Element {
   const reconnect = connector?.byoClientConfigured ?? false
+  const fixedRedirect = connector?.byoFixedRedirect ?? false
+  const label = connector?.label ?? ''
   const [stage, setStage] = useState<'setup' | 'authorizing' | 'error'>('setup')
-  const [json, setJson] = useState('')
+  // The parsed client is lifted here (not in the setup body) so "Try again"
+  // after an error re-submits it even though the setup body has unmounted.
+  const [client, setClient] = useState<ByoOAuthClientInput | null>(null)
   const [error, setError] = useState('')
 
-  const parsedClient = useMemo(() => parseGoogleClientJson(json), [json])
-
   const startConnect = useCallback(
-    async (oauthClient?: { clientId: string; clientSecret: string }) => {
+    async (oauthClient?: ByoOAuthClientInput) => {
       if (!connector) {
         return
       }
@@ -1339,11 +1350,11 @@ function GoogleConnectDialog({
         })
         onConnected(next)
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : 'Could not connect Google.')
+        setError(cause instanceof Error ? cause.message : `Could not connect ${label}.`)
         setStage('error')
       }
     },
-    [connector, onConnected]
+    [connector, onConnected, label]
   )
 
   // Closing the dialog mid-consent aborts the in-flight loopback OAuth so it
@@ -1359,72 +1370,33 @@ function GoogleConnectDialog({
   // pasted client. Shared by the Connect/Reconnect and Try-again buttons.
   const submit = useCallback(() => {
     if (reconnect) return void startConnect()
-    if (parsedClient) return void startConnect(parsedClient)
-  }, [reconnect, parsedClient, startConnect])
+    if (client) return void startConnect(client)
+  }, [reconnect, client, startConnect])
 
   return (
     <Dialog open={connector !== null} onOpenChange={(open) => !open && requestClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{reconnect ? 'Reconnect Google' : 'Connect Google'}</DialogTitle>
+          <DialogTitle>{reconnect ? `Reconnect ${label}` : `Connect ${label}`}</DialogTitle>
           <DialogDescription>
-            Ordinus uses <span className="font-medium">your own</span> Google app, so your data
-            stays under your permissions — there’s no Ordinus-owned app in the middle.
+            Ordinus uses <span className="font-medium">your own</span> {label} app, so access runs
+            under your account and permissions — there’s no Ordinus-owned app in the middle.
           </DialogDescription>
         </DialogHeader>
 
-        {stage === 'setup' && !reconnect ? (
-          <div className="grid gap-3">
-            <ol className="grid gap-2">
-              {GOOGLE_CONSOLE_STEPS.map((step, index) => (
-                <li key={step.url} className="flex items-start gap-2 text-sm">
-                  <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-accent text-xs font-medium">
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 leading-6">{step.label}</span>
-                  <button
-                    type="button"
-                    className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary transition-colors hover:underline"
-                    onClick={() => void window.ordinus.system.openExternal(step.url)}
-                  >
-                    Open
-                    <ExternalLink className="size-3" />
-                  </button>
-                </li>
-              ))}
-            </ol>
-            <div className="grid gap-1.5">
-              <label className="text-sm font-medium" htmlFor="google-client-json">
-                Paste the downloaded client JSON
-              </label>
-              <textarea
-                id="google-client-json"
-                autoFocus
-                rows={5}
-                spellCheck={false}
-                placeholder={'{ "installed": { "client_id": "…", "client_secret": "…", … } }'}
-                value={json}
-                onChange={(event) => setJson(event.target.value)}
-                className={cn(
-                  'w-full resize-none rounded-md border bg-transparent px-3 py-2 font-mono text-xs leading-5 shadow-sm',
-                  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
-                )}
-              />
-              <p className="text-xs text-muted-foreground">
-                {json && !parsedClient
-                  ? 'That doesn’t look like a Desktop OAuth client JSON yet — paste the whole downloaded file.'
-                  : 'We read only the Client ID and secret, encrypt them on this machine, and never send them anywhere but Google.'}
-              </p>
-            </div>
-          </div>
+        {stage === 'setup' && !reconnect && connector ? (
+          fixedRedirect ? (
+            <XByoSetup connectorId={connector.id} onClient={setClient} />
+          ) : (
+            <GoogleByoSetup onClient={setClient} />
+          )
         ) : null}
 
         {stage === 'setup' && reconnect ? (
           <p className="text-sm leading-6 text-muted-foreground">
-            Personal Google apps in test mode re-authorize about once a week — this is Google’s
-            rule, not a limit Ordinus adds. Click Reconnect, then choose your account and Allow in
-            the Google window (you’ll pass your own app’s “unverified” screen via Advanced →
-            Continue).
+            {fixedRedirect
+              ? `Re-authorize Ordinus with your ${label} account. Click Reconnect, then authorize the app in the ${label} window that opens.`
+              : 'Personal Google apps in test mode re-authorize about once a week — this is Google’s rule, not a limit Ordinus adds. Click Reconnect, then choose your account and Allow in the Google window (you’ll pass your own app’s “unverified” screen via Advanced → Continue).'}
           </p>
         ) : null}
 
@@ -1432,13 +1404,22 @@ function GoogleConnectDialog({
           <div className="grid gap-2 py-2 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <Loader2 className="size-4 animate-spin" />
-              Waiting for Google sign-in…
+              Waiting for {label} sign-in…
             </div>
             <p className="leading-6">
-              A Google window opened — pick your account and click Allow. For your own app you’ll
-              see “Google hasn’t verified this app”; choose{' '}
-              <span className="font-medium">Advanced → Go to … (unsafe)</span> to continue. It’s
-              your app, so this is expected.
+              {fixedRedirect ? (
+                <>
+                  An {label} window opened — sign in if needed and click{' '}
+                  <span className="font-medium">Authorize app</span> to continue.
+                </>
+              ) : (
+                <>
+                  A {label} window opened — pick your account and click Allow. For your own app
+                  you’ll see “Google hasn’t verified this app”; choose{' '}
+                  <span className="font-medium">Advanced → Go to … (unsafe)</span> to continue. It’s
+                  your app, so this is expected.
+                </>
+              )}
             </p>
           </div>
         ) : null}
@@ -1454,7 +1435,7 @@ function GoogleConnectDialog({
             Cancel
           </Button>
           {stage === 'setup' && !reconnect ? (
-            <Button type="button" disabled={!parsedClient} onClick={submit}>
+            <Button type="button" disabled={!client} onClick={submit}>
               Connect
             </Button>
           ) : null}
@@ -1471,6 +1452,187 @@ function GoogleConnectDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// Google BYO setup body: console steps + paste the downloaded client JSON.
+// Reports the parsed {clientId, clientSecret} (or null) to the shell.
+function GoogleByoSetup({
+  onClient
+}: {
+  onClient: (client: ByoOAuthClientInput | null) => void
+}): React.JSX.Element {
+  const [json, setJson] = useState('')
+  const parsedClient = useMemo(() => parseGoogleClientJson(json), [json])
+
+  useEffect(() => {
+    onClient(parsedClient)
+  }, [parsedClient, onClient])
+
+  return (
+    <div className="grid gap-3">
+      <ol className="grid gap-2">
+        {GOOGLE_CONSOLE_STEPS.map((step, index) => (
+          <li key={step.url} className="flex items-start gap-2 text-sm">
+            <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-accent text-xs font-medium">
+              {index + 1}
+            </span>
+            <span className="min-w-0 flex-1 leading-6">{step.label}</span>
+            <button
+              type="button"
+              className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary transition-colors hover:underline"
+              onClick={() => void window.ordinus.system.openExternal(step.url)}
+            >
+              Open
+              <ExternalLink className="size-3" />
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="grid gap-1.5">
+        <label className="text-sm font-medium" htmlFor="google-client-json">
+          Paste the downloaded client JSON
+        </label>
+        <textarea
+          id="google-client-json"
+          autoFocus
+          rows={5}
+          spellCheck={false}
+          placeholder={'{ "installed": { "client_id": "…", "client_secret": "…", … } }'}
+          value={json}
+          onChange={(event) => setJson(event.target.value)}
+          className={cn(
+            'w-full resize-none rounded-md border bg-transparent px-3 py-2 font-mono text-xs leading-5 shadow-sm',
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
+          )}
+        />
+        <p className="text-xs text-muted-foreground">
+          {json && !parsedClient
+            ? 'That doesn’t look like a Desktop OAuth client JSON yet — paste the whole downloaded file.'
+            : 'We read only the Client ID and secret, encrypt them on this machine, and never send them anywhere but Google.'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ADR-046: BYO-OAuth setup wizard for X. Differs from Google's: the user pastes
+// only a Client ID (X "Native App" is a public client — no secret), and X
+// validates the redirect by exact match, so the wizard locks a loopback port on
+// open and shows the exact Callback URL to register before the id is pasted.
+const X_PORTAL_STEPS = [
+  {
+    url: 'https://developer.x.com/en/portal/dashboard',
+    label: 'Open the X developer portal and create a Project, then an App.'
+  },
+  {
+    url: 'https://developer.x.com/en/portal/dashboard',
+    label:
+      'In the App’s User authentication settings, set App permissions to “Read and write” and Type of App to “Native App”.'
+  }
+]
+
+// X BYO setup body: portal steps, a locked Callback URL to register, and the
+// Client ID (public "Native App" — no secret). Reports {clientId} (or null) to
+// the shell only once both the id and the locked callback URL are ready.
+function XByoSetup({
+  connectorId,
+  onClient
+}: {
+  connectorId: string
+  onClient: (client: ByoOAuthClientInput | null) => void
+}): React.JSX.Element {
+  const [clientId, setClientId] = useState('')
+  const [callbackUrl, setCallbackUrl] = useState('')
+  // A port-lock failure is X-specific and happens during 'setup', where the
+  // shell's error <p> (shown only on stage==='error') wouldn't render it — so
+  // surface it inline here, in place of the "Preparing…" hint.
+  const [lockError, setLockError] = useState('')
+
+  // Lock the loopback port as the body mounts so the user can register the exact
+  // Callback URL before pasting the Client ID.
+  useEffect(() => {
+    let active = true
+    window.ordinus.connectors
+      .lockRedirectPort({ connectorId })
+      .then((lock) => {
+        if (active) setCallbackUrl(lock.callbackUrl)
+      })
+      .catch((cause: unknown) => {
+        if (active)
+          setLockError(cause instanceof Error ? cause.message : 'Could not prepare sign-in.')
+      })
+    return () => {
+      active = false
+    }
+  }, [connectorId])
+
+  const trimmedId = clientId.trim()
+
+  useEffect(() => {
+    onClient(trimmedId && callbackUrl ? { clientId: trimmedId } : null)
+  }, [trimmedId, callbackUrl, onClient])
+
+  return (
+    <div className="grid gap-3">
+      <ol className="grid gap-2">
+        {X_PORTAL_STEPS.map((step, index) => (
+          <li key={index} className="flex items-start gap-2 text-sm">
+            <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-accent text-xs font-medium">
+              {index + 1}
+            </span>
+            <span className="min-w-0 flex-1 leading-6">{step.label}</span>
+            <button
+              type="button"
+              className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary transition-colors hover:underline"
+              onClick={() => void window.ordinus.system.openExternal(step.url)}
+            >
+              Open
+              <ExternalLink className="size-3" />
+            </button>
+          </li>
+        ))}
+        <li className="flex items-start gap-2 text-sm">
+          <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-accent text-xs font-medium">
+            {X_PORTAL_STEPS.length + 1}
+          </span>
+          <div className="min-w-0 flex-1 leading-6">
+            <span>Register this exact Callback URL in the App (Website URL can be anything):</span>
+            {callbackUrl ? (
+              <span className="mt-1 flex items-center gap-2 rounded-md border bg-accent/40 px-2 py-1 font-mono text-xs">
+                <span className="min-w-0 flex-1 truncate">{callbackUrl}</span>
+                <CopyButton text={callbackUrl} className="shrink-0" />
+              </span>
+            ) : lockError ? (
+              <span className="mt-1 block text-xs text-destructive">{lockError}</span>
+            ) : (
+              <span className="mt-1 block text-xs text-muted-foreground">Preparing…</span>
+            )}
+          </div>
+        </li>
+      </ol>
+      <div className="grid gap-1.5">
+        <label className="text-sm font-medium" htmlFor="x-client-id">
+          Paste your OAuth 2.0 Client ID
+        </label>
+        <input
+          id="x-client-id"
+          autoFocus
+          spellCheck={false}
+          placeholder="e.g. V0FN… blob from Keys & Tokens"
+          value={clientId}
+          onChange={(event) => setClientId(event.target.value)}
+          className={cn(
+            'w-full rounded-md border bg-transparent px-3 py-2 font-mono text-xs leading-5 shadow-sm',
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
+          )}
+        />
+        <p className="text-xs text-muted-foreground">
+          A “Native App” is a public client — there’s no secret. We encrypt the Client ID on this
+          machine and send it only to X.
+        </p>
+      </div>
+    </div>
   )
 }
 

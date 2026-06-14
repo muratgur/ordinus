@@ -27,6 +27,20 @@ export type LocalConnectorLoginMode = 'none' | 'interactive' | 'pairing' | 'byo-
 export type ByoOAuthConfig = {
   authorizationEndpoint: string
   tokenEndpoint: string
+  // ADR-046: X's developer app is a public ("Native App") client — there is no
+  // client secret, so the token endpoint receives only the client_id (no secret,
+  // no Basic auth). Google's BYO client is confidential, so this stays false.
+  publicClient?: boolean
+  // ADR-046: X requires the redirect URI to match a pre-registered value exactly
+  // (port + path), unlike Google's any-port bare loopback. When set, the broker
+  // binds the port locked at setup (persisted in the vault under `redir:<id>`,
+  // see vault.ts readRedirectPort/storeRedirectPort) and appends this path,
+  // instead of letting the OS assign a free port.
+  fixedRedirect?: { path: string }
+  // ADR-046: provider-specific authorize params. Google needs
+  // access_type=offline + prompt=consent for a refresh token; X obtains one via
+  // the offline.access scope and needs neither.
+  extraAuthParams?: Record<string, string>
 }
 
 export type LocalConnectorSpec = {
@@ -59,6 +73,17 @@ export type LocalConnectorSpec = {
    */
   lifecycle?: 'persistent'
   loginMode: LocalConnectorLoginMode
+  /**
+   * ADR-046: who refreshes the OAuth access token for a byo-oauth connector.
+   *   - 'child' (default): the server self-refreshes (Google — refresh token is
+   *     stable, nothing to write back).
+   *   - 'main': the supervisor refreshes before each spawn and writes the
+   *     rotated refresh token back to the vault, injecting only a short-lived
+   *     access token. Required for X, whose refresh tokens are single-use and
+   *     rotate on every refresh (a child that refreshed then got idle-reaped
+   *     before persisting would strand a consumed refresh token).
+   */
+  refreshAuthority?: 'main' | 'child'
   /**
    * Safe-default tool allowlist. Tools outside this list — including tools
    * added by a server upgrade — are born disabled until the user enables
@@ -102,7 +127,9 @@ export type StoredCredential = {
 // Cleared only by the explicit "Remove setup" action.
 export type ByoOAuthClient = {
   clientId: string
-  clientSecret: string
+  // ADR-046: absent for public clients (X "Native App"). Google's confidential
+  // client always sets it.
+  clientSecret?: string
 }
 
 export type MaterializedConnectors = {

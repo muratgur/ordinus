@@ -55,6 +55,12 @@ export type LocalConnectorStateAccess = {
   // Google's OAuth access/refresh tokens from the vault). Kept behind the
   // access boundary so the supervisor stays vault-free. Defaults to none.
   getSecretEnv?: (connectorId: string) => Record<string, string>
+  // ADR-046: per-connector pre-spawn async step, awaited BEFORE getSecretEnv so
+  // the env it builds sees a current token. For refreshAuthority:'main'
+  // connectors (X) this refreshes the access token and writes the rotated
+  // refresh token back to the vault — X rotates refresh tokens on every use, so
+  // the main process must own refresh. No-op for everything else.
+  ensureFreshToken?: (connectorId: string) => Promise<void>
 }
 
 type RunningServer = {
@@ -120,6 +126,12 @@ async function resolveChildLaunch(
   const homeDir = getConnectorHomeDir(connectorId)
   mkdirSync(sessionDir, { recursive: true })
   mkdirSync(homeDir, { recursive: true })
+
+  // ADR-046: refresh + rotate the token (write-back) BEFORE reading it into the
+  // env below, so a main-refresh connector (X) always spawns with a current
+  // access token. A failure here (broken rotation chain) propagates and aborts
+  // the spawn; the access layer maps it to "Reconnect required".
+  await state.access?.ensureFreshToken?.(connectorId)
 
   const substitute = (arg: string): string => arg.replaceAll('${sessionDir}', sessionDir)
   const args = [...launch.args, ...(spec.sessionDirArgs ?? []), ...extraArgs].map(substitute)
