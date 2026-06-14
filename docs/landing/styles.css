@@ -207,9 +207,11 @@ a { color: inherit; }
 
 /* when the result lands, the scene recedes so the answer pops */
 #scene .agent, #scene .arrow, #scene .wf-box, #scene .conv-bubble,
-#scene .sch-clock, #scene .sch-hand, #scene .sch-out { transition: opacity .45s ease; }
+#scene .sch-clock, #scene .sch-hand, #scene .sch-out,
+#scene .conn-card, #scene .conn-link, #scene .tele-phone { transition: opacity .45s ease; }
 #scene.resolved .agent, #scene.resolved .arrow, #scene.resolved .wf-box, #scene.resolved .conv-bubble,
-#scene.resolved .sch-clock, #scene.resolved .sch-hand, #scene.resolved .sch-out { opacity: 0.16; }
+#scene.resolved .sch-clock, #scene.resolved .sch-hand, #scene.resolved .sch-out,
+#scene.resolved .conn-card, #scene.resolved .conn-link, #scene.resolved .tele-phone { opacity: 0.16; }
 
 /* Conversations: speech bubbles; the challenge bubble carries the accent */
 #scene .conv-bubble.challenge .bub path { stroke: var(--accent); }
@@ -221,6 +223,10 @@ a { color: inherit; }
 .sch-agent.asleep { opacity: 0.28; }
 .sch-agent.awake .sch-z { opacity: 0; }
 #scene .sch-out path { stroke: var(--accent); }     /* produced work = the highlight */
+
+/* Connections: agents wire out to your tools, or you reach them from Telegram */
+#scene .conn-link.live path { stroke: var(--accent); }  /* a live connection turns accent */
+.conn-card .conn-label { font-size: 19px; }
 
 /* Workflow: hand-drawn task boxes */
 #scene .wf-box.active .box path { stroke: var(--accent); }

@@ -11,6 +11,20 @@
 ![Electron](https://img.shields.io/badge/Electron-39-47848F?logo=electron&logoColor=white)
 ![Built with Claude](https://img.shields.io/badge/built%20with-Claude%20Code-d97757)
 
+**Connects to your own accounts —**
+![Google](https://img.shields.io/badge/Google-4285F4?logo=google&logoColor=white)
+![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=white)
+![X](https://img.shields.io/badge/X-000000?logo=x&logoColor=white)
+![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white)
+![Linear](https://img.shields.io/badge/Linear-5E6AD2?logo=linear&logoColor=white)
+![Notion](https://img.shields.io/badge/Notion-000000?logo=notion&logoColor=white)
+![Atlassian](https://img.shields.io/badge/Atlassian-0052CC?logo=atlassian&logoColor=white)
+![Canva](https://img.shields.io/badge/Canva-00C4CC?logo=canva&logoColor=white)
+![Datadog](https://img.shields.io/badge/Datadog-632CA6?logo=datadog&logoColor=white)
+
+**Reach your team from your phone —**
+![Telegram](https://img.shields.io/badge/Telegram-26A5E4?logo=telegram&logoColor=white)
+
 ---
 
 ## Download
@@ -57,6 +71,29 @@ The installer puts Ordinus under `Program Files` and creates a Start Menu / Desk
 ![Workboard](docs/screenshots/workboard.png)
 
 **Workboard.** Watch tasks execute, inspect provider output, and steer runs in flight.
+
+## Connections
+
+![Connections](docs/screenshots/connections.png)
+
+Give your agents the tools you already use — each connection runs under **your own account**, with credentials stored encrypted on your machine.
+
+**Your accounts, run locally**
+
+- **Google** — read Gmail, Calendar, and Drive (sending email or creating events is opt-in, off by default)
+- **WhatsApp** — read incoming messages and reply, via device pairing
+- **X (Twitter)** — read your timeline and mentions; posting is opt-in
+- **LinkedIn** — read profiles, companies, and posts
+
+**Hosted services (OAuth)**
+
+- **Linear**, **Notion**, **Atlassian** (Jira / Confluence), **Canva**, **Datadog**
+
+**Reach your team from anywhere**
+
+- **Telegram** — pair your own bot to message your agents from your phone and get the work sent back, no laptop needed (Settings → Remote Access)
+
+Nothing about your data leaves your machine — Ordinus never collects, uploads, or shares it. Tools that act on the outside world (send a message, post, create an event) ship disabled; you turn each one on yourself from Settings → Connections.
 
 ## Why local-first
 

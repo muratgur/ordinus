@@ -176,6 +176,13 @@
         put(rc.circle(px - 4, py + 12, 5, o));
         put(rc.circle(px + 8, py + 12, 5, o));
         break;
+      case "spark": { // a hand-drawn AI sparkle — the assistant orchestrating it all
+        const sx = px - 3; // main star nudged left to make room for the twinkle
+        put(rc.path(`M ${sx} ${py - 14} C ${sx} ${py - 5} ${sx + 5} ${py - 5} ${sx + 13} ${py} C ${sx + 5} ${py} ${sx} ${py + 5} ${sx} ${py + 14} C ${sx} ${py + 5} ${sx - 5} ${py + 5} ${sx - 13} ${py} C ${sx - 5} ${py} ${sx} ${py - 5} ${sx} ${py - 14} Z`, o));
+        put(rc.line(px + 12, py - 14, px + 12, py - 6, o));
+        put(rc.line(px + 8, py - 10, px + 16, py - 10, o));
+        break;
+      }
     }
     g.setAttribute("class", "prop");
     svg.appendChild(g);
@@ -639,6 +646,195 @@
     function doneC() { busy = false; }
   }
 
+  /* ---------- Connections feature: wire your team into the tools you use ---------- */
+
+  // a gently curved wire ending in an arrowhead at `to`. bow=0 → straight.
+  // the arrowhead follows the curve's tangent at the end so it always sits flush.
+  function connArrow(from, to, bow = 0) {
+    const g = newG("conn-link");
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const len = Math.hypot(dx, dy) || 1;
+    // control point offset along the left-hand normal → a soft arc
+    const cx = (from.x + to.x) / 2 + (-dy / len) * bow;
+    const cy = (from.y + to.y) / 2 + (dx / len) * bow;
+    const tx = to.x - cx, ty = to.y - cy, tl = Math.hypot(tx, ty) || 1;
+    const ux = tx / tl, uy = ty / tl; // tangent at the arrow's tip
+    const bl = 13, c = Math.cos(0.5), s = Math.sin(0.5); // barb length + ~28° spread
+    const lx = to.x - bl * (ux * c - uy * s), ly = to.y - bl * (ux * s + uy * c);
+    const rx = to.x - bl * (ux * c + uy * s), ry = to.y - bl * (-ux * s + uy * c);
+    gAdd(g, rc.path(`M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`, { ...ROUGH, roughness: 1.1, strokeWidth: 2 }));
+    gAdd(g, rc.path(`M ${lx} ${ly} L ${to.x} ${to.y} L ${rx} ${ry}`, { ...ROUGH, strokeWidth: 2 }));
+    return g;
+  }
+
+  /* -- Scenario A: the agent reaches out to your accounts -- */
+
+  const CONN_AGENT = { x: 450, y: 205 };
+  const CONN_TOOLS = [
+    { x: 205, y: 122, label: "Gmail",    anchor: { x: 275, y: 128 }, hub: { x: 425, y: 182 } },
+    { x: 695, y: 122, label: "X",        anchor: { x: 625, y: 128 }, hub: { x: 475, y: 182 } },
+    { x: 205, y: 288, label: "LinkedIn", anchor: { x: 275, y: 282 }, hub: { x: 425, y: 228 } },
+    { x: 695, y: 288, label: "WhatsApp", anchor: { x: 625, y: 282 }, hub: { x: 470, y: 228 } },
+  ];
+  const CONN_QUESTION = "Summarize my day";
+  // each line names the tool it came from — the briefing exists *because* it's connected
+  const CONN_RESULT = {
+    title: "Your day, summed up",
+    items: [
+      "3 new emails — Gmail",
+      "1 job opportunity pending — LinkedIn",
+      "2 replies waiting — WhatsApp",
+      "5 mentions worth a look — X",
+    ],
+  };
+  const CONN_CARD_W = 140, CONN_CARD_H = 54;
+
+  function connHubAgent() {
+    const g = newG("agent conn-agent"); // 'agent' class → recedes when the result lands
+    gAdd(g, rc.circle(CONN_AGENT.x, CONN_AGENT.y, 58, ROUGH), "head");
+    gAdd(g, rc.path(bodyPath(CONN_AGENT.x, CONN_AGENT.y), ROUGH), "body");
+    g.appendChild(prop("spark", CONN_AGENT.x, CONN_AGENT.y - 52)); // sparkle above the head
+    g.appendChild(text(CONN_AGENT.x, CONN_AGENT.y + 112, "Assistant", "label"));
+    return g;
+  }
+
+  function connCard(t) {
+    const g = newG("conn-card");
+    gAdd(g, rc.rectangle(t.x - CONN_CARD_W / 2, t.y - CONN_CARD_H / 2, CONN_CARD_W, CONN_CARD_H, { ...ROUGH, strokeWidth: 2 }), "box");
+    const lbl = text(t.x, t.y + 7, t.label, "label conn-label");
+    lbl.style.fontSize = "19px";
+    g.appendChild(lbl);
+    return g;
+  }
+
+  async function runConn() {
+    if (busy) return;
+    busy = true;
+    const myToken = ++token;
+    clearScene();
+    await showAsk(CONN_QUESTION);
+    if (myToken !== token) return doneCx();
+
+    // the hub agent, then the tool cards around it
+    const hub = connHubAgent();
+    prepHide(hub);
+    reveal(hub, 520);
+    const cards = CONN_TOOLS.map(connCard);
+    cards.forEach(prepHide);
+    cards.forEach((g, i) => setTimeout(() => reveal(g, 460), reduce ? 0 : 160 + i * 120));
+    await sleep(reduce ? 0 : 900);
+    if (myToken !== token) return doneCx();
+
+    // wire each tool in turn — the arrow reaches out from the agent to the tool,
+    // then snaps to accent to show that connection is live.
+    for (let i = 0; i < CONN_TOOLS.length; i++) {
+      const t = CONN_TOOLS[i];
+      const link = connArrow(t.hub, t.anchor, 16);
+      prepHide(link);
+      drawIn(link, 440);
+      await sleep(reduce ? 0 : 460);
+      if (myToken !== token) return doneCx();
+      link.classList.add("live"); // connected → turns orange
+      await sleep(reduce ? 0 : 360);
+      if (myToken !== token) return doneCx();
+    }
+
+    await sleep(reduce ? 0 : 300);
+    if (myToken !== token) return doneCx();
+    showResult(CONN_RESULT);
+    doneCx();
+
+    function doneCx() { busy = false; }
+  }
+
+  /* -- Scenario B: you reach the team from Telegram on your phone -- */
+
+  const TELE_USER = { x: 100, y: 205 };
+  const TELE_PHONE = { x: 270, y: 205, w: 84, h: 166 };
+  const TELE_SEATS = [{ x: 548, y: 205 }, { x: 736, y: 205 }];
+  const TELE_ROLES = [
+    { label: "Researcher", prop: "magnifier" },
+    { label: "Summarizer", prop: "chart" },
+  ];
+  const TELE_QUESTION = "Catch me up on the project";
+  const TELE_RESULT = {
+    title: "Sent back to your phone",
+    items: ["Latest status pulled", "A short summary", "Replied on Telegram"],
+  };
+
+  // a hand-drawn phone with a Telegram paper-plane on screen
+  function telePhone() {
+    const { x, y, w, h } = TELE_PHONE;
+    const g = newG("tele-phone");
+    gAdd(g, rc.rectangle(x - w / 2, y - h / 2, w, h, { ...ROUGH, strokeWidth: 2 }));
+    gAdd(g, rc.rectangle(x - w / 2 + 9, y - h / 2 + 16, w - 18, h - 40, ROUGH));
+    gAdd(g, rc.line(x - 7, y + h / 2 - 13, x + 7, y + h / 2 - 13, ROUGH)); // home bar
+    // paper plane (Telegram)
+    const px = x, py = y - 6;
+    gAdd(g, rc.path(`M ${px - 22} ${py - 2} L ${px + 22} ${py - 16} L ${px + 4} ${py + 16} L ${px - 2} ${py - 2} Z`, { ...ROUGH, strokeWidth: 1.8 }), "tele-plane");
+    gAdd(g, rc.line(px - 2, py - 2, px + 22, py - 16, { ...ROUGH, strokeWidth: 1.8 }), "tele-plane");
+    const lbl = text(x, y + h / 2 + 26, "Telegram", "label");
+    lbl.style.fontSize = "18px";
+    g.appendChild(lbl);
+    return g;
+  }
+
+  async function runTele() {
+    if (busy) return;
+    busy = true;
+    const myToken = ++token;
+    clearScene();
+    await showAsk(TELE_QUESTION); // the message you fire off from your phone
+    if (myToken !== token) return doneT();
+
+    // you on the left → your phone → the team on the right
+    const you = convAgent({ x: TELE_USER.x, y: TELE_USER.y, name: "You" });
+    const phone = telePhone();
+    [you, phone].forEach(prepHide);
+    reveal(you, 480);
+    setTimeout(() => reveal(phone, 520), reduce ? 0 : 180);
+    const agents = TELE_SEATS.map((s, i) => buildAgent(s, TELE_ROLES[i], i));
+    agents.forEach(prepHide);
+    agents.forEach((a, i) => setTimeout(() => reveal(a, 500), reduce ? 0 : 440 + i * 150));
+    await sleep(reduce ? 0 : 1150);
+    if (myToken !== token) return doneT();
+
+    // you → Telegram → the team: the message travels in, lighting the path accent
+    const a1 = connArrow({ x: TELE_USER.x + 30, y: 205 }, { x: TELE_PHONE.x - TELE_PHONE.w / 2 - 6, y: 205 });
+    prepHide(a1);
+    drawIn(a1, 420);
+    await sleep(reduce ? 0 : 420);
+    if (myToken !== token) return doneT();
+    a1.classList.add("live");
+    const a2 = connArrow({ x: TELE_PHONE.x + TELE_PHONE.w / 2 + 6, y: 205 }, { x: TELE_SEATS[0].x - 33, y: 205 });
+    prepHide(a2);
+    drawIn(a2, 460);
+    await sleep(reduce ? 0 : 460);
+    if (myToken !== token) return doneT();
+    a2.classList.add("live");
+    await sleep(reduce ? 0 : 280);
+
+    // the team picks it up and passes it down the line
+    for (let i = 0; i < agents.length; i++) {
+      agents.forEach((a) => a.classList.remove("active"));
+      agents[i].classList.add("active");
+      await sleep(reduce ? 0 : 640);
+      if (myToken !== token) return doneT();
+      if (i < agents.length - 1) {
+        const ar = arrow(TELE_SEATS[i], TELE_SEATS[i + 1]);
+        drawIn(ar, 420);
+        await sleep(reduce ? 0 : 480);
+        if (myToken !== token) return doneT();
+      }
+    }
+    agents.forEach((a) => a.classList.remove("active"));
+    await sleep(reduce ? 0 : 240);
+    showResult(TELE_RESULT);
+    doneT();
+
+    function doneT() { busy = false; }
+  }
+
   /* ---------- feature registry ---------- */
 
   const FEATURES = {
@@ -670,6 +866,15 @@
       run() { runConv(); },
       start() { runConv(); },
     },
+    connections: {
+      prompt: "Wire your team into your tools — and reach them from anywhere.",
+      controls: [
+        { id: "outbound", label: "Summarize my day" },
+        { id: "telegram", label: "Reach from anywhere" },
+      ],
+      run(id) { id === "telegram" ? runTele() : runConn(); },
+      start() { runConn(); }, // lead with the agent-reaches-your-tools scene
+    },
   };
 
   /* ---------- tab controller ---------- */
@@ -680,15 +885,21 @@
   const askEl = document.getElementById("ask");
   const askTextEl = askEl.querySelector(".ask-text");
 
-  // type out the user's question, so it reads as "you asked → they answer"
+  // type out the user's question, so it reads as "you asked → they answer".
+  // askGen lets the latest call win — switching tabs mid-type stops the stale
+  // typing loop instead of letting it overwrite the new question.
+  let askGen = 0;
   async function showAsk(q) {
+    const myGen = ++askGen;
     askEl.classList.add("show", "typing");
     askTextEl.textContent = "";
     if (reduce) { askTextEl.textContent = q; askEl.classList.remove("typing"); return; }
     for (let i = 0; i < q.length; i++) {
+      if (myGen !== askGen) return;
       askTextEl.textContent = q.slice(0, i + 1);
       await sleep(24);
     }
+    if (myGen !== askGen) return;
     askEl.classList.remove("typing");
   }
   function hideAsk() { askEl.classList.remove("show", "typing"); }
@@ -737,6 +948,9 @@
       { light: "Agents - Ceo.png", dark: "Agents - Ceo - Black.png",
         title: "Agents with a role and a voice",
         text: "Each agent has its own profile, skills, and chat — like a real colleague." },
+      { light: "Connections.png", dark: "Connections - Black.png",
+        title: "Connected to the tools you use",
+        text: "Wire agents into Gmail, Notion, Linear and more — or reach them from Telegram. Each connection runs under your own account." },
       { light: "Workboard-Done-Item.png", dark: "Workboard-Done-Item-Black.png",
         title: "Follow the work, step by step",
         text: "Watch each task run and inspect exactly what every agent produced." },
