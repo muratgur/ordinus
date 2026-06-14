@@ -256,6 +256,7 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workspaceSelectFolder),
     saveConfig: async (input: WorkspaceSaveConfigInput): Promise<WorkspaceConfig> =>
       ipcRenderer.invoke(ipcChannels.workspaceSaveConfig, input),
+    openRoot: async (): Promise<void> => ipcRenderer.invoke(ipcChannels.workspaceOpenRoot),
     updateSystemDefault: async (
       input: WorkspaceUpdateSystemDefaultInput
     ): Promise<WorkspaceConfig> =>
@@ -556,7 +557,6 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.onboardingSelectProviders, input),
     confirmWorkspace: async (input: {
       workspaceRoot: string
-      workspaceName: string
     }): Promise<{ status: OnboardingStatus; workspace: WorkspaceConfig }> =>
       ipcRenderer.invoke(ipcChannels.onboardingConfirmWorkspace, input),
     installProvider: async (input: { providerId: ProviderId }): Promise<OnboardingStatus> =>

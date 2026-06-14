@@ -202,6 +202,7 @@ export type OrdinusApi = {
   workspace: {
     selectFolder: () => Promise<WorkspaceSelectFolderResult>
     saveConfig: (input: WorkspaceSaveConfigInput) => Promise<WorkspaceConfig>
+    openRoot: () => Promise<void>
     updateSystemDefault: (input: WorkspaceUpdateSystemDefaultInput) => Promise<WorkspaceConfig>
   }
   agents: {
@@ -342,7 +343,6 @@ export type OrdinusApi = {
     selectProviders: (input: { providerIds: ProviderId[] }) => Promise<OnboardingStatus>
     confirmWorkspace: (input: {
       workspaceRoot: string
-      workspaceName: string
     }) => Promise<{ status: OnboardingStatus; workspace: WorkspaceConfig }>
     installProvider: (input: { providerId: ProviderId }) => Promise<OnboardingStatus>
     markProviderAuthed: (input: {

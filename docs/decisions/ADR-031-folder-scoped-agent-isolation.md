@@ -24,6 +24,15 @@ hatch out of the folder boundary, and on ADR-030 (database-backed result content
 handoffs) as the mechanism for cross-request continuation that does not rely on shared
 filesystem access.
 
+Amended by ADR-045 (Settings IA and copy system): the workspace **root is no longer
+reselectable from Settings** (read-only, with Reveal in Finder only). The path-policy
+invariant below ("the root can still be moved and reselected") remains true at the code
+level, but the user-facing reselection control is withdrawn — changing the root re-resolves
+every existing unit's stored *relative* `workingRoot` under the new root
+(`resolve(currentRoot, relativeWorkingRoot)` in `runtime/adapters/shared.ts`), silently
+relocating live conversations and runs. This operationalizes the hard rule in Consequences
+("never let an existing unit's folder change") at the UI level.
+
 ## Date
 
 2026-06-09

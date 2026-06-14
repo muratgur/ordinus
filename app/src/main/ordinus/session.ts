@@ -140,17 +140,26 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
 
   function assembleSystemPrompt(): string {
     // Compose at session-init only. Order: identity-bearing knowledge first,
-    // memory next, tool catalog hint last (the actual catalog reaches the CLI
-    // via MCP, not via prompt — we only mention tools exist).
+    // memory next, then the user's own standing instructions last so they read
+    // as the most salient directive. The tool catalog reaches the CLI via MCP,
+    // not via prompt. Because this is built once per conversation (first turn)
+    // and then cached by the CLI's --resume, editing instructions in Settings
+    // shapes NEW conversations and leaves existing sessions untouched (ADR-045).
     const knowledge = buildKnowledgePrompt()
     const memory = database.listOrdinusMemory()
-    if (memory.length === 0) {
-      return knowledge
+    const extraInstructions = database.getOrdinusSingleton()?.extraInstructions?.trim()
+
+    let prompt = knowledge
+    if (memory.length > 0) {
+      const memoryLines = memory
+        .map((entry) => `- [${entry.type}] ${entry.name}: ${entry.body}`)
+        .join('\n')
+      prompt += `\n\n---\n\n# What you remember about this user\n\n${memoryLines}`
     }
-    const memoryLines = memory
-      .map((entry) => `- [${entry.type}] ${entry.name}: ${entry.body}`)
-      .join('\n')
-    return `${knowledge}\n\n---\n\n# What you remember about this user\n\n${memoryLines}`
+    if (extraInstructions) {
+      prompt += `\n\n---\n\n# Standing instructions from the user\n\nThe user has asked you to always follow these:\n\n${extraInstructions}`
+    }
+    return prompt
   }
 
   return {

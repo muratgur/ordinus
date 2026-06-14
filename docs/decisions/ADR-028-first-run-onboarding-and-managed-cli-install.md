@@ -8,6 +8,11 @@ Supersedes the workspace-first, manual-CLI assumption in the existing
 `setup-screen.tsx`. Complements ADR-027 (agent-as-colleague home) by extending the
 "hire a colleague" metaphor into the first-run experience.
 
+Amended by ADR-045 (Settings IA and copy system): the workspace **name** is removed from the
+onboarding flow and the data model (it was never read anywhere). Onboarding's Workspace stage
+collects only the folder. This reinforces this ADR's existing rejection of "change the
+workspace anytime" — ADR-045 makes the folder read-only in Settings after onboarding.
+
 ## Date
 
 2026-06-07

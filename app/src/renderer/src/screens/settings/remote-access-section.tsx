@@ -1,20 +1,21 @@
-// ADR-044 §Settings — Remote access (Telegram).
+// ADR-044 §Settings / ADR-045 B6 — Remote access (Telegram).
 //
-// Lets the user reach Ordinus from their phone through a single-owner Telegram
-// bot. Four states, driven by the main-process subsystem and kept live via
-// onStatusEvent:
-//   - disconnected   → BotFather instructions + token field + Connect
-//   - awaiting-pairing → the bot is listening; show the pairing code to type
-//   - connected      → listening, owner sealed; Disconnect
-//   - error          → reason + token field to retry
+// Remote access is the inbound door: it lets the user reach Ordinus from their
+// phone, the conceptual inverse of Connections. It gets a bespoke, three-state
+// shape — each state aimed at a feeling — while inheriting the shared voice (the
+// six copy rules) and status COLOR semantics (the badge word may stay
+// "Listening", but its color comes from the shared tone):
+//   - disconnected     → persuade + reassure (owner-lock up front), guided setup
+//   - awaiting-pairing → momentum: one big code, one action
+//   - connected        → proof + encouragement: it's live, go try it
+//   - error            → reason + retry
 //
 // The token is write-only: it is sent to main, never read back.
 
 import { useEffect, useState } from 'react'
-import { Smartphone, Loader2, Check, AlertCircle } from 'lucide-react'
+import { AlertCircle, Loader2, Lock, Smartphone } from 'lucide-react'
 import type { TelegramStatus } from '@shared/contracts'
 import { Button } from '@renderer/components/ui/button'
-import { Badge } from '@renderer/components/ui/badge'
 import { Input } from '@renderer/components/ui/input'
 import {
   Card,
@@ -23,6 +24,7 @@ import {
   CardHeader,
   CardTitle
 } from '@renderer/components/ui/card'
+import { StatusBadge, type SettingsStatusTone } from './_shared'
 
 export function RemoteAccessSection(): React.JSX.Element {
   const [status, setStatus] = useState<TelegramStatus | null>(null)
@@ -65,11 +67,11 @@ export function RemoteAccessSection(): React.JSX.Element {
         <div className="flex items-center gap-2">
           <Smartphone className="size-5 text-muted-foreground" />
           <CardTitle>Remote access</CardTitle>
-          <StatusBadge status={state} />
+          <RemoteStatusBadge status={state} />
         </div>
         <CardDescription>
-          Connect a Telegram bot to message Ordinus from your phone. The bot only ever answers you —
-          it can’t reach your Telegram contacts.
+          Message Ordinus from your phone through a Telegram bot — ask a question, kick off work,
+          get answers anywhere.
         </CardDescription>
       </CardHeader>
 
@@ -92,21 +94,18 @@ export function RemoteAccessSection(): React.JSX.Element {
   )
 }
 
-function StatusBadge({ status }: { status: TelegramStatus['status'] }): React.JSX.Element {
-  if (status === 'connected') {
-    return (
-      <Badge variant="secondary" className="gap-1">
-        <Check className="size-3" /> Listening
-      </Badge>
-    )
+// Bespoke word, shared color. "Listening" carries real information (it only runs
+// while Ordinus is open), so we keep it — but the tone comes from the shared
+// vocabulary so the color matches every other status in Settings.
+function RemoteStatusBadge({ status }: { status: TelegramStatus['status'] }): React.JSX.Element {
+  const map: Record<TelegramStatus['status'], { tone: SettingsStatusTone; label: string }> = {
+    connected: { tone: 'connected', label: 'Listening' },
+    'awaiting-pairing': { tone: 'action', label: 'Awaiting pairing' },
+    error: { tone: 'error', label: 'Error' },
+    disconnected: { tone: 'idle', label: 'Not connected' }
   }
-  if (status === 'awaiting-pairing') {
-    return <Badge variant="secondary">Awaiting pairing</Badge>
-  }
-  if (status === 'error') {
-    return <Badge variant="failed">Error</Badge>
-  }
-  return <Badge variant="outline">Not connected</Badge>
+  const { tone, label } = map[status] ?? map.disconnected
+  return <StatusBadge tone={tone}>{label}</StatusBadge>
 }
 
 function DisconnectedView({
@@ -124,15 +123,25 @@ function DisconnectedView({
 }): React.JSX.Element {
   return (
     <div className="space-y-4">
-      <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+      {/* Reassurance first — the single biggest worry with a chat bot is "who
+          else can reach it?" Answer it before asking for a token. */}
+      <div className="flex items-start gap-2 rounded-md border bg-accent/50 px-3 py-2.5 text-sm">
+        <Lock className="mt-0.5 size-4 shrink-0 text-primary" />
+        <span className="leading-6">
+          Only you can reach it. You pair the bot to your phone once, and everyone else is ignored —
+          the bot never messages your contacts.
+        </span>
+      </div>
+
+      <ol className="list-decimal space-y-1.5 pl-5 text-sm leading-6 text-muted-foreground">
         <li>
           On your phone, open Telegram and message <span className="font-medium">@BotFather</span>.
         </li>
         <li>
-          Send <code className="rounded bg-muted px-1">/newbot</code>, pick a name and a username
-          ending in <code className="rounded bg-muted px-1">bot</code>.
+          Send <code className="rounded bg-muted px-1">/newbot</code>, then pick a name and a
+          username ending in <code className="rounded bg-muted px-1">bot</code>.
         </li>
-        <li>Copy the token BotFather gives you and paste it below.</li>
+        <li>BotFather replies with a token — paste it below.</li>
       </ol>
 
       {status?.status === 'error' && status.error ? (
@@ -143,14 +152,12 @@ function DisconnectedView({
       ) : null}
 
       <div className="grid gap-2">
-        <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Bot token
-        </label>
+        <label className="text-sm font-medium text-foreground">Bot token</label>
         <div className="flex gap-2">
           <Input
             type="password"
             value={token}
-            placeholder="123456789:AA…"
+            placeholder="Paste the token BotFather gave you"
             onChange={(event) => onTokenChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') onConnect()
@@ -178,26 +185,28 @@ function PairingView({
 }): React.JSX.Element {
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm leading-6 text-muted-foreground">
         {status.botUsername ? (
           <>
-            <span className="font-medium">@{status.botUsername}</span> is listening. To seal it to
-            you (and lock everyone else out), open the bot and send:
+            <span className="font-medium">@{status.botUsername}</span> is live. One step left: seal
+            it to you so no one else can use it.
           </>
         ) : (
-          'The bot is listening. Send the pairing message below from the phone you want to pair.'
+          'The bot is live. One step left: send the pairing message below from the phone you want to pair.'
         )}
       </p>
 
       <div className="rounded-md border bg-muted/40 px-4 py-3 text-center">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">Send to the bot</div>
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          Open your bot and send
+        </div>
         <div className="mt-1 font-mono text-2xl font-semibold tracking-widest">
           /pair {status.pairingCode ?? '••••••'}
         </div>
       </div>
 
       <Button variant="ghost" size="sm" onClick={onDisconnect} disabled={busy}>
-        Disconnect
+        Cancel
       </Button>
     </div>
   )
@@ -220,14 +229,21 @@ function ConnectedView({
           <span className="font-medium">@{status.botUsername ?? '—'}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-muted-foreground">Owner</span>
+          <span className="text-muted-foreground">Paired to</span>
           <span className="font-medium">{status.ownerName ?? '—'}</span>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Message the bot from your phone and Ordinus answers. Only you can reach it; anyone else is
-        ignored. Listening runs while Ordinus is open.
-      </p>
+
+      {/* Proof + encouragement: don't leave the user staring at a static
+          "connected" — tell them it's live and nudge the first message. */}
+      <div className="rounded-md border border-status-completed/30 bg-status-completed/10 px-3 py-2.5 text-sm leading-6">
+        <span className="font-medium text-status-completed">Listening while Ordinus is open.</span>{' '}
+        <span className="text-muted-foreground">
+          Open your bot and send a message — Ordinus replies right there on your phone. Only you can
+          reach it.
+        </span>
+      </div>
+
       <Button variant="ghost" size="sm" onClick={onDisconnect} disabled={busy}>
         Disconnect
       </Button>

@@ -1,8 +1,10 @@
-// ADR-029 §7 / M7 — Settings → Ordinus.
+// ADR-029 §7 / M7 — Settings → Ordinus. (ADR-045: display name removed as dead;
+// extra instructions are wired into the session-init system prompt.)
 //
-// One form, three groups: persona (display name, extra instructions), provider
-// + model (with the provider-change confirmation flow), and a small disclosure
-// of any active conversations on a non-default provider.
+// One form, two groups: instructions (free-form text appended to Ordinus's
+// system prompt at session init) and provider + model (with the provider-change
+// confirmation flow), plus a small disclosure of any active conversations on a
+// non-default provider.
 //
 // Provider changes are gated by `ProviderChangeDialog`. Per ADR §7:
 //   - Default action is Continue: existing conversations stay on their
@@ -38,7 +40,6 @@ import {
   CardHeader,
   CardTitle
 } from '@renderer/components/ui/card'
-import { Input } from '@renderer/components/ui/input'
 import { SelectControl } from '@renderer/components/select-control'
 import { notify } from '@renderer/lib/notifications'
 import { ProviderChangeDialog } from './provider-change-dialog'
@@ -115,7 +116,7 @@ export function OrdinusSettingsSection(): React.JSX.Element {
             <Sparkles className="size-4 text-primary" />
             Ordinus
           </CardTitle>
-          <CardDescription>Persona and provider for the in-app assistant.</CardDescription>
+          <CardDescription>Provider and instructions for the in-app assistant.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-sm text-muted-foreground">One moment…</div>
@@ -176,7 +177,6 @@ function OrdinusSettingsForm({
   onSaved,
   onProviderChanged
 }: OrdinusSettingsFormProps): React.JSX.Element {
-  const [displayName, setDisplayName] = useState(initialSingleton.displayName)
   const [extraInstructions, setExtraInstructions] = useState(
     initialSingleton.extraInstructions ?? ''
   )
@@ -266,43 +266,22 @@ function OrdinusSettingsForm({
           Ordinus
         </CardTitle>
         <CardDescription>
-          Persona and provider for the in-app assistant. Provider changes apply to NEW
-          conversations; existing ones stay on their original CLI.
+          The in-app assistant — the provider and model it thinks with, and instructions it always
+          follows. This is separate from the system default (Providers), which agents and background
+          planning use.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
         <div className="grid gap-2">
-          <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Display name
-          </label>
-          <div className="flex gap-2">
-            <Input
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="Ordinus"
-              maxLength={80}
-              disabled={saving}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={() => void saveSingleton({ displayName: displayName.trim() || 'Ordinus' })}
-              disabled={saving || displayName.trim() === initialSingleton.displayName}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid gap-2">
-          <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Extra instructions
-          </label>
+          <label className="text-sm font-medium text-foreground">Instructions</label>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Tone, preferences, or context Ordinus should always follow. Applied when a new
+            conversation starts, so it shapes new chats but leaves existing ones unchanged.
+          </p>
           <textarea
             value={extraInstructions}
             onChange={(event) => setExtraInstructions(event.target.value)}
-            placeholder="Add tone, preferences, or context Ordinus should always remember."
+            placeholder="e.g. Keep answers short. I work in TypeScript. Call me by my first name."
             rows={4}
             maxLength={8_000}
             disabled={saving}

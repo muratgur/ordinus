@@ -21,7 +21,6 @@ import { getProviderDisplayName } from '@shared/provider-labels'
 import { packAgentAvatar, randomAgentAvatar } from '../../components/mascots'
 import { AgentCreationFlow } from '../../components/agent-creation-flow'
 import { Button } from '../../components/ui/button'
-import { Input } from '../../components/ui/input'
 import { notify } from '../../lib/notifications'
 import { cn } from '../../lib/utils'
 
@@ -94,10 +93,9 @@ export function OnboardingFlow({
         {stage === 'workspace' ? (
           <WorkspaceStage
             defaultWorkspace={state.workspace}
-            onSubmit={async (workspaceRoot, workspaceName) => {
+            onSubmit={async (workspaceRoot) => {
               const result = await window.ordinus.onboarding.confirmWorkspace({
-                workspaceRoot,
-                workspaceName
+                workspaceRoot
               })
               setStatus(result.status)
               // Auto-kick installs for every selected provider — the user has
@@ -302,10 +300,9 @@ function WorkspaceStage({
   onSubmit
 }: {
   defaultWorkspace: OnboardingState['workspace']
-  onSubmit: (workspaceRoot: string, workspaceName: string) => Promise<void>
+  onSubmit: (workspaceRoot: string) => Promise<void>
 }): React.JSX.Element {
   const [workspaceRoot, setWorkspaceRoot] = useState(defaultWorkspace?.workspaceRoot ?? '')
-  const [workspaceName, setWorkspaceName] = useState(defaultWorkspace?.workspaceName ?? '')
   const [proposedRoot, setProposedRoot] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -324,20 +321,18 @@ function WorkspaceStage({
     const result = await window.ordinus.workspace.selectFolder()
     if (result.cancelled) return
     setWorkspaceRoot(result.workspaceRoot)
-    setWorkspaceName((current) => current || result.workspaceName)
   }
 
   function useProposed(): void {
     if (!proposedRoot) return
     setWorkspaceRoot(proposedRoot)
-    setWorkspaceName((current) => current || 'Ordinus')
   }
 
   async function handleContinue(): Promise<void> {
-    if (!workspaceRoot.trim() || !workspaceName.trim() || busy) return
+    if (!workspaceRoot.trim() || busy) return
     try {
       setBusy(true)
-      await onSubmit(workspaceRoot.trim(), workspaceName.trim())
+      await onSubmit(workspaceRoot.trim())
     } catch (error) {
       notify.attention({
         title: 'Could not set up your space',
@@ -398,20 +393,10 @@ function WorkspaceStage({
         </button>
       </div>
 
-      <label className="grid gap-1.5 text-sm">
-        <span className="text-xs font-medium text-muted-foreground">Name your space</span>
-        <Input
-          value={workspaceName}
-          onChange={(event) => setWorkspaceName(event.target.value)}
-          placeholder="Ordinus"
-          maxLength={80}
-        />
-      </label>
-
       <div className="flex justify-center">
         <Button
           onClick={() => void handleContinue()}
-          disabled={!workspaceRoot.trim() || !workspaceName.trim() || busy}
+          disabled={!workspaceRoot.trim() || busy}
           variant="outline"
           className="rounded-full"
         >

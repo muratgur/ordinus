@@ -93,8 +93,7 @@ export const OnboardingStateSchema = z.object({
   selectedProviders: z.array(ProviderIdSchema),
   workspace: z
     .object({
-      workspaceRoot: z.string(),
-      workspaceName: z.string()
+      workspaceRoot: z.string()
     })
     .nullable(),
   // Zod v4 makes `z.record(EnumSchema, V)` strict — every enum key must be
@@ -149,8 +148,7 @@ export const OnboardingSelectProvidersInputSchema = z.object({
 })
 
 export const OnboardingConfirmWorkspaceInputSchema = z.object({
-  workspaceRoot: z.string().trim().min(1),
-  workspaceName: z.string().trim().min(1).max(80)
+  workspaceRoot: z.string().trim().min(1)
 })
 
 export const OnboardingInstallProviderInputSchema = z.object({
@@ -318,7 +316,6 @@ export const OrdinusDeleteMemoryInputSchema = z.object({
 export const OrdinusSingletonSchema = z.object({
   providerId: ProviderIdSchema,
   model: z.string(),
-  displayName: z.string(),
   avatarRef: z.string().nullable(),
   extraInstructions: z.string().nullable(),
   createdAt: z.string(),
@@ -328,7 +325,6 @@ export const OrdinusSingletonSchema = z.object({
 export const OrdinusUpdateSingletonInputSchema = z.object({
   providerId: ProviderIdSchema.optional(),
   model: z.string().trim().min(1).max(120).optional(),
-  displayName: z.string().trim().min(1).max(80).optional(),
   // Nullable-but-present: client passes `null` to clear, omits to leave
   // unchanged. We discriminate undefined vs null at the DB layer.
   avatarRef: z.string().trim().max(200).nullable().optional(),
@@ -441,7 +437,6 @@ export const OrdinusSendTurnInputSchema = z.object({
 
 export const WorkspaceConfigSchema = z.object({
   workspaceRoot: z.string(),
-  workspaceName: z.string(),
   defaultProviderId: ProviderIdSchema.default('codex'),
   defaultModel: z.string().trim().min(1).default('default'),
   createdAt: z.string(),
@@ -450,15 +445,13 @@ export const WorkspaceConfigSchema = z.object({
 
 export const WorkspaceSaveConfigInputSchema = z.object({
   workspaceRoot: z.string().trim().min(1, 'Workspace folder is required.'),
-  workspaceName: z.string().trim().min(1, 'Project name is required.').max(80),
   defaultProviderId: ProviderIdSchema.optional(),
   defaultModel: z.string().trim().min(1, 'Model is required.').max(120).optional()
 })
 
 export const WorkspaceSelectFolderResultSchema = z.object({
   cancelled: z.boolean(),
-  workspaceRoot: z.string(),
-  workspaceName: z.string()
+  workspaceRoot: z.string()
 })
 
 export const AgentSandboxSchema = z.enum(['read-only', 'workspace-write', 'full-access'])

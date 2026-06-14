@@ -19,7 +19,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import {
   AgentArchiveInputSchema,
   AgentDeleteInputSchema,
@@ -482,8 +482,7 @@ export function registerIpcHandlers(
     if (result.canceled || !result.filePaths[0]) {
       return WorkspaceSelectFolderResultSchema.parse({
         cancelled: true,
-        workspaceRoot: '',
-        workspaceName: ''
+        workspaceRoot: ''
       })
     }
 
@@ -491,9 +490,20 @@ export function registerIpcHandlers(
 
     return WorkspaceSelectFolderResultSchema.parse({
       cancelled: false,
-      workspaceRoot,
-      workspaceName: basename(workspaceRoot)
+      workspaceRoot
     })
+  })
+  // ADR-045 — open the workspace root in the OS file manager. Read-only
+  // affordance for the (now non-editable) workspace folder in Settings.
+  ipcMain.handle(ipcChannels.workspaceOpenRoot, async () => {
+    const workspace = database.getWorkspaceConfig()
+    if (!workspace) {
+      throw new Error('No workspace is configured.')
+    }
+    const openError = await shell.openPath(workspace.workspaceRoot)
+    if (openError) {
+      throw new Error(`Workspace folder could not be opened. ${openError}`)
+    }
   })
   ipcMain.handle(ipcChannels.workspaceSaveConfig, (_event, payload) => {
     const input = WorkspaceSaveConfigInputSchema.parse(payload)

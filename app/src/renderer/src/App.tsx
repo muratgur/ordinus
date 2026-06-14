@@ -7,9 +7,7 @@ import type {
   ProviderId,
   SetupStatus,
   SystemPaths,
-  WorkspaceSaveConfigInput,
-  WorkspaceUpdateSystemDefaultInput,
-  WorkspaceSelectFolderResult
+  WorkspaceUpdateSystemDefaultInput
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
 import { NotificationPolicyBridge } from './app/notification-policy-bridge'
@@ -152,27 +150,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  async function selectWorkspaceFolder(): Promise<WorkspaceSelectFolderResult> {
-    let selected: WorkspaceSelectFolderResult = {
-      cancelled: true,
-      workspaceRoot: '',
-      workspaceName: ''
-    }
-
-    await runSetupAction('select-folder', async () => {
-      selected = await window.ordinus.workspace.selectFolder()
-    })
-
-    return selected
-  }
-
-  async function saveWorkspace(input: WorkspaceSaveConfigInput): Promise<void> {
-    await runSetupAction('save-workspace', async () => {
-      await window.ordinus.workspace.saveConfig(input)
-      await loadStatus()
-    })
-  }
-
   async function connectProvider(providerId: ProviderId): Promise<void> {
     await runSetupAction(`connect-${providerId}`, async () => {
       await window.ordinus.runtime.connectProvider({ providerId })
@@ -279,8 +256,6 @@ function App(): React.JSX.Element {
                 setupStatus={state.setupStatus}
                 busyAction={state.busyAction}
                 setupError={state.setupError}
-                onSelectFolder={selectWorkspaceFolder}
-                onSaveWorkspace={saveWorkspace}
                 onConnectProvider={connectProvider}
                 onDisconnectProvider={disconnectProvider}
                 onRefreshProvider={refreshProvider}

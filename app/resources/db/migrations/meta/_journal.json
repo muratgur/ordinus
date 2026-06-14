@@ -337,6 +337,13 @@
       "when": 1781374727985,
       "tag": "0047_cultured_spyke",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1781431036923,
+      "tag": "0048_drop_workspace_name_and_ordinus_display_name",
+      "breakpoints": true
     }
   ]
 }

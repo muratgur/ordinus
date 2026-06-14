@@ -21,7 +21,6 @@ export const appMeta = sqliteTable('app_meta', {
 export const workspaceConfig = sqliteTable('workspace_config', {
   id: integer('id').primaryKey(),
   workspaceRoot: text('workspace_root').notNull(),
-  workspaceName: text('workspace_name').notNull(),
   defaultProviderId: text('default_provider_id').notNull().default('codex'),
   defaultModel: text('default_model').notNull().default('default'),
   createdAt: text('created_at').notNull(),
@@ -411,7 +410,6 @@ export const ordinusSingleton = sqliteTable('ordinus_singleton', {
   id: integer('id').primaryKey(),
   providerId: text('provider_id').notNull(),
   model: text('model').notNull().default('default'),
-  displayName: text('display_name').notNull().default('Ordinus'),
   // Optional avatar identifier (URL, asset key, or built-in name). Resolution
   // policy lives in the renderer; the DB just stores the string.
   avatarRef: text('avatar_ref'),

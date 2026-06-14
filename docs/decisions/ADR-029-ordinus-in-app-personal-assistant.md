@@ -15,6 +15,15 @@ refined. Workboard worker agents gain a minimal scoped read-only subset of the O
 catalog (`getWorkRunResult`, `getRequestDigest`, scoped to their own Work Request). The full
 catalog — including destructive and privileged tools — remains exclusive to the in-app assistant.
 
+Amended by ADR-045 (Settings IA and copy system): resolves the "persona editing — name,
+avatar, extra instructions" deferred item below. The **display name is removed** (it was never
+consumed). **Extra instructions are wired** into the Ordinus system prompt — appended in
+`assembleSystemPrompt` and built once at session init (first turn), the same lifecycle as the
+knowledge pack and memory, consistent with §6 ("once at session init, no per-turn
+re-injection"). Edits therefore shape new conversations and leave resumed sessions untouched.
+The Settings → Ordinus provider/model control and its copy are clarified to contrast with the
+ADR-002 system default.
+
 ## Date
 
 2026-06-07
@@ -453,6 +462,9 @@ screen.
 
 - **Ordinus persona editing** — name, avatar, extra instructions. Likely surfaces in
   Settings → Ordinus, possibly with a quick-edit affordance in Home. Out of scope here.
+  *(Resolved by ADR-045: display name removed as dead; extra instructions wired into the
+  session-init system prompt (first-turn assembly, same lifecycle as knowledge/memory). No
+  avatar field.)*
 - **Memory panel** — where the user views/edits `ordinus_memory` entries. Likely a
   Home side-panel or a Settings → Ordinus → Memory subsection. Out of scope here.
 - **First-run greeting** — Ordinus's first message after workspace creation. Reuses

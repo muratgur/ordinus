@@ -521,7 +521,6 @@ export class OrdinusDatabase {
   getOrdinusSingleton(): {
     providerId: string
     model: string
-    displayName: string
     avatarRef: string | null
     extraInstructions: string | null
     createdAt: string
@@ -532,7 +531,6 @@ export class OrdinusDatabase {
       return {
         providerId: existing.providerId,
         model: existing.model,
-        displayName: existing.displayName,
         avatarRef: existing.avatarRef,
         extraInstructions: existing.extraInstructions,
         createdAt: existing.createdAt,
@@ -554,7 +552,6 @@ export class OrdinusDatabase {
         id: 1,
         providerId: workspace.defaultProviderId,
         model: workspace.defaultModel,
-        displayName: 'Ordinus',
         avatarRef: null,
         extraInstructions: null,
         createdAt: now,
@@ -565,7 +562,6 @@ export class OrdinusDatabase {
     return {
       providerId: workspace.defaultProviderId,
       model: workspace.defaultModel,
-      displayName: 'Ordinus',
       avatarRef: null,
       extraInstructions: null,
       createdAt: now,
@@ -708,7 +704,6 @@ export class OrdinusDatabase {
   updateOrdinusSingleton(input: {
     providerId?: string
     model?: string
-    displayName?: string
     avatarRef?: string | null
     extraInstructions?: string | null
   }): void {
@@ -723,7 +718,6 @@ export class OrdinusDatabase {
       .set({
         providerId: input.providerId ?? current.providerId,
         model: input.model ?? current.model,
-        displayName: input.displayName ?? current.displayName,
         avatarRef: input.avatarRef === undefined ? current.avatarRef : input.avatarRef,
         extraInstructions:
           input.extraInstructions === undefined
@@ -1161,7 +1155,6 @@ export class OrdinusDatabase {
 
     return WorkspaceConfigSchema.parse({
       workspaceRoot: config.workspaceRoot,
-      workspaceName: config.workspaceName,
       defaultProviderId: config.defaultProviderId,
       defaultModel: config.defaultModel,
       createdAt: config.createdAt,
@@ -1172,7 +1165,6 @@ export class OrdinusDatabase {
   saveWorkspaceConfig(input: WorkspaceSaveConfigInput): WorkspaceConfig {
     const parsed = WorkspaceSaveConfigInputSchema.parse(input)
     const workspaceRoot = resolveWorkspaceRoot(parsed.workspaceRoot)
-    const workspaceName = parsed.workspaceName.trim()
     const now = new Date().toISOString()
     const existing = this.db.select().from(workspaceConfig).where(eq(workspaceConfig.id, 1)).get()
     const defaultProviderId = parsed.defaultProviderId ?? existing?.defaultProviderId ?? 'codex'
@@ -1187,7 +1179,6 @@ export class OrdinusDatabase {
         .update(workspaceConfig)
         .set({
           workspaceRoot,
-          workspaceName,
           defaultProviderId,
           defaultModel,
           updatedAt: now
@@ -1200,7 +1191,6 @@ export class OrdinusDatabase {
         .values({
           id: 1,
           workspaceRoot,
-          workspaceName,
           defaultProviderId,
           defaultModel,
           createdAt: now,

@@ -4,12 +4,10 @@ import {
   CheckCircle2,
   ChevronDown,
   Code2,
-  Database,
   Diamond,
   Download,
   ExternalLink,
   FolderOpen,
-  FolderLock,
   Library,
   Loader2,
   MonitorCog,
@@ -37,9 +35,7 @@ import type {
   ProviderStatus,
   SetupStatus,
   SystemPaths,
-  WorkspaceSaveConfigInput,
-  WorkspaceUpdateSystemDefaultInput,
-  WorkspaceSelectFolderResult
+  WorkspaceUpdateSystemDefaultInput
 } from '@shared/contracts'
 import {
   getDefaultModelForProvider,
@@ -47,11 +43,10 @@ import {
   isKnownProviderModel
 } from '@shared/provider-models'
 import { getProviderDisplayName } from '@shared/provider-labels'
-import { DetailRow } from '@renderer/components/detail-row'
-import { ReadinessBadge } from '@renderer/components/readiness-badge'
+import { CopyButton } from '@renderer/components/copy-button'
 import { SelectControl } from '@renderer/components/select-control'
-import { StatusCard } from '@renderer/components/status-card'
 import { Badge } from '@renderer/components/ui/badge'
+import { StatusBadge } from './settings/_shared'
 import { Switch } from '@renderer/components/ui/switch'
 import { Button } from '@renderer/components/ui/button'
 import {
@@ -70,10 +65,11 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
-import { formatDate } from '@renderer/lib/format'
 import { cn } from '@renderer/lib/utils'
+import { DiagnosticsSection } from './settings/diagnostics-section'
 import { OrdinusSettingsSection } from './settings/ordinus-settings-section'
 import { RemoteAccessSection } from './settings/remote-access-section'
+import { WorkspaceSection } from './settings/workspace-section'
 
 type SettingsScreenProps = {
   appInfo: AppInfo | null
@@ -82,8 +78,6 @@ type SettingsScreenProps = {
   setupStatus: SetupStatus | null
   busyAction: string
   setupError: string
-  onSelectFolder: () => Promise<WorkspaceSelectFolderResult>
-  onSaveWorkspace: (input: WorkspaceSaveConfigInput) => Promise<void>
   onConnectProvider: (providerId: ProviderId) => Promise<void>
   onDisconnectProvider: (providerId: ProviderId) => Promise<void>
   onRefreshProvider: (providerId: ProviderId) => Promise<void>
@@ -97,13 +91,13 @@ type SettingsSectionId =
   | 'remote-access'
   | 'connections'
   | 'skill-library'
-  | 'local-state'
+  | 'diagnostics'
 
 const settingsSections = [
   {
     id: 'workspace',
     label: 'Workspace',
-    description: 'Project folder and name',
+    description: 'The folder agents work in',
     icon: FolderOpen
   },
   {
@@ -115,7 +109,7 @@ const settingsSections = [
   {
     id: 'ordinus',
     label: 'Ordinus',
-    description: 'Persona, provider, and model for the in-app assistant',
+    description: 'Provider, model, and instructions for the in-app assistant',
     icon: Sparkles
   },
   {
@@ -137,9 +131,9 @@ const settingsSections = [
     icon: Library
   },
   {
-    id: 'local-state',
-    label: 'Local state',
-    description: 'App diagnostics and paths',
+    id: 'diagnostics',
+    label: 'Diagnostics',
+    description: 'App info, paths, and database state',
     icon: MonitorCog
   }
 ] satisfies Array<{
@@ -156,8 +150,6 @@ export function SettingsScreen({
   setupStatus,
   busyAction,
   setupError,
-  onSelectFolder,
-  onSaveWorkspace,
   onConnectProvider,
   onDisconnectProvider,
   onRefreshProvider,
@@ -184,37 +176,37 @@ export function SettingsScreen({
         <aside className="h-fit rounded-lg border bg-card p-2" aria-label="Settings sections">
           <nav className="grid gap-1">
             {settingsSections.map((section) => (
-              <button
-                key={section.id}
-                type="button"
-                onClick={() => setActiveSection(section.id)}
-                className={cn(
-                  'flex w-full items-start gap-3 rounded-md px-3 py-3 text-left transition-colors',
-                  activeSection === section.id
-                    ? 'bg-primary-soft text-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                )}
-              >
-                <section.icon className="mt-0.5 size-4 shrink-0" />
-                <span className="grid min-w-0 gap-1">
-                  <span className="text-sm font-medium leading-tight">{section.label}</span>
-                  <span className="text-xs leading-5">{section.description}</span>
-                </span>
-              </button>
+              <div key={section.id} className="contents">
+                {/* Diagnostics is an info screen, not a setting — set it apart. */}
+                {section.id === 'diagnostics' ? (
+                  <div className="my-1 border-t" aria-hidden="true" />
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setActiveSection(section.id)}
+                  className={cn(
+                    'flex w-full items-start gap-3 rounded-md px-3 py-3 text-left transition-colors',
+                    activeSection === section.id
+                      ? 'bg-primary-soft text-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                  )}
+                >
+                  <section.icon className="mt-0.5 size-4 shrink-0" />
+                  <span className="grid min-w-0 gap-1">
+                    <span className="text-sm font-medium leading-tight">{section.label}</span>
+                    <span className="text-xs leading-5">{section.description}</span>
+                  </span>
+                </button>
+              </div>
             ))}
           </nav>
         </aside>
 
         <section className="min-w-0">
           {activeSection === 'workspace' ? (
-            <WorkspaceSettingsSection
-              key={setupStatus?.workspace?.updatedAt ?? 'workspace-settings-empty'}
-              workspaceConfigured={Boolean(setupStatus?.workspaceConfigured)}
-              initialWorkspaceRoot={setupStatus?.workspace?.workspaceRoot ?? ''}
-              initialWorkspaceName={setupStatus?.workspace?.workspaceName ?? ''}
-              busyAction={busyAction}
-              onSelectFolder={onSelectFolder}
-              onSaveWorkspace={onSaveWorkspace}
+            <WorkspaceSection
+              workspaceRoot={setupStatus?.workspace?.workspaceRoot ?? ''}
+              configured={Boolean(setupStatus?.workspaceConfigured)}
             />
           ) : null}
 
@@ -238,8 +230,13 @@ export function SettingsScreen({
 
           {activeSection === 'skill-library' ? <SkillLibrarySettingsSection /> : null}
 
-          {activeSection === 'local-state' ? (
-            <LocalStateSettingsSection appInfo={appInfo} paths={paths} dbStatus={dbStatus} />
+          {activeSection === 'diagnostics' ? (
+            <DiagnosticsSection
+              appInfo={appInfo}
+              paths={paths}
+              dbStatus={dbStatus}
+              workspaceRoot={setupStatus?.workspace?.workspaceRoot ?? ''}
+            />
           ) : null}
         </section>
       </div>
@@ -745,6 +742,9 @@ function ConnectionsSettingsSection(): React.JSX.Element {
   // ADR-043: BYO-OAuth connectors (Google) connect through a setup wizard that
   // walks the user through creating their own OAuth client.
   const [googleConnector, setGoogleConnector] = useState<ConnectorSummary | null>(null)
+  // ADR-045 B5: every fresh connection opens a consistent intro first (what it
+  // does + where the credential lives), then routes to the type-specific flow.
+  const [introConnector, setIntroConnector] = useState<ConnectorSummary | null>(null)
 
   useEffect(() => {
     let active = true
@@ -802,16 +802,31 @@ function ConnectionsSettingsSection(): React.JSX.Element {
     }
   }, [])
 
+  // Route a fresh connect to its type-specific flow once the intro is accepted.
+  const proceedConnect = useCallback(
+    (connector: ConnectorSummary) => {
+      setIntroConnector(null)
+      if (connector.pairingLogin) {
+        setPairingConnector(connector)
+      } else if (connector.byoOAuthLogin) {
+        setGoogleConnector(connector)
+      } else {
+        void runAction(connector.id, 'connect')
+      }
+    },
+    [runAction]
+  )
+
   return (
     <div className="grid gap-4">
       <section className="grid gap-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold leading-6">External connectors</h2>
+            <h2 className="text-base font-semibold leading-6">Connections</h2>
             <p className="text-sm leading-6 text-muted-foreground">
-              Connect an external system once — Ordinus registers an OAuth client automatically and
-              stores only the credential, never the data. Agents that have it enabled use this
-              connection at run time.
+              External systems your agents can use — email, calendar, chat, and more. Connect one
+              once; Ordinus stores only the credential, never your data. Each agent uses only the
+              connections you enable for it.
             </p>
           </div>
           <Badge variant="secondary">
@@ -856,15 +871,10 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{connector.label}</span>
-                      <Badge variant={connector.connected ? 'default' : 'secondary'}>
-                        {connector.connected ? 'Connected' : 'Not connected'}
-                      </Badge>
-                      {connector.health === 'unhealthy' ? (
-                        <Badge variant="failed">Unhealthy</Badge>
-                      ) : null}
-                      {connector.health === 'reconnect-required' ? (
-                        <Badge variant="attention">Reconnect required</Badge>
-                      ) : null}
+                      {(() => {
+                        const s = getConnectorStatus(connector)
+                        return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>
+                      })()}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {connector.kind === 'local'
@@ -921,11 +931,11 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                         size="sm"
                         disabled={busyId === connector.id}
                         onClick={() =>
-                          connector.pairingLogin
-                            ? setPairingConnector(connector)
-                            : connector.byoOAuthLogin
-                              ? setGoogleConnector(connector)
-                              : void runAction(connector.id, 'connect')
+                          // Reconnect (BYO client already stored) skips the
+                          // intro — the user has seen it. Fresh connects open it.
+                          connector.byoClientConfigured
+                            ? setGoogleConnector(connector)
+                            : setIntroConnector(connector)
                         }
                       >
                         {busyId === connector.id
@@ -973,7 +983,99 @@ function ConnectionsSettingsSection(): React.JSX.Element {
           setGoogleConnector(null)
         }}
       />
+      <ConnectorConnectIntro
+        connector={introConnector}
+        onOpenChange={(open) => {
+          if (!open) {
+            setIntroConnector(null)
+          }
+        }}
+        onProceed={proceedConnect}
+      />
     </div>
+  )
+}
+
+// ADR-045 A4 — connector status mapped to the shared vocabulary.
+function getConnectorStatus(connector: ConnectorSummary): {
+  tone: 'connected' | 'idle' | 'action' | 'error'
+  label: string
+} {
+  if (!connector.connected) {
+    return { tone: 'idle', label: 'Not connected' }
+  }
+  if (connector.health === 'unhealthy') {
+    return { tone: 'error', label: 'Unhealthy' }
+  }
+  if (connector.health === 'reconnect-required') {
+    return { tone: 'action', label: 'Reconnect required' }
+  }
+  return { tone: 'connected', label: 'Connected' }
+}
+
+// ADR-045 B5 — the consistent "front door" before any fresh connection. Says
+// what the connection is for and where the credential lives, then hands off to
+// the type-specific flow (sign-in window, pairing dialog, or BYO-OAuth wizard).
+// Capability detail is deliberately honest: we don't have a per-connector tool
+// list at this point, so we promise the user they'll review and choose after
+// connecting rather than fabricating a summary.
+function ConnectorConnectIntro({
+  connector,
+  onOpenChange,
+  onProceed
+}: {
+  connector: ConnectorSummary | null
+  onOpenChange: (open: boolean) => void
+  onProceed: (connector: ConnectorSummary) => void
+}): React.JSX.Element {
+  const trustLine = connector?.byoOAuthLogin
+    ? 'Connect walks you through creating your own app — your data stays under your permissions, with no Ordinus-owned app in the middle.'
+    : connector?.kind === 'local'
+      ? 'This connector runs on your computer, managed by Ordinus. Your data never leaves this machine.'
+      : 'Ordinus stores only the credential on this machine — never your data.'
+
+  return (
+    <Dialog open={connector !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Connect {connector?.label ?? 'connector'}</DialogTitle>
+          <DialogDescription>
+            Give your agents access to {connector?.label ?? 'this system'}. Only agents you enable
+            it for will use it.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Ordinus ⇄ connector — the classic two-systems-connecting cue. */}
+        <div className="flex items-center justify-center gap-3 rounded-lg border bg-accent/40 py-4">
+          <span className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium">Ordinus</span>
+          <Plug className="size-4 text-muted-foreground" />
+          <span className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium">
+            {connector?.label ?? '—'}
+          </span>
+        </div>
+
+        <div className="grid gap-2 text-sm leading-6 text-muted-foreground">
+          <p>
+            After connecting, you&apos;ll see exactly what {connector?.label ?? 'it'} can do and
+            choose which actions to allow
+            {connector?.kind === 'local' ? ' under the connector' : ''}.
+          </p>
+          <p className="flex items-start gap-2">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
+            <span>{trustLine}</span>
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={() => connector && onProceed(connector)}>
+            Connect
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1412,118 +1514,6 @@ function LocalConnectorTools({ connectorId }: { connectorId: string }): React.JS
   )
 }
 
-function WorkspaceSettingsSection({
-  workspaceConfigured,
-  initialWorkspaceRoot,
-  initialWorkspaceName,
-  busyAction,
-  onSelectFolder,
-  onSaveWorkspace
-}: {
-  workspaceConfigured: boolean
-  initialWorkspaceRoot: string
-  initialWorkspaceName: string
-  busyAction: string
-  onSelectFolder: () => Promise<WorkspaceSelectFolderResult>
-  onSaveWorkspace: (input: WorkspaceSaveConfigInput) => Promise<void>
-}): React.JSX.Element {
-  const [workspaceRoot, setWorkspaceRoot] = useState(initialWorkspaceRoot)
-  const [workspaceName, setWorkspaceName] = useState(initialWorkspaceName)
-
-  async function chooseFolder(): Promise<void> {
-    const result = await onSelectFolder()
-    if (result.cancelled) return
-
-    setWorkspaceRoot(result.workspaceRoot)
-    setWorkspaceName((current) => current || result.workspaceName)
-  }
-
-  async function saveWorkspace(): Promise<void> {
-    await onSaveWorkspace({ workspaceRoot, workspaceName })
-  }
-
-  return (
-    <div className="grid gap-4">
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <FolderOpen className="size-4 text-primary" />
-                Project workspace
-              </CardTitle>
-              <CardDescription>
-                Agents can work inside this folder and nowhere above it.
-              </CardDescription>
-            </div>
-            <ReadinessBadge ready={workspaceConfigured} readyText="Ready" />
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="flex gap-3 rounded-md border bg-accent px-3 py-3">
-            <FolderLock className="mt-0.5 size-4 shrink-0 text-primary" />
-            <div className="grid gap-1 text-sm">
-              <p className="font-medium leading-tight">Workspace boundary</p>
-              <p className="leading-6 text-muted-foreground">
-                Agents work inside this folder. Choose the project folder where agent changes,
-                generated files, and shared context should live.
-              </p>
-              <p className="leading-6 text-muted-foreground">
-                Ordinus keeps work scoped to this workspace so unrelated folders stay out of the
-                flow.
-              </p>
-            </div>
-          </div>
-
-          <label className="grid gap-2 text-sm font-medium">
-            Project name
-            <Input
-              value={workspaceName}
-              onChange={(event) => setWorkspaceName(event.target.value)}
-              placeholder="Ordinus workspace"
-            />
-          </label>
-          <label className="grid gap-2 text-sm font-medium">
-            Folder path
-            <Input
-              value={workspaceRoot}
-              onChange={(event) => setWorkspaceRoot(event.target.value)}
-              placeholder="Choose a local project folder"
-            />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void chooseFolder()}
-              disabled={Boolean(busyAction)}
-            >
-              {busyAction === 'select-folder' ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <FolderOpen />
-              )}
-              Choose Folder
-            </Button>
-            <Button
-              type="button"
-              onClick={() => void saveWorkspace()}
-              disabled={!workspaceRoot.trim() || !workspaceName.trim() || Boolean(busyAction)}
-            >
-              {busyAction === 'save-workspace' ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <CheckCircle2 />
-              )}
-              Save Workspace
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
 function ProvidersSettingsSection({
   setupStatus,
   codex,
@@ -1545,30 +1535,23 @@ function ProvidersSettingsSection({
   const providers = codex ? [codex, ...otherProviders] : otherProviders
   const defaultProviderId = setupStatus?.workspace?.defaultProviderId ?? 'codex'
   const defaultModel = setupStatus?.workspace?.defaultModel ?? 'default'
+  const connectedCount = providers.filter((provider) => provider.connected).length
 
+  // Connections first, then the default: you connect a provider before you can
+  // make it the default. The default panel is the result of that flow (ADR-045).
   return (
     <div className="grid gap-4">
-      <SystemDefaultSettingsPanel
-        key={`${defaultProviderId}:${defaultModel}:${setupStatus?.workspace?.updatedAt ?? 'empty'}`}
-        providers={providers}
-        workspaceConfigured={Boolean(setupStatus?.workspaceConfigured)}
-        initialProviderId={defaultProviderId}
-        initialModel={defaultModel}
-        busyAction={busyAction}
-        onSave={onUpdateSystemDefault}
-      />
-
       <section className="grid gap-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold leading-6">Provider connections</h2>
+            <h2 className="text-base font-semibold leading-6">Connections</h2>
             <p className="text-sm leading-6 text-muted-foreground">
-              Connect local CLIs for Ordinus-managed agent work.
+              The local AI CLIs Ordinus runs agents on. Sign in to one to start working.
             </p>
           </div>
-          <Badge variant="secondary">
-            {providers.filter((provider) => provider.connected).length} ready
-          </Badge>
+          <StatusBadge tone={connectedCount > 0 ? 'connected' : 'idle'}>
+            {connectedCount > 0 ? `${connectedCount} connected` : 'None connected'}
+          </StatusBadge>
         </div>
 
         {providers.map((provider) => (
@@ -1583,6 +1566,17 @@ function ProvidersSettingsSection({
           />
         ))}
       </section>
+
+      <SystemDefaultSettingsPanel
+        key={`${defaultProviderId}:${defaultModel}:${setupStatus?.workspace?.updatedAt ?? 'empty'}`}
+        providers={providers}
+        workspaceConfigured={Boolean(setupStatus?.workspaceConfigured)}
+        anyConnected={connectedCount > 0}
+        initialProviderId={defaultProviderId}
+        initialModel={defaultModel}
+        busyAction={busyAction}
+        onSave={onUpdateSystemDefault}
+      />
     </div>
   )
 }
@@ -1639,10 +1633,7 @@ function ProviderConnectionRow({
                   Default
                 </Badge>
               ) : null}
-              <Badge variant={status.variant} className="gap-1">
-                <ConnectionStatusGlyph provider={provider} />
-                {status.label}
-              </Badge>
+              <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
             </div>
             <p className="mt-1 truncate text-sm leading-6 text-muted-foreground">
               {getProviderSummary(provider)}
@@ -1755,11 +1746,45 @@ function ProviderConnectionDetails({ provider }: { provider: ProviderStatus }): 
           {provider.lastError}
         </p>
       ) : null}
-      <p className="text-xs leading-5 text-muted-foreground md:col-span-2 xl:col-span-4">
-        Disconnect removes only the provider credentials managed by Ordinus.
-      </p>
+      {provider.installed ? (
+        <p className="text-xs leading-5 text-muted-foreground md:col-span-2 xl:col-span-4">
+          Disconnect removes only the provider credentials managed by Ordinus.
+        </p>
+      ) : (
+        <div className="grid gap-1.5 md:col-span-2 xl:col-span-4">
+          <p className="text-xs leading-5 text-muted-foreground">
+            Install the CLI, then press Check to detect it:
+          </p>
+          <div className="group flex items-center justify-between gap-2 rounded-md bg-accent px-3 py-2">
+            <code className="select-text break-all font-mono text-xs leading-5">
+              {getProviderInstallCommand(provider.id)}
+            </code>
+            <CopyButton
+              text={getProviderInstallCommand(provider.id)}
+              label="Copy install command"
+              className="opacity-0 transition-opacity group-hover:opacity-100"
+            />
+          </div>
+        </div>
+      )}
     </dl>
   )
+}
+
+// Official global-install commands. Ordinus installs these for you during
+// onboarding; this is the path for adding a provider you skipped — once it's on
+// PATH, `findCliExecutable` picks it up and Check detects it (ADR-028 fallback).
+function getProviderInstallCommand(providerId: ProviderId): string {
+  switch (providerId) {
+    case 'codex':
+      return 'npm install -g @openai/codex'
+    case 'claude':
+      return 'npm install -g @anthropic-ai/claude-code'
+    case 'gemini':
+      return 'npm install -g @google/gemini-cli'
+    default:
+      return ''
+  }
 }
 
 function CompactProviderDetail({
@@ -1786,25 +1811,19 @@ function ProviderGlyph({ providerId }: { providerId: ProviderId }): React.JSX.El
   return <Code2 className="size-5" />
 }
 
-function ConnectionStatusGlyph({ provider }: { provider: ProviderStatus }): React.JSX.Element {
-  if (provider.connected) return <CheckCircle2 className="size-3" />
-  if (provider.installed) return <PlugZap className="size-3" />
-  return <Terminal className="size-3" />
-}
-
 function getProviderConnectionStatus(provider: ProviderStatus): {
   label: string
-  variant: 'completed' | 'attention' | 'outline'
+  tone: 'connected' | 'action' | 'idle'
 } {
   if (provider.connected) {
-    return { label: 'Ready', variant: 'completed' }
+    return { label: 'Connected', tone: 'connected' }
   }
 
   if (provider.installed) {
-    return { label: 'Needs login', variant: 'attention' }
+    return { label: 'Needs login', tone: 'action' }
   }
 
-  return { label: 'CLI missing', variant: 'outline' }
+  return { label: 'Not installed', tone: 'idle' }
 }
 
 function getProviderSummary(provider: ProviderStatus): string {
@@ -1830,6 +1849,7 @@ function confirmProviderDisconnect(providerName: string): boolean {
 function SystemDefaultSettingsPanel({
   providers,
   workspaceConfigured,
+  anyConnected,
   initialProviderId,
   initialModel,
   busyAction,
@@ -1837,6 +1857,7 @@ function SystemDefaultSettingsPanel({
 }: {
   providers: ProviderStatus[]
   workspaceConfigured: boolean
+  anyConnected: boolean
   initialProviderId: ProviderId
   initialModel: string
   busyAction: string
@@ -1871,6 +1892,30 @@ function SystemDefaultSettingsPanel({
     await onSave({ providerId, model: model.trim() })
   }
 
+  // No connected provider yet → the default can't point at anything. Guide the
+  // user back up to Connections rather than showing an inert dropdown (ADR-045).
+  if (!anyConnected) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-4 text-primary" />
+            System default
+          </CardTitle>
+          <CardDescription>
+            The provider and model for agent work and background planning. The Ordinus assistant has
+            its own provider in the Ordinus section.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="rounded-md border border-dashed bg-accent/40 px-3 py-4 text-sm leading-6 text-muted-foreground">
+            Connect a provider above first — then pick which one runs agent work by default.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -1881,10 +1926,13 @@ function SystemDefaultSettingsPanel({
               System default
             </CardTitle>
             <CardDescription>
-              Ordinus uses this provider and model for app-owned AI work.
+              The provider and model for agent work and background planning. The Ordinus assistant
+              has its own provider in the Ordinus section.
             </CardDescription>
           </div>
-          <Badge variant="secondary">{selectedProvider?.connected ? 'Ready' : 'Needs login'}</Badge>
+          <StatusBadge tone={selectedProvider?.connected ? 'connected' : 'action'}>
+            {selectedProvider?.connected ? 'Connected' : 'Needs login'}
+          </StatusBadge>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -1935,61 +1983,5 @@ function SystemDefaultSettingsPanel({
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-function LocalStateSettingsSection({
-  appInfo,
-  paths,
-  dbStatus
-}: {
-  appInfo: AppInfo | null
-  paths: SystemPaths | null
-  dbStatus: DbStatus | null
-}): React.JSX.Element {
-  return (
-    <div className="grid gap-4">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatusCard
-          icon={<MonitorCog />}
-          title="App"
-          description="Desktop application metadata."
-          rows={[
-            ['Name', appInfo?.name ?? '-'],
-            ['Version', appInfo?.version ?? '-'],
-            ['Platform', appInfo ? `${appInfo.platform} ${appInfo.arch}` : '-'],
-            ['Packaged', appInfo ? String(appInfo.isPackaged) : '-']
-          ]}
-        />
-        <StatusCard
-          icon={<Database />}
-          title="Persistence"
-          description="Local database bootstrap state."
-          rows={[
-            ['Initialized', dbStatus ? String(dbStatus.initialized) : '-'],
-            ['Schema', dbStatus?.schemaVersion?.toString() ?? '-'],
-            ['Created', formatDate(dbStatus?.createdAt)],
-            ['Updated', formatDate(dbStatus?.updatedAt)]
-          ]}
-        />
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="size-4 text-primary" />
-              Local paths
-            </CardTitle>
-            <CardDescription>App-owned paths used by main process services.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <dl className="grid gap-3 text-sm">
-              <DetailRow label="User data" value={paths?.userData ?? '-'} />
-              <DetailRow label="Database" value={paths?.database ?? '-'} />
-              <DetailRow label="Runtime" value={paths?.runtime ?? '-'} />
-              <DetailRow label="Logs" value={paths?.logs ?? '-'} />
-            </dl>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
   )
 }

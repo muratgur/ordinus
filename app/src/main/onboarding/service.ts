@@ -48,7 +48,7 @@ export class OnboardingService {
     return this.database.saveOnboardingState(advanceStage(next, 'workspace'))
   }
 
-  confirmWorkspace(input: { workspaceRoot: string; workspaceName: string }): {
+  confirmWorkspace(input: { workspaceRoot: string }): {
     status: OnboardingStatus
     workspace: WorkspaceConfig
   } {
@@ -56,7 +56,6 @@ export class OnboardingService {
     assertWorkspaceUsable(input.workspaceRoot)
     const parsed = WorkspaceSaveConfigInputSchema.parse({
       workspaceRoot: input.workspaceRoot,
-      workspaceName: input.workspaceName,
       defaultProviderId: state.selectedProviders[0],
       defaultModel: 'default'
     })
@@ -64,8 +63,7 @@ export class OnboardingService {
     const next: OnboardingState = {
       ...state,
       workspace: {
-        workspaceRoot: workspace.workspaceRoot,
-        workspaceName: workspace.workspaceName
+        workspaceRoot: workspace.workspaceRoot
       }
     }
     const status = this.database.saveOnboardingState(advanceStage(next, 'install'))
