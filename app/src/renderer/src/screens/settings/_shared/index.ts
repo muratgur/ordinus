@@ -3,3 +3,5 @@
 
 export { SettingBlock } from './setting-row'
 export { StatusBadge, type SettingsStatusTone } from './status-badge'
+export { ConnectorIcon } from './connector-icon'
+export { ProviderIcon } from './provider-icon'

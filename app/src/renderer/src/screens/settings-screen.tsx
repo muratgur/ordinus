@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bot,
   CheckCircle2,
   ChevronDown,
-  Code2,
-  Diamond,
   Download,
   ExternalLink,
   FolderOpen,
@@ -13,11 +10,13 @@ import {
   MonitorCog,
   Plug,
   PlugZap,
+  Plus,
   RefreshCcw,
+  ScrollText,
   Smartphone,
   Sparkles,
-  Terminal,
   Unplug,
+  Wrench,
   ShieldCheck
 } from 'lucide-react'
 import type {
@@ -46,7 +45,7 @@ import { getProviderDisplayName } from '@shared/provider-labels'
 import { CopyButton } from '@renderer/components/copy-button'
 import { SelectControl } from '@renderer/components/select-control'
 import { Badge } from '@renderer/components/ui/badge'
-import { StatusBadge } from './settings/_shared'
+import { ConnectorIcon, ProviderIcon, StatusBadge } from './settings/_shared'
 import { Switch } from '@renderer/components/ui/switch'
 import { Button } from '@renderer/components/ui/button'
 import {
@@ -333,32 +332,38 @@ function SkillLibrarySettingsSection(): React.JSX.Element {
             The skill library is empty
           </div>
         ) : (
-          <ul className="divide-y rounded-md border">
+          <div className="grid gap-2">
             {skills.map((skill) => (
-              <li key={skill.id}>
+              <article
+                key={skill.id}
+                className="rounded-lg border bg-card transition-colors hover:border-ring/40"
+              >
                 <button
                   type="button"
-                  className="flex w-full items-start justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-accent"
+                  className="flex w-full items-start gap-3 p-4 text-left"
                   onClick={() => void openSkill(skill.id)}
                 >
-                  <span className="grid min-w-0 gap-0.5">
-                    <span className="flex items-center gap-2 text-sm font-medium">
-                      <span className="truncate">{skill.name}</span>
+                  <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary">
+                    <ScrollText className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-base font-semibold leading-6">{skill.name}</h3>
                       <Badge variant="outline" className="shrink-0">
                         {skill.origin === 'builtin' ? 'Ordinus' : 'Imported'}
                       </Badge>
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">
+                    </div>
+                    <p className="mt-0.5 line-clamp-2 text-sm leading-6 text-muted-foreground">
                       {skill.description}
-                    </span>
-                  </span>
+                    </p>
+                  </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {new Date(skill.updatedAt).toLocaleDateString()}
                   </span>
                 </button>
-              </li>
+              </article>
             ))}
-          </ul>
+          </div>
         )}
       </section>
 
@@ -829,9 +834,6 @@ function ConnectionsSettingsSection(): React.JSX.Element {
               connections you enable for it.
             </p>
           </div>
-          <Badge variant="secondary">
-            {connectors.filter((connector) => connector.connected).length} connected
-          </Badge>
         </div>
 
         {error ? (
@@ -849,7 +851,7 @@ function ConnectionsSettingsSection(): React.JSX.Element {
             No connectors available
           </div>
         ) : (
-          <ul className="divide-y rounded-md border">
+          <div className="grid gap-2">
             {connectors.map((connector) => {
               // Same button in both the connected and not-connected branches —
               // it depends only on whether a BYO client is stored.
@@ -864,95 +866,91 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                 </Button>
               ) : null
               return (
-                <li
+                <article
                   key={connector.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3"
+                  className="rounded-lg border bg-card p-4 transition-colors hover:border-ring/40"
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{connector.label}</span>
-                      {(() => {
-                        const s = getConnectorStatus(connector)
-                        return <StatusBadge tone={s.tone}>{s.label}</StatusBadge>
-                      })()}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <ConnectorIcon connectorId={connector.id} label={connector.label} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-semibold leading-6">{connector.label}</h3>
+                          <ConnectorStatusDot connector={connector} />
+                        </div>
+                        <p className="mt-0.5 text-sm leading-6 text-muted-foreground">
+                          {connectorDescription(connector.id)}
+                        </p>
+                        {connector.kind === 'local' &&
+                        connector.installedVersion &&
+                        /^\d/.test(connector.installedVersion) ? (
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            v{connector.installedVersion}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {connector.kind === 'local'
-                        ? `Runs on this computer · managed by Ordinus${
-                            connector.installedVersion ? ` · v${connector.installedVersion}` : ''
-                          }`
-                        : `${connector.transport} · ${connector.authMethod}`}
-                    </p>
-                    {connector.interactiveLogin && !connector.connected ? (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Connect opens a sign-in window — log in to your account there to finish.
-                      </p>
-                    ) : null}
-                    {connector.byoOAuthLogin && !connector.connected ? (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {connector.byoClientConfigured
-                          ? 'Reconnect re-approves access in a Google window (personal apps re-auth periodically).'
-                          : 'Connect walks you through creating your own Google app — your data stays under your permissions.'}
-                      </p>
-                    ) : null}
-                    {connector.kind === 'local' && connector.connected ? (
-                      <LocalConnectorTools connectorId={connector.id} />
-                    ) : null}
-                  </div>
-                  {connector.connected ? (
-                    <div className="flex shrink-0 items-center gap-2">
-                      {(connector.pairingLogin || connector.byoOAuthLogin) &&
-                      connector.health === 'reconnect-required' ? (
+                    {connector.connected ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        {connector.health === 'reconnect-required' ? (
+                          <Button
+                            size="sm"
+                            disabled={busyId === connector.id}
+                            onClick={() =>
+                              connector.byoOAuthLogin
+                                ? setGoogleConnector(connector)
+                                : connector.pairingLogin
+                                  ? setPairingConnector(connector)
+                                  : void runAction(connector.id, 'connect')
+                            }
+                          >
+                            Reconnect
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busyId === connector.id}
+                          onClick={() => void runAction(connector.id, 'disconnect')}
+                        >
+                          Disconnect
+                        </Button>
+                        {removeSetupButton}
+                      </div>
+                    ) : (
+                      <div className="flex shrink-0 items-center gap-2">
                         <Button
                           size="sm"
                           disabled={busyId === connector.id}
                           onClick={() =>
-                            connector.byoOAuthLogin
+                            // Reconnect (BYO client already stored) skips the
+                            // intro — the user has seen it. Fresh connects open it.
+                            connector.byoClientConfigured
                               ? setGoogleConnector(connector)
-                              : setPairingConnector(connector)
+                              : setIntroConnector(connector)
                           }
                         >
-                          Reconnect
+                          {busyId === connector.id
+                            ? connector.kind === 'local'
+                              ? 'Preparing…'
+                              : 'Connecting…'
+                            : connector.byoClientConfigured
+                              ? 'Reconnect'
+                              : 'Connect'}
                         </Button>
-                      ) : null}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busyId === connector.id}
-                        onClick={() => void runAction(connector.id, 'disconnect')}
-                      >
-                        Disconnect
-                      </Button>
-                      {removeSetupButton}
+                        {removeSetupButton}
+                      </div>
+                    )}
+                  </div>
+                  {connector.kind === 'local' && connector.connected ? (
+                    <div className="mt-3 border-t pt-3">
+                      <LocalConnectorTools connectorId={connector.id} />
                     </div>
-                  ) : (
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button
-                        size="sm"
-                        disabled={busyId === connector.id}
-                        onClick={() =>
-                          // Reconnect (BYO client already stored) skips the
-                          // intro — the user has seen it. Fresh connects open it.
-                          connector.byoClientConfigured
-                            ? setGoogleConnector(connector)
-                            : setIntroConnector(connector)
-                        }
-                      >
-                        {busyId === connector.id
-                          ? connector.kind === 'local'
-                            ? 'Preparing…'
-                            : 'Connecting…'
-                          : connector.byoClientConfigured
-                            ? 'Reconnect'
-                            : 'Connect'}
-                      </Button>
-                      {removeSetupButton}
-                    </div>
-                  )}
-                </li>
+                  ) : null}
+                </article>
               )
             })}
-          </ul>
+          </div>
         )}
       </section>
       <PairingConnectDialog
@@ -996,21 +994,51 @@ function ConnectionsSettingsSection(): React.JSX.Element {
   )
 }
 
-// ADR-045 A4 — connector status mapped to the shared vocabulary.
-function getConnectorStatus(connector: ConnectorSummary): {
-  tone: 'connected' | 'idle' | 'action' | 'error'
-  label: string
-} {
+// What each connector is, in plain terms — so a row reads as "what is this and
+// what could my agents do with it", not a transport/auth token. The connect
+// dialog already covers how the connection works and where data lives, so the
+// row stays a one-liner.
+const CONNECTOR_DESCRIPTIONS: Record<string, string> = {
+  datadog: 'Monitoring and observability — metrics, traces, dashboards, and logs.',
+  linear: 'Issue tracking and project planning for product teams.',
+  notion: 'Docs, wikis, and databases.',
+  canva: 'Design tool for graphics, social posts, and presentations.',
+  linkedin: 'Professional network — profiles, posts, and messaging.',
+  whatsapp: 'Messaging — read and send your WhatsApp chats.',
+  atlassian: 'Jira issues and Confluence pages.',
+  google: 'Gmail, Google Calendar, and Drive.',
+  'dev-fixture': 'Local test connector used during development.'
+}
+
+function connectorDescription(connectorId: string): string {
+  return CONNECTOR_DESCRIPTIONS[connectorId] ?? 'External system your agents can use.'
+}
+
+// Status is kept quiet: a single dot, shown only once a connector is set up
+// (the orange Connect button already signals "not connected"). Color carries
+// the meaning; the title gives the word for hover/screen readers (ADR-045 A4).
+function ConnectorStatusDot({
+  connector
+}: {
+  connector: ConnectorSummary
+}): React.JSX.Element | null {
   if (!connector.connected) {
-    return { tone: 'idle', label: 'Not connected' }
+    return null
   }
-  if (connector.health === 'unhealthy') {
-    return { tone: 'error', label: 'Unhealthy' }
-  }
-  if (connector.health === 'reconnect-required') {
-    return { tone: 'action', label: 'Reconnect required' }
-  }
-  return { tone: 'connected', label: 'Connected' }
+  const { color, label } =
+    connector.health === 'unhealthy'
+      ? { color: 'bg-status-failed', label: 'Unhealthy' }
+      : connector.health === 'reconnect-required'
+        ? { color: 'bg-status-attention', label: 'Reconnect required' }
+        : { color: 'bg-status-completed', label: 'Connected' }
+  return (
+    <span
+      className={cn('size-2 shrink-0 rounded-full', color)}
+      title={label}
+      aria-label={label}
+      role="img"
+    />
+  )
 }
 
 // ADR-045 B5 — the consistent "front door" before any fresh connection. Says
@@ -1045,26 +1073,37 @@ function ConnectorConnectIntro({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Ordinus ⇄ connector — the classic two-systems-connecting cue. */}
-        <div className="flex items-center justify-center gap-3 rounded-lg border bg-accent/40 py-4">
-          <span className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium">Ordinus</span>
-          <Plug className="size-4 text-muted-foreground" />
-          <span className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium">
-            {connector?.label ?? '—'}
-          </span>
-        </div>
-
-        <div className="grid gap-2 text-sm leading-6 text-muted-foreground">
-          <p>
-            After connecting, you&apos;ll see exactly what {connector?.label ?? 'it'} can do and
-            choose which actions to allow
-            {connector?.kind === 'local' ? ' under the connector' : ''}.
-          </p>
-          <p className="flex items-start gap-2">
+        {/* Ordinus ⇄ connector — the classic two-systems-connecting cue, with
+            the trust line built into the card footer. */}
+        <div className="overflow-hidden rounded-lg border">
+          <div className="flex items-center justify-center gap-4 bg-accent/40 py-5">
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="grid size-10 place-items-center rounded-lg bg-primary text-primary-foreground">
+                <Plus className="size-5" />
+              </div>
+              <span className="text-xs font-medium">Ordinus</span>
+            </div>
+            <Plug className="size-4 text-muted-foreground" />
+            <div className="flex flex-col items-center gap-1.5">
+              {connector ? (
+                <ConnectorIcon connectorId={connector.id} label={connector.label} />
+              ) : null}
+              <span className="text-xs font-medium">{connector?.label ?? '—'}</span>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 border-t px-4 py-3 text-xs leading-5 text-muted-foreground">
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" />
             <span>{trustLine}</span>
-          </p>
+          </div>
         </div>
+
+        <p className="text-sm leading-6 text-muted-foreground">
+          {connector?.interactiveLogin
+            ? 'Connect opens a sign-in window — log in to your account there to finish. '
+            : ''}
+          After connecting, you&apos;ll see exactly what {connector?.label ?? 'it'} can do and
+          choose which actions to allow{connector?.kind === 'local' ? ' under the connector' : ''}.
+        </p>
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
@@ -1343,16 +1382,14 @@ function GoogleConnectDialog({
                     {index + 1}
                   </span>
                   <span className="min-w-0 flex-1 leading-6">{step.label}</span>
-                  <Button
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
+                    className="mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary transition-colors hover:underline"
                     onClick={() => void window.ordinus.system.openExternal(step.url)}
                   >
                     Open
-                    <ExternalLink className="ml-1 size-3" />
-                  </Button>
+                    <ExternalLink className="size-3" />
+                  </button>
                 </li>
               ))}
             </ol>
@@ -1484,16 +1521,17 @@ function LocalConnectorTools({ connectorId }: { connectorId: string }): React.JS
     <div className="mt-2">
       <button
         type="button"
-        className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         onClick={() => setExpanded((value) => !value)}
       >
+        <Wrench className="size-3.5" />
         {expanded ? 'Hide tools' : 'Manage tools'}
       </button>
       {expanded ? (
         tools.length === 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">No tools discovered.</p>
         ) : (
-          <ul className="mt-2 grid gap-2 rounded-md border bg-accent/40 p-3">
+          <ul className="ordinus-scrollbar mt-2 grid max-h-72 gap-2 overflow-y-auto rounded-md border bg-accent/40 p-3">
             {tools.map((tool) => (
               <li key={tool.name} className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -1542,16 +1580,11 @@ function ProvidersSettingsSection({
   return (
     <div className="grid gap-4">
       <section className="grid gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold leading-6">Connections</h2>
-            <p className="text-sm leading-6 text-muted-foreground">
-              The local AI CLIs Ordinus runs agents on. Sign in to one to start working.
-            </p>
-          </div>
-          <StatusBadge tone={connectedCount > 0 ? 'connected' : 'idle'}>
-            {connectedCount > 0 ? `${connectedCount} connected` : 'None connected'}
-          </StatusBadge>
+        <div>
+          <h2 className="text-base font-semibold leading-6">Providers</h2>
+          <p className="text-sm leading-6 text-muted-foreground">
+            The local AI CLIs Ordinus runs your agents on. Sign in to one to start working.
+          </p>
         </div>
 
         {providers.map((provider) => (
@@ -1599,7 +1632,6 @@ function ProviderConnectionRow({
   const [expanded, setExpanded] = useState(false)
   const providerName = getProviderDisplayName(provider.id)
   const isDefault = provider.id === defaultProviderId
-  const status = getProviderConnectionStatus(provider)
 
   async function disconnect(): Promise<void> {
     if (!confirmProviderDisconnect(providerName)) return
@@ -1611,18 +1643,7 @@ function ProviderConnectionRow({
     <article className="overflow-hidden rounded-lg border bg-card">
       <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="flex min-w-0 items-start gap-3">
-          <div
-            className={cn(
-              'flex size-10 shrink-0 items-center justify-center rounded-md border',
-              provider.connected
-                ? 'border-status-completed/20 bg-status-completed/10 text-status-completed'
-                : provider.installed
-                  ? 'border-border bg-accent text-muted-foreground'
-                  : 'border-status-attention/20 bg-status-attention/10 text-status-attention'
-            )}
-          >
-            <ProviderGlyph providerId={provider.id} />
-          </div>
+          <ProviderIcon providerId={provider.id} label={provider.label} />
 
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -1633,7 +1654,7 @@ function ProviderConnectionRow({
                   Default
                 </Badge>
               ) : null}
-              <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+              <ProviderStatusIndicator provider={provider} />
             </div>
             <p className="mt-1 truncate text-sm leading-6 text-muted-foreground">
               {getProviderSummary(provider)}
@@ -1682,19 +1703,9 @@ function ProviderConnectionActions({
   const isDisconnecting = busyAction === `disconnect-${provider.id}`
 
   return (
-    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-      <Button
-        type="button"
-        variant="outline"
-        size="icon"
-        onClick={() => void onRefresh()}
-        disabled={Boolean(busyAction)}
-        title={`Check ${providerName}`}
-        aria-label={`Check ${providerName}`}
-      >
-        {isRefreshing ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
-      </Button>
-
+    <div className="flex flex-wrap items-center gap-1 lg:justify-end">
+      {/* Primary action leads; refresh and the details toggle are quiet ghost
+          icons so they don't compete with Connect for attention. */}
       {provider.connected ? (
         <Button
           type="button"
@@ -1720,6 +1731,20 @@ function ProviderConnectionActions({
         type="button"
         variant="ghost"
         size="icon"
+        className="text-muted-foreground"
+        onClick={() => void onRefresh()}
+        disabled={Boolean(busyAction)}
+        title={`Check ${providerName}`}
+        aria-label={`Check ${providerName}`}
+      >
+        {isRefreshing ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
+      </Button>
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground"
         onClick={onToggleDetails}
         title={expanded ? 'Hide details' : 'Show details'}
         aria-expanded={expanded}
@@ -1804,26 +1829,24 @@ function CompactProviderDetail({
   )
 }
 
-function ProviderGlyph({ providerId }: { providerId: ProviderId }): React.JSX.Element {
-  if (providerId === 'codex') return <Terminal className="size-5" />
-  if (providerId === 'claude') return <Bot className="size-5" />
-  if (providerId === 'gemini') return <Diamond className="size-5" />
-  return <Code2 className="size-5" />
-}
-
-function getProviderConnectionStatus(provider: ProviderStatus): {
-  label: string
-  tone: 'connected' | 'action' | 'idle'
-} {
+// Status is kept quiet: a green dot once a provider is signed in (the
+// Disconnect button already says "connected"), and a badge only for the states
+// that actually need the user to act — "Needs login" and "Not installed".
+function ProviderStatusIndicator({ provider }: { provider: ProviderStatus }): React.JSX.Element {
   if (provider.connected) {
-    return { label: 'Connected', tone: 'connected' }
+    return (
+      <span
+        className="size-2 shrink-0 rounded-full bg-status-completed"
+        title="Connected"
+        aria-label="Connected"
+        role="img"
+      />
+    )
   }
-
   if (provider.installed) {
-    return { label: 'Needs login', tone: 'action' }
+    return <StatusBadge tone="action">Needs login</StatusBadge>
   }
-
-  return { label: 'Not installed', tone: 'idle' }
+  return <StatusBadge tone="idle">Not installed</StatusBadge>
 }
 
 function getProviderSummary(provider: ProviderStatus): string {
@@ -1919,21 +1942,14 @@ function SystemDefaultSettingsPanel({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="size-4 text-primary" />
-              System default
-            </CardTitle>
-            <CardDescription>
-              The provider and model for agent work and background planning. The Ordinus assistant
-              has its own provider in the Ordinus section.
-            </CardDescription>
-          </div>
-          <StatusBadge tone={selectedProvider?.connected ? 'connected' : 'action'}>
-            {selectedProvider?.connected ? 'Connected' : 'Needs login'}
-          </StatusBadge>
-        </div>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="size-4 text-primary" />
+          System default
+        </CardTitle>
+        <CardDescription>
+          The AI your agents use by default. A new agent runs on this unless you give it its own.
+          (The Ordinus assistant is separate — set its provider in the Ordinus section.)
+        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="grid gap-3 md:grid-cols-2">
@@ -1974,7 +1990,9 @@ function SystemDefaultSettingsPanel({
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            {selectedModelDescription}
+            {selectedProvider && !selectedProvider.connected
+              ? `Sign in to ${selectedProvider.label} in the list above before setting it as the default.`
+              : selectedModelDescription}
           </p>
           <Button type="button" onClick={() => void saveSystemDefault()} disabled={!canSave}>
             {isPending ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
