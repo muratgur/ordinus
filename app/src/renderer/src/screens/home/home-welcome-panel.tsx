@@ -23,7 +23,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 import { cn } from '@renderer/lib/utils'
-import { OrdinusMark } from './ordinus-mark'
+import { OrdinusAvatar } from './ordinus-avatar'
 import agentsShot from '@renderer/assets/onboarding/agents.png'
 import workboardShot from '@renderer/assets/onboarding/workboard.png'
 import workflowShot from '@renderer/assets/onboarding/workflow-designer.png'
@@ -40,35 +40,39 @@ type WelcomeStep = {
   image: string | null
 }
 
+// ADR-048 — copy aligned to the team metaphor (mental-model.md): the user
+// directs their own expert team; Ordinus is their right hand (not a teammate);
+// agents are the specialists who do the work; work request = an assignment,
+// workflow = a process, schedule = a routine.
 const STEPS: ReadonlyArray<WelcomeStep> = [
   {
     id: 'ordinus',
     title: "Hi, I'm Ordinus.",
-    body: "Your teammate inside this app. I help you shape your work and figure out how to get things done here — just ask. Here's a quick tour of what you can build.",
+    body: "I'm your right hand here. Think of this as your own expert team: you direct, your agents do the work, and I help you set things up and keep everything moving — whenever you're unsure, just ask me.",
     image: null
   },
   {
     id: 'agents',
-    title: 'Agents do the work',
-    body: 'Agents are your hired colleagues — each one a configured persona that actually carries out tasks. This is the place to start: you bring in an agent first, then put it to work.',
+    title: 'Agents are your specialists',
+    body: "Each agent is a teammate you bring in for a kind of work — and they're the ones who actually do it. This is where you start: add a specialist first, then put them to work.",
     image: agentsShot
   },
   {
     id: 'workboard',
-    title: 'Workboard is where work happens',
-    body: 'Hand a task to an agent as a Work Request and watch it run. The Workboard is your board of everything in flight, done, or waiting.',
+    title: 'Hand off the work',
+    body: 'Give a teammate an assignment — a Work Request — and watch it run on the Workboard: everything in flight, done, or waiting on you.',
     image: workboardShot
   },
   {
     id: 'workflows',
-    title: 'Automate the repeating stuff',
-    body: 'Chain tasks into a visual Workflow for multi-step work, or set a Schedule to run something on a cadence — a daily summary, a weekly report. Set it once, let it run.',
+    title: 'Set up repeatable work',
+    body: 'Chain steps across your team into a Workflow you can reuse, or put a routine on a Schedule — a daily summary, a weekly report. Set it once, let your team run it.',
     image: workflowShot
   },
   {
     id: 'start',
-    title: "Let's get you started",
-    body: "I'll be right here. Pick one of the starters below the box — or just tell me what you're working on. Creating your first agent is a great place to begin.",
+    title: "Let's get your team going",
+    body: "I'll be right here. Tell me what you're working on, or pick a starter below — adding your first specialist is a great place to begin.",
     image: null
   }
 ]
@@ -129,7 +133,7 @@ export function HomeWelcomePanel({ onDismiss }: HomeWelcomePanelProps): React.JS
           {step.image ? (
             <img src={step.image} alt="" className="max-h-44 w-auto rounded-md border shadow-sm" />
           ) : (
-            <OrdinusMark size="hero" state="idle" />
+            <OrdinusAvatar size="hero" />
           )}
         </div>
 

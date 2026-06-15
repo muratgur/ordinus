@@ -11,7 +11,7 @@
 
 import { useRef } from 'react'
 import { HomeInput, type HomeInputHandle, type HomeInputProps } from './home-input'
-import { OrdinusMark } from './ordinus-mark'
+import { OrdinusAvatar } from './ordinus-avatar'
 
 export type HomeEmptyStateProps = {
   onSend: HomeInputProps['onSend']
@@ -54,10 +54,10 @@ export function HomeEmptyState(props: HomeEmptyStateProps): React.JSX.Element {
           center, which reads as intentional/classy rather than machine-centered
           (ADR-029 §8). */}
       <div className="-mt-[6vh] flex w-full max-w-2xl flex-col items-stretch gap-7 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-500">
-        {/* Presence anchor — the animated Ordinus mark (concentric ring), the
-            emotional center of the welcoming stage. Breathes while idle. */}
+        {/* Presence anchor — Ordinus's signature character (ADR-048 §4), the
+            emotional center of the welcoming stage. */}
         <div className="flex flex-col items-center gap-4">
-          <OrdinusMark size="hero" state="idle" />
+          <OrdinusAvatar size="hero" />
           <h1 className="text-center text-3xl font-semibold tracking-tight">
             Hi, I&apos;m Ordinus.
           </h1>

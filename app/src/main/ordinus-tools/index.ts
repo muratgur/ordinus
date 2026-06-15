@@ -22,25 +22,39 @@ import { cancelWorkRun } from './tools/cancelWorkRun'
 import { createSchedule } from './tools/createSchedule'
 import { createWorkflow } from './tools/createWorkflow'
 import { deleteSchedule } from './tools/deleteSchedule'
+import { getAppStatus } from './tools/getAppStatus'
 import { getRun } from './tools/getRun'
 import { getRunLog } from './tools/getRunLog'
 import { listAgents } from './tools/listAgents'
+import { listConnectors } from './tools/listConnectors'
 import { listRecentWorkRequests } from './tools/listRecentWorkRequests'
+import { listSchedules } from './tools/listSchedules'
 import { memorySearch } from './tools/memorySearch'
 import { memoryWrite } from './tools/memoryWrite'
+import { navigateAndPrefill } from './tools/navigateAndPrefill'
+import { proposeAgent } from './tools/proposeAgent'
 import { proposeWorkRequest } from './tools/proposeWorkRequest'
 import { runSqlReadonly } from './tools/runSqlReadonly'
 
 // Order is irrelevant for execution but stable here so the JSON catalog comes
 // out deterministic — easier diffs, easier prompt-cache reuse at session init.
 const tools: ReadonlyArray<OrdinusTool<unknown, unknown>> = [
+  // ADR-048 §7: live self-knowledge — the situational-awareness digest first,
+  // then the lazy detail read tools behind it.
+  getAppStatus as unknown as OrdinusTool<unknown, unknown>,
   listRecentWorkRequests as unknown as OrdinusTool<unknown, unknown>,
   getRun as unknown as OrdinusTool<unknown, unknown>,
   listAgents as unknown as OrdinusTool<unknown, unknown>,
+  listConnectors as unknown as OrdinusTool<unknown, unknown>,
+  listSchedules as unknown as OrdinusTool<unknown, unknown>,
   getRunLog as unknown as OrdinusTool<unknown, unknown>,
   memorySearch as unknown as OrdinusTool<unknown, unknown>,
   memoryWrite as unknown as OrdinusTool<unknown, unknown>,
   runSqlReadonly as unknown as OrdinusTool<unknown, unknown>,
+  // ADR-048 §6: handoff — surfaces a chip, never navigates/sends itself.
+  navigateAndPrefill as unknown as OrdinusTool<unknown, unknown>,
+  // ADR-048 phase 3: propose an agent — opens the creation pop-up pre-seeded.
+  proposeAgent as unknown as OrdinusTool<unknown, unknown>,
   // ADR-029 M5: action tools that produce side effects + broadcast events.
   proposeWorkRequest as unknown as OrdinusTool<unknown, unknown>,
   createSchedule as unknown as OrdinusTool<unknown, unknown>,

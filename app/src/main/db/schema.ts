@@ -112,10 +112,9 @@ export const conversationTurns = sqliteTable('conversation_turns', {
   participantId: text('participant_id').notNull(),
   sequence: integer('sequence').notNull(),
   speaker: text('speaker').notNull(),
+  // ADR-049: `content` holds the whole chat answer inline (from the outcome's
+  // `summary`). The summary/content split is Workboard-only — no full-body column.
   content: text('content').notNull(),
-  // ADR-030 parity: `content` holds the always-shown summary; `resultContent`
-  // holds the optional full body the agent produced (surfaced on demand).
-  resultContent: text('result_content').notNull().default(''),
   preview: text('preview').notNull(),
   status: text('status').notNull(),
   error: text('error').notNull(),
@@ -484,12 +483,10 @@ export const ordinusConversationTurns = sqliteTable(
     id: text('id').primaryKey(),
     conversationId: text('conversation_id').notNull(),
     kind: text('kind').notNull(),
+    // ADR-049: `content` holds the whole chat answer inline (from the outcome's
+    // `summary`). The summary/content split is Workboard-only — no full-body
+    // column for Ordinus transcript turns.
     content: text('content').notNull(),
-    // ADR-030 parity: `content` holds the always-shown summary; `resultContent`
-    // holds the optional full produced body, surfaced on demand in the
-    // transcript ("Show full response"). Empty for user/error turns and for
-    // assistant turns whose deliverable was a file rather than text.
-    resultContent: text('result_content').notNull().default(''),
     // ADR-030/ADR-035 parity with conversation turns: JSON-encoded arrays of
     // workspace-relative paths the turn produced/changed, so Home can render
     // the "files touched" row like agent rooms do.

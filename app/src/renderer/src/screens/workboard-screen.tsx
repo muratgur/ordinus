@@ -7,7 +7,7 @@ import {
   type Dispatch,
   type SetStateAction
 } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useActiveOptionScroll } from '@renderer/hooks/use-active-option-scroll'
 import {
   Archive,
@@ -59,6 +59,8 @@ import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
 import { CopyButton as SharedCopyButton } from '@renderer/components/copy-button'
 import { RunInspectorSheet } from '@renderer/components/run-inspector-sheet'
+import { ScreenIntroPopup } from '@renderer/components/screen-intro'
+import { useScreenIntro } from '@renderer/hooks/use-screen-intro'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentFeedbackPanel } from '@renderer/components/agent-feedback-panel'
 import { RequestFileList } from '@renderer/components/file-reference-list'
@@ -209,6 +211,7 @@ export function WorkboardScreen({
   onDraftReviewChange: Dispatch<SetStateAction<WorkboardDraftReviewState>>
   planOperations: PlanOperationsController
 }): React.JSX.Element {
+  const navigate = useNavigate()
   const [agents, setAgents] = useState<Agent[]>([])
   const [workflows, setWorkflows] = useState<WorkflowDesign[]>([])
   const [data, setData] = useState<WorkboardData>({
@@ -228,6 +231,13 @@ export function WorkboardScreen({
   const [showArchived, setShowArchived] = useState(getStoredShowArchived)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  // ADR-048 — first-visit coach. Two one-time variants (no agent / has agent),
+  // armed only once the first load settles so the right one is chosen.
+  const [workboardLoaded, setWorkboardLoaded] = useState(false)
+  const workboardHasAgent = agents.some((agent) => agent.enabled)
+  const workboardIntro = useScreenIntro(
+    workboardLoaded ? `workboard.${workboardHasAgent ? 'has' : 'none'}` : null
+  )
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
   const [watchedOpId, setWatchedOpId] = useState<string | null>(null)
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false)
@@ -258,6 +268,7 @@ export function WorkboardScreen({
       setWorkflows(nextWorkflows)
       setObservedRuns(nextObservedRuns)
       setError('')
+      setWorkboardLoaded(true)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Workboard could not be loaded.')
     } finally {
@@ -650,11 +661,21 @@ export function WorkboardScreen({
 
   return (
     <div className="flex min-h-[calc(100vh-3rem)] flex-col gap-3 py-4 xl:h-[calc(100vh-3rem)] xl:min-h-0 xl:overflow-hidden">
-      {enabledAgents.length === 0 ? (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          Create and enable at least one agent before creating Work Requests.
-        </div>
-      ) : null}
+      <ScreenIntroPopup
+        open={workboardIntro.open}
+        onDismiss={workboardIntro.dismiss}
+        title={workboardHasAgent ? 'Where work gets done' : "You'll need an agent first"}
+        body={
+          workboardHasAgent
+            ? 'Hand a task to one of your agents and watch it run here. Use the composer to start a new piece of work.'
+            : "The Workboard runs work through your agents — but you don't have one yet. Create an agent, then come back to put it to work."
+        }
+        cta={
+          workboardHasAgent
+            ? undefined
+            : { label: 'Go to Agents', onClick: () => navigate(appRoutePaths.agents) }
+        }
+      />
 
       {error ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">

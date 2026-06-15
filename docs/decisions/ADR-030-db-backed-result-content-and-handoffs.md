@@ -20,6 +20,12 @@ complement (scoped read-only `getWorkRunResult` / `getRequestDigest` for worker 
 deterministic per-request `digest.md` (summaries + pointers, never full content) is added. The
 inline direct-dependency handoff and its 100k budget remain the primary transport.
 
+Amended and partially superseded by ADR-049 (surface-aware turn outcome): the `summary` / `content`
+split defined here is now **Workboard-only**. Chat surfaces (Ordinus assistant, Agent 1:1 rooms) no
+longer split — they carry the whole answer inline in `summary`, `content` is removed from the chat
+outcome schema, the `result_content` column is dropped from both chat turn tables, and the 16k
+`summary` ceiling is raised for chat. This ADR's model is unchanged for Workboard (`work_runs`).
+
 ## Date
 
 2026-06-09

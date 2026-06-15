@@ -12,21 +12,25 @@
 // header for the rationale). Switching conversations is fine — the previous
 // transcript stays in memory for the page lifetime.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Brain, HelpCircle } from 'lucide-react'
 import type {
+  Agent,
+  AgentDraft,
   InteractionAnswer,
   OrdinusActionEvent,
   OrdinusConfirmationDecision,
   OrdinusConversationSummary,
   OrdinusConversationTurn,
+  OrdinusHandoff,
   OrdinusPendingConfirmation,
   OrdinusPendingInputRequest,
   ProviderId,
   ProviderStatus
 } from '@shared/contracts'
-import { OrdinusPendingInputRequestSchema } from '@shared/contracts'
+import { AgentDraftSchema, OrdinusPendingInputRequestSchema } from '@shared/contracts'
 import { createOrdinusConversationTitleFromMessage } from '@shared/ordinus-title'
 import {
   AlertDialog,
@@ -57,9 +61,12 @@ import { HomeConfirmationPanel } from './home-confirmation-panel'
 import { HomeConversationList } from './home-conversation-list'
 import { HomeTranscript } from './home-transcript'
 import { HomeTopStrip } from './home-top-strip'
-import { HomeInput } from './home-input'
+import { HomeInput, type HomeInputHandle } from './home-input'
 import { HomeEmptyState } from './home-empty-state'
+import { HomeHandoffChips } from './home-handoff-chips'
 import { HomeFrozenBanner } from './home-frozen-banner'
+import { AgentCreationFlow } from '@renderer/components/agent-creation-flow'
+import { appRoutePaths } from '@renderer/app/routes'
 import { HomeMemoryPanel } from './home-memory-panel'
 import { HomeWelcomePanel } from './home-welcome-panel'
 import { parseSlashCommand } from './slash-commands'
@@ -103,7 +110,6 @@ function turnToMessage(turn: OrdinusConversationTurn): HomeMessage {
         kind: 'assistant',
         id: turn.id,
         text: turn.content,
-        resultContent: turn.resultContent,
         artifactRefs: turn.artifactRefs,
         changedFiles: turn.changedFiles,
         turnId: turn.turnId,
@@ -240,6 +246,108 @@ export function HomeScreen(): React.JSX.Element {
       off()
     }
   }, [])
+
+  // ADR-048 §6 — handoff chips. Ordinus surfaces "go here next" suggestions via
+  // navigate_and_prefill; we render them as distinct chips and act only when the
+  // user clicks. Scoped to the active conversation (they arrive during its turn)
+  // and cleared when the user switches conversations or sends a new message.
+  const navigate = useNavigate()
+  const activeInputRef = useRef<HomeInputHandle>(null)
+  // Handoffs are tagged with the conversation they arrived under (the action
+  // event carries no conversationId, so we stamp the active one at arrival) and
+  // rendered filtered to the active conversation — no reset effect needed.
+  const [handoffs, setHandoffs] = useState<
+    Array<{ conversationId: string; handoff: OrdinusHandoff }>
+  >([])
+  const activeIdRef = useRef(activeId)
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
+  useEffect(() => {
+    const off = window.ordinus.ordinus.onActionEvent((event: OrdinusActionEvent) => {
+      if (event.kind === 'handoff_suggested') {
+        const conversationId = activeIdRef.current
+        if (!conversationId) return
+        setHandoffs((prev) => [...prev, { conversationId, handoff: event.handoff }])
+      }
+    })
+    return off
+  }, [])
+  const activeHandoffs = useMemo(
+    () => handoffs.filter((h) => h.conversationId === activeId).map((h) => h.handoff),
+    [handoffs, activeId]
+  )
+
+  // ADR-048 phase 3 — propose_agent. Ordinus produces a draft through the shared
+  // engine and the creation pop-up opens pre-seeded at the "shape" step. The
+  // conversation it was proposed in is stamped so post-creation guidance lands
+  // in the right place.
+  const [proposedDraft, setProposedDraft] = useState<AgentDraft | null>(null)
+  const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  // Bumped per proposal so the creation flow remounts and re-seeds from the new
+  // draft via its useState initializers (avoids setState-in-effect seeding).
+  const [proposalNonce, setProposalNonce] = useState(0)
+  const [existingAgentNames, setExistingAgentNames] = useState<string[]>([])
+  const proposalConversationIdRef = useRef<string | null>(null)
+  const refreshAgentNames = useCallback(async () => {
+    try {
+      const agents = await window.ordinus.agents.list()
+      setExistingAgentNames(agents.map((a) => a.name))
+    } catch {
+      // Non-fatal — uniqueness is also enforced server-side at create time.
+    }
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const agents = await window.ordinus.agents.list()
+        if (!cancelled) setExistingAgentNames(agents.map((a) => a.name))
+      } catch {
+        // Non-fatal — uniqueness is enforced server-side at create time.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  useEffect(() => {
+    const off = window.ordinus.ordinus.onActionEvent((event: OrdinusActionEvent) => {
+      if (event.kind !== 'agent_draft_ready') return
+      const parsed = AgentDraftSchema.safeParse(event.draft)
+      if (!parsed.success) return
+      proposalConversationIdRef.current = activeIdRef.current
+      setProposedDraft(parsed.data)
+      setProposalNonce((n) => n + 1)
+      setCreateAgentOpen(true)
+    })
+    return off
+  }, [])
+
+  const handleFollowHandoff = useCallback(
+    (handoff: OrdinusHandoff) => {
+      setHandoffs((prev) => prev.filter((h) => h.handoff !== handoff))
+      if (handoff.target === 'home') {
+        if (handoff.prefill) activeInputRef.current?.prefill(handoff.prefill)
+        return
+      }
+      // Map a handoff target to a route. 'agent' lands on the Agents surface and
+      // 'connections' on Settings; deep-linking to a specific agent room or the
+      // Connections section (with prefill) is a follow-up (ADR-048 phase 6).
+      const routeByTarget: Record<Exclude<OrdinusHandoff['target'], 'home'>, string> = {
+        agents: appRoutePaths.agents,
+        agent: appRoutePaths.agents,
+        workboard: appRoutePaths.workboard,
+        workflows: appRoutePaths.workflows,
+        conversations: appRoutePaths.conversations,
+        schedules: appRoutePaths.schedules,
+        connections: appRoutePaths.settings,
+        settings: appRoutePaths.settings
+      }
+      navigate(routeByTarget[handoff.target])
+    },
+    [navigate]
+  )
 
   const handleResolveConfirmation = useCallback(
     async (pendingId: string, decision: OrdinusConfirmationDecision) => {
@@ -588,6 +696,9 @@ export function HomeScreen(): React.JSX.Element {
       if (conversationId && pendingTurnLabelsByConversation[conversationId]) {
         return
       }
+      // Clear any standing handoff chips — the user is moving the conversation
+      // forward; stale "go here next" nudges shouldn't linger.
+      setHandoffs([])
       const slash = parseSlashCommand(text)
       const displayText = text
       const sentText = slash ? slash.command.expandPrompt(slash.args) : text
@@ -1070,7 +1181,9 @@ export function HomeScreen(): React.JSX.Element {
                   onAnswer={handleAnswerInputRequest}
                   onCancel={handleCancelInputRequest}
                 />
+                <HomeHandoffChips handoffs={activeHandoffs} onFollow={handleFollowHandoff} />
                 <HomeInput
+                  ref={activeInputRef}
                   onSend={handleSend}
                   busy={activeTurnBusy}
                   onStop={() => void handleStopTurn()}
@@ -1089,6 +1202,31 @@ export function HomeScreen(): React.JSX.Element {
             fresh tour from step 1. */}
         {welcomeOpen ? <HomeWelcomePanel onDismiss={handleDismissWelcome} /> : null}
       </section>
+
+      {/* ADR-048 phase 3 — agent creation pop-up, opened pre-seeded when Ordinus
+          proposes an agent. On creation, Ordinus continues in the same
+          conversation with post-creation guidance (what to do next, connections,
+          starter messages) — a natural follow-up to the user's confirm action. */}
+      <AgentCreationFlow
+        key={`agent-flow-${proposalNonce}`}
+        open={createAgentOpen}
+        onOpenChange={setCreateAgentOpen}
+        initialDraft={proposedDraft}
+        existingAgentNames={existingAgentNames}
+        onAgentCreated={(agent: Agent) => {
+          setCreateAgentOpen(false)
+          setProposedDraft(null)
+          void refreshAgentNames()
+          if (proposalConversationIdRef.current && proposalConversationIdRef.current === activeId) {
+            void handleSend(
+              `I just created the "${agent.name}" agent (${agent.role}). In one short reply: ` +
+                'tell me what I can do with it now, whether it needs any connection set up, and ' +
+                'offer me a couple of starter messages to begin working with it.'
+            )
+          }
+          proposalConversationIdRef.current = null
+        }}
+      />
 
       {/* ADR-036 — shared run inspector bottom sheet, here observing the
           active conversation's latest Ordinus turn. */}

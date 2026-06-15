@@ -24,18 +24,18 @@ type KnowledgeSection = {
   heading: string
 }
 
-// Ordered list. Keep identity first; everything else is reference material.
+// Ordered list (ADR-048 §7 — six static, concept-only files). Volatile facts
+// (connector lists, provider names, "screen X has Y") are NOT in prose anymore;
+// Ordinus reads them live via tools. Keep identity first, then voice and the
+// mental model that shape every reply, then the conceptual reference, then the
+// guiding patterns, then the tool reference last.
 const KNOWLEDGE_SECTIONS: ReadonlyArray<KnowledgeSection> = [
   { id: 'core-identity', heading: 'Who you are' },
-  { id: 'workflows', heading: 'Workflows' },
-  { id: 'agents', heading: 'Agents' },
-  { id: 'schedules', heading: 'Scheduled tasks' },
-  { id: 'connectors', heading: 'Connectors' },
-  // ADR-029 M5: action tools (propose_work_request, create_schedule,
-  // create_workflow) — keep just before recipes so the LLM sees them in
-  // context with the patterns that use them.
-  { id: 'actions', heading: 'Actions you can take' },
-  { id: 'recipes', heading: 'Recipes' }
+  { id: 'voice', heading: 'Voice' },
+  { id: 'mental-model', heading: 'The mental model you build' },
+  { id: 'concepts', heading: 'What things are' },
+  { id: 'guiding-playbooks', heading: 'Guiding playbooks' },
+  { id: 'tools', heading: 'Your tools' }
 ]
 
 function getKnowledgeFolder(): string {

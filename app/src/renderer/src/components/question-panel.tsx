@@ -320,6 +320,10 @@ function QuestionField({
       {question.kind === 'text' && draft.kind === 'text' ? (
         <Input
           autoFocus
+          // The default focus ring uses ring-offset-2, which bleeds past the tight
+          // needs_input panel edges; highlight the border instead, matching the
+          // choice options.
+          className="focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0"
           value={draft.text}
           placeholder={question.placeholder}
           disabled={disabled}
@@ -425,6 +429,9 @@ function ChoiceField({
           {choice.optionId === CUSTOM_OPTION_VALUE ? (
             <Input
               autoFocus
+              // See the text-question Input above: neutralize the offset ring so the
+              // focus highlight stays inside the panel.
+              className="focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0"
               value={choice.customText}
               placeholder="Type your answer"
               disabled={disabled}

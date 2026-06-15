@@ -23,10 +23,9 @@ export type HomeMessage =
   | {
       kind: 'assistant'
       id: string
+      // ADR-049: the whole answer is inline in `text` (the outcome's `summary`).
+      // The summary/content split is Workboard-only — no separate full-body field.
       text: string
-      // ADR-030 parity: optional full produced body, surfaced on demand under
-      // the summary ("Show full response"). Empty when there is no extra body.
-      resultContent: string
       // ADR-035: files the turn produced/changed — rendered as the collapsed
       // "files touched" row, same as agent rooms.
       artifactRefs: string[]

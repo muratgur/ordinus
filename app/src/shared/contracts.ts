@@ -189,7 +189,10 @@ export const OnboardingMarkProviderAuthedInputSchema = z.object({
 })
 
 export const OnboardingCompleteInputSchema = z.object({
-  agentId: z.string().min(1)
+  // ADR-048 phase 4: onboarding ends with Ordinus's self-introduction, not a
+  // forced first-agent creation, so agentId is optional. When present (legacy /
+  // future "create during onboarding" paths) it is recorded as firstAgentId.
+  agentId: z.string().min(1).optional()
 })
 
 export const OnboardingInstallEventEnvelopeSchema = z.object({
@@ -244,6 +247,39 @@ export const OrdinusResolveConfirmationInputSchema = z.object({
   decision: OrdinusConfirmationDecisionSchema
 })
 
+// ADR-048 §6 — handoff target surfaces Ordinus can point the user to. Mirrors
+// the renderer's route ids, plus 'agent' (a specific agent's 1:1 chat) and
+// 'connections' (the Connections section of Settings).
+export const OrdinusHandoffTargetSchema = z.enum([
+  'home',
+  'agents',
+  'agent',
+  'workboard',
+  'workflows',
+  'conversations',
+  'schedules',
+  'connections',
+  'settings'
+])
+export type OrdinusHandoffTarget = z.infer<typeof OrdinusHandoffTargetSchema>
+
+// ADR-048 §6 — a handoff suggestion: a distinct, clickable chip in the Ordinus
+// transcript that takes the user to a surface with an optional pre-filled input.
+// Ordinus NEVER auto-sends; the chip only navigates + prefills, the user decides.
+export const OrdinusHandoffSchema = z.object({
+  /** Where the chip takes the user. */
+  target: OrdinusHandoffTargetSchema,
+  /** Required when target is 'agent': the agent whose 1:1 chat to open. */
+  agentId: z.string().nullable().default(null),
+  /** Short chip label, e.g. "Connect Gmail" or "Talk to your research agent". */
+  label: z.string().min(1).max(60),
+  /** Optional text to pre-fill into the destination's input (Home / agent chat). */
+  prefill: z.string().default(''),
+  /** Optional one-line rationale shown on the chip / its tooltip. */
+  reason: z.string().default('')
+})
+export type OrdinusHandoff = z.infer<typeof OrdinusHandoffSchema>
+
 export const OrdinusActionEventSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('workboard_plan_ready'),
@@ -269,6 +305,22 @@ export const OrdinusActionEventSchema = z.discriminatedUnion('kind', [
     kind: z.literal('workflow_created'),
     workflowId: z.string(),
     workflowName: z.string()
+  }),
+  // ADR-048 §6: Ordinus surfaced a handoff chip (go to a surface, optional
+  // prefill). The renderer renders it as a distinct chip in the transcript;
+  // clicking it navigates + prefills. Ordinus never auto-sends.
+  z.object({
+    kind: z.literal('handoff_suggested'),
+    handoff: OrdinusHandoffSchema
+  }),
+  // ADR-048 phase 3: Ordinus produced an agent draft (propose_agent) through the
+  // same engine the manual wizard uses. The renderer opens the agent creation
+  // flow pre-seeded at the "shape" step. `draft` is an AgentDraft, widened to
+  // unknown to avoid a forward reference (AgentDraftSchema is defined later);
+  // the renderer narrows via AgentDraftSchema.parse.
+  z.object({
+    kind: z.literal('agent_draft_ready'),
+    draft: z.unknown()
   }),
   // ADR-029 M6: confirmation lifecycle events.
   // `requested` — show the panel.
@@ -403,10 +455,10 @@ export const OrdinusConversationTurnSchema = z.object({
   id: z.string(),
   conversationId: z.string(),
   kind: OrdinusConversationTurnKindSchema,
+  // ADR-049: chat carries the whole answer inline in `content` (mapped from the
+  // outcome's `summary`). There is no separate full-body field for chat — the
+  // summary/content split is Workboard-only.
   content: z.string(),
-  // ADR-030 parity: optional full produced body, shown on demand in the
-  // transcript ("Show full response"). Empty when there is no extra body.
-  resultContent: z.string().default(''),
   // ADR-035: files the turn produced/changed, so Home renders the same
   // "files touched" row as agent rooms.
   artifactRefs: z.array(z.string()).default([]),
@@ -1124,6 +1176,11 @@ export const workRunResultSummaryMaxLength = 16_000
 export const agentTurnOutcomeContentMaxLength = 256_000
 // ADR-030: full result body cap for database-backed result content.
 export const workRunResultContentMaxLength = agentTurnOutcomeContentMaxLength
+// ADR-049: in chat the whole answer lives in `summary` (no `content` field), so
+// the chat ceiling is generous — sized to the former full-body cap rather than
+// the Workboard card's 16k. Workboard summaries stay short via their own model
+// JSON schema maxLength (workRunResultSummaryMaxLength).
+export const chatTurnSummaryMaxLength = agentTurnOutcomeContentMaxLength
 
 export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({
@@ -1131,7 +1188,10 @@ export const AgentTurnOutcomeSchema = z.discriminatedUnion('outcome', [
     // ADR-030: `summary` is the always-present short narrative shown to the user
     // and passed inline in handoffs. `content` is the optional full textual body
     // (the produced report/analysis); it is empty when the deliverable is a file.
-    summary: z.string().trim().min(1).max(workRunResultSummaryMaxLength),
+    // ADR-049: in chat the whole answer lives in `summary` (no `content`), so the
+    // Zod ceiling is the generous chat cap. Workboard keeps its summary short via
+    // the work model JSON schema's maxLength, not this validation bound.
+    summary: z.string().trim().min(1).max(chatTurnSummaryMaxLength),
     content: z.string().trim().max(agentTurnOutcomeContentMaxLength).default(''),
     artifactRefs: z.array(WorkspaceRelativePathSchema).max(64).default([]),
     changedFiles: z.array(WorkspaceRelativePathSchema).max(128).default([])
@@ -1200,9 +1260,10 @@ export const ConversationTurnSchema = z.object({
   participantId: z.string().min(1),
   sequence: z.number().int().positive(),
   speaker: ConversationTurnSpeakerSchema,
+  // ADR-049: chat carries the whole answer inline in `content` (mapped from the
+  // outcome's `summary`). The summary/content split is Workboard-only, so there
+  // is no separate full-body field for chat turns.
   content: z.string(),
-  // ADR-030 parity: optional full body produced by the agent, shown on demand.
-  resultContent: z.string().default(''),
   preview: z.string(),
   status: ConversationTurnStatusSchema,
   error: z.string(),

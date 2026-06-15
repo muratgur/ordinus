@@ -147,12 +147,14 @@ export class OnboardingService {
     )
   }
 
-  complete(agentId: string): OnboardingStatus {
+  complete(agentId?: string): OnboardingStatus {
     const state = this.getStatus().state
     if (!hasAnyAuthedSelectedProvider(state)) {
       throw new Error('At least one provider must be authenticated before completing onboarding.')
     }
-    const finalState = advanceStage({ ...state, firstAgentId: agentId }, 'done')
+    // ADR-048 phase 4: onboarding completes after Ordinus's self-introduction,
+    // with no first agent required. firstAgentId stays null in that path.
+    const finalState = advanceStage({ ...state, firstAgentId: agentId ?? null }, 'done')
     return this.database.markOnboardingComplete(finalState)
   }
 

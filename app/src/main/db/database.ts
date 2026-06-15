@@ -205,7 +205,11 @@ function assertSelectableWorkingRoot(workingRoot: string): string {
   return workingRoot
 }
 
-const turnContentLimit = 16_000
+// ADR-049 — chat carries the whole answer inline in the turn `content` (there is
+// no separate full-body field anymore), so the per-turn bound is generous to
+// match the chat `summary` ceiling. It stays a safety valve, not the old 16k card
+// limit; `truncated` still flags the rare overflow.
+const turnContentLimit = 256_000
 const turnPreviewLimit = 240
 const activeWorkRunStatuses: WorkRun['status'][] = [
   'queued',
@@ -832,7 +836,6 @@ export class OrdinusDatabase {
     conversationId: string
     kind: string
     content: string
-    resultContent: string
     artifactRefs: string[]
     changedFiles: string[]
     turnId: string | null
@@ -850,7 +853,6 @@ export class OrdinusDatabase {
       conversationId: row.conversationId,
       kind: row.kind,
       content: row.content,
-      resultContent: row.resultContent,
       artifactRefs: parseJsonStringArray(row.artifactRefs),
       changedFiles: parseJsonStringArray(row.changedFiles),
       turnId: row.turnId,
@@ -863,7 +865,6 @@ export class OrdinusDatabase {
     conversationId: string
     kind: 'user' | 'assistant' | 'error' | 'cancelled'
     content: string
-    resultContent?: string
     artifactRefs?: string[]
     changedFiles?: string[]
     turnId?: string | null
@@ -873,7 +874,6 @@ export class OrdinusDatabase {
     conversationId: string
     kind: string
     content: string
-    resultContent: string
     artifactRefs: string[]
     changedFiles: string[]
     turnId: string | null
@@ -897,7 +897,6 @@ export class OrdinusDatabase {
           conversationId: input.conversationId,
           kind: input.kind,
           content: input.content,
-          resultContent: input.resultContent ?? '',
           artifactRefs: JSON.stringify(input.artifactRefs ?? []),
           changedFiles: JSON.stringify(input.changedFiles ?? []),
           turnId: input.turnId ?? null,
@@ -917,7 +916,6 @@ export class OrdinusDatabase {
       conversationId: input.conversationId,
       kind: input.kind,
       content: input.content,
-      resultContent: input.resultContent ?? '',
       artifactRefs: input.artifactRefs ?? [],
       changedFiles: input.changedFiles ?? [],
       turnId: input.turnId ?? null,
@@ -4714,8 +4712,9 @@ export class OrdinusDatabase {
       return this.getConversation({ conversationId: turn.conversationId })
     }
 
-    // ADR-030: the conversation message is the always-present summary; the
-    // optional full body lives in outcome.content and is surfaced separately.
+    // ADR-049: chat carries the whole answer inline in `content` (from the
+    // outcome's `summary`). The summary/content split is Workboard-only, so there
+    // is no separate full body to persist.
     const output = createBoundedTurnContent(input.outcome.summary)
     const artifactRefs = uniqueValues(input.outcome.artifactRefs)
     const changedFiles = uniqueValues(input.outcome.changedFiles)
@@ -4724,7 +4723,6 @@ export class OrdinusDatabase {
       .update(conversationTurns)
       .set({
         content: output.content,
-        resultContent: input.outcome.content ?? '',
         preview: output.preview,
         status: 'completed',
         error: '',

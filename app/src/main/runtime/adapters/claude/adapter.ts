@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   AgentSandboxSchema,
+  AgentTurnOutcomeSchema,
+  chatTurnSummaryMaxLength,
   ProviderStatusSchema,
   type AgentDraft,
   type AgentSkillDraft,
   type AgentSandbox,
+  type AgentTurnOutcome,
   type OrchestrationPlan,
   type ProviderConnectInput,
   type ProviderConnectResult,
@@ -45,7 +48,9 @@ import {
 } from '../../prompts/work-plan'
 import {
   claudeAgentTurnOutcomeJsonSchema,
+  claudeChatAgentTurnOutcomeJsonSchema,
   buildClaudeOutcomeFieldGuidance,
+  buildClaudeChatOutcomeFieldGuidance,
   buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
@@ -233,7 +238,15 @@ async function sendClaudeConversationTurn(
 
     return {
       providerSessionRef,
-      outcome: parseAgentTurnOutcome(readClaudeLastMessage(input.lastMessagePath)),
+      outcome: await resolveClaudeConversationOutcome({
+        responseText: parsed.responseText,
+        structuredOutputPresent: parsed.structuredOutputPresent,
+        input,
+        context,
+        executable,
+        materialized,
+        providerSessionRef
+      }),
       logRef: input.logRef
     }
   } finally {
@@ -241,10 +254,153 @@ async function sendClaudeConversationTurn(
   }
 }
 
+// ADR-050 — Claude intermittently ends a turn in plain text WITHOUT calling the
+// forced StructuredOutput tool (most often on resume turns with a long answer,
+// after using MCP tools through the deferred-tool/ToolSearch path). The text is a
+// genuine answer, so failing the whole turn on the missing JSON envelope is wrong.
+// `structuredOutputPresent` is decided at the source (readClaudeConversationOutput)
+// from whether the result carried a structured_output — NOT by sniffing the prose
+// for braces. Defense in depth: (1) a system-prompt nudge pushes Claude to always
+// finish with StructuredOutput; when it still skips, (2) chat uses the prose
+// directly (ADR-049: the summary IS the whole chat answer, so a recovery round-trip
+// would add nothing), and (3) work tries one tool-less recovery turn to re-emit the
+// structured fields (artifactRefs / changedFiles / needs_input are load-bearing
+// there), falling back to a summary-only outcome only if that also fails.
+async function resolveClaudeConversationOutcome(deps: {
+  responseText: string
+  structuredOutputPresent: boolean
+  input: RuntimeConversationTurnInput
+  context: ProviderRuntimeContext
+  executable: CliExecutable
+  materialized: Awaited<ReturnType<typeof materializeConnectors>>
+  providerSessionRef: string
+}): Promise<AgentTurnOutcome> {
+  if (deps.structuredOutputPresent) {
+    // The StructuredOutput tool was used — parse it. A validation failure here is a
+    // real problem (e.g. an empty {}), surfaced as before.
+    return parseAgentTurnOutcome(deps.responseText)
+  }
+
+  // Claude skipped StructuredOutput and answered in the text channel.
+  if (deps.input.outcomeMode === 'chat') {
+    return buildTextSummaryOutcome(deps.responseText)
+  }
+
+  const recovered = await runClaudeStructuredOutputRecovery(deps)
+  return recovered ?? buildTextSummaryOutcome(deps.responseText)
+}
+
+// Floor: never hard-fail a turn that produced a real answer. The prose becomes the
+// summary, truncated to the ceiling so an oversized answer degrades instead of
+// throwing a Zod "too_big".
+function buildTextSummaryOutcome(text: string): AgentTurnOutcome {
+  const summary = text.trim().slice(0, chatTurnSummaryMaxLength) || 'Done.'
+  return AgentTurnOutcomeSchema.parse({
+    outcome: 'final_response',
+    summary,
+    content: '',
+    artifactRefs: [],
+    changedFiles: []
+  })
+}
+
+// ADR-050 — one extra resume turn for WORK runs only, isolated from the original
+// turn: its own turnId / event log / last-message path and no observability sink, so
+// it cannot resurrect the already-completed observed run or double the timeline. It
+// runs without connectors (no --mcp-config) so the model cannot redo MCP work — it
+// just re-emits the StructuredOutput. Returns null (caller falls back) unless it
+// produces a parseable structured outcome.
+async function runClaudeStructuredOutputRecovery(deps: {
+  responseText: string
+  input: RuntimeConversationTurnInput
+  context: ProviderRuntimeContext
+  executable: CliExecutable
+  materialized: Awaited<ReturnType<typeof materializeConnectors>>
+  providerSessionRef: string
+}): Promise<AgentTurnOutcome | null> {
+  const recoveryLogDir = dirname(deps.input.eventLogPath)
+  const recoveryInput: RuntimeConversationTurnInput = {
+    ...deps.input,
+    providerSessionRef: deps.providerSessionRef,
+    turnId: `${deps.input.turnId}-so-recovery`,
+    eventLogPath: join(recoveryLogDir, 'recovery-events.jsonl'),
+    lastMessagePath: join(recoveryLogDir, 'recovery-last-message.txt'),
+    observability: undefined
+  }
+  const args = buildClaudeConversationArgs(
+    recoveryInput,
+    deps.materialized.mcpConfigPath,
+    deps.materialized.allowedTools,
+    { omitMcpConfig: true }
+  )
+
+  let result: Awaited<ReturnType<typeof runConversationProcess>>
+  try {
+    result = await runConversationProcess({
+      executable: deps.executable,
+      args,
+      input: recoveryInput,
+      context: deps.context,
+      env: getClaudeEnvironment(),
+      stdin: buildClaudeStructuredOutputRecoveryPrompt(),
+      streamErrorMessage: 'Claude recovery process streams could not be opened.',
+      observeStdoutLine: observeClaudeStdoutLine
+    })
+  } catch {
+    return null
+  }
+
+  if (result.cancelled || result.code !== 0) {
+    return null
+  }
+
+  let parsed: { responseText: string; structuredOutputPresent: boolean }
+  try {
+    parsed = readClaudeConversationOutput(result.stdout)
+  } catch {
+    return null
+  }
+
+  if (!parsed.structuredOutputPresent) {
+    return null
+  }
+
+  try {
+    return parseAgentTurnOutcome(parsed.responseText)
+  } catch {
+    return null
+  }
+}
+
+function buildClaudeStructuredOutputRecoveryPrompt(): string {
+  return 'You ended your previous turn without calling the StructuredOutput tool. Do not use any other tools now. Call the StructuredOutput tool exactly once to report the result of the work you just did, following the outcome field guidance from the system prompt.'
+}
+
+// ADR-050 — the built-in tools Ordinus agents are allowed to see. Excludes the
+// harness orchestration tools the host account exposes; keeps ToolSearch so the
+// deferred-tool path keeps working for large MCP connectors. MCP connector functions
+// are unaffected (they arrive via --mcp-config, not this list).
+const claudeBuiltinToolAllowlist = [
+  'Bash',
+  'Read',
+  'Edit',
+  'Write',
+  'Glob',
+  'Grep',
+  'Skill',
+  'WebSearch',
+  'WebFetch',
+  'NotebookEdit',
+  'ToolSearch'
+] as const
+
 function buildClaudeConversationArgs(
   input: RuntimeConversationTurnInput,
   mcpConfigPath: string | null,
-  allowedTools: string[]
+  allowedTools: string[],
+  // ADR-050 — the StructuredOutput recovery turn passes omitMcpConfig so the model
+  // cannot redo MCP work; it only re-emits the structured outcome.
+  options?: { omitMcpConfig?: boolean }
 ): string[] {
   const args = [
     '-p',
@@ -255,11 +411,31 @@ function buildClaudeConversationArgs(
     // ADR-037: the relaxed Claude variant — the strict all-required schema makes
     // Claude's forced StructuredOutput tool bail to an empty {} and exhaust the
     // CLI's retries. See claudeAgentTurnOutcomeJsonSchema for the full rationale.
-    JSON.stringify(claudeAgentTurnOutcomeJsonSchema),
+    // ADR-049: chat drops `content` (whole answer inline in `summary`); Workboard
+    // keeps the summary/content split.
+    JSON.stringify(
+      input.outcomeMode === 'chat'
+        ? claudeChatAgentTurnOutcomeJsonSchema
+        : claudeAgentTurnOutcomeJsonSchema
+    ),
     '--permission-mode',
     getClaudePermissionMode(input.sandbox),
     '--append-system-prompt-file',
     writeClaudeSystemPromptFile(input),
+    // ADR-050 — restrict the BUILT-IN tool catalog to what Ordinus agents use.
+    // `--tools` governs only built-ins (not MCP connector functions), so this drops
+    // the host account's harness orchestration tools (Task, Workflow, Cron*,
+    // AskUserQuestion, DesignSync, Monitor, RemoteTrigger, ScheduleWakeup,
+    // PushNotification, EnterWorktree) — a safety boundary (an Ordinus agent must not
+    // spawn sub-agents, create crons, or bypass the needs_input panel). ToolSearch is
+    // kept so the deferred-tool path still works for large connectors; StructuredOutput
+    // is added automatically by --json-schema.
+    '--tools',
+    claudeBuiltinToolAllowlist.join(','),
+    // ADR-050 — only use the MCP servers Ordinus passes via --mcp-config; ignore the
+    // account-level claude.ai connectors inherited through the shared OAuth login
+    // (Ordinus ships its own Google connector, ADR-043).
+    '--strict-mcp-config',
     '--add-dir',
     input.agentHomePath
   ]
@@ -268,7 +444,7 @@ function buildClaudeConversationArgs(
     args.push('--add-dir', dir)
   }
 
-  if (mcpConfigPath) {
+  if (mcpConfigPath && !options?.omitMcpConfig) {
     args.push('--mcp-config', mcpConfigPath)
   }
 
@@ -319,7 +495,10 @@ function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
     // tool (--json-schema), so it gets field guidance rather than the text-channel
     // "return JSON only" shape dictation Codex/Gemini use — the latter makes Claude
     // answer in text and then call StructuredOutput empty, exhausting CLI retries.
-    buildClaudeOutcomeFieldGuidance()
+    // ADR-049: chat guidance puts the whole answer in `summary` (no `content`).
+    input.outcomeMode === 'chat'
+      ? buildClaudeChatOutcomeFieldGuidance()
+      : buildClaudeOutcomeFieldGuidance()
   ].join('\n')
 }
 
@@ -1061,7 +1240,11 @@ function unwrapClaudeStructuredOutput(value: unknown): unknown {
   return typeof result === 'string' ? parseJsonFromCliOutput(result) : result
 }
 
-function readClaudeConversationOutput(value: string): { sessionId: string; responseText: string } {
+function readClaudeConversationOutput(value: string): {
+  sessionId: string
+  responseText: string
+  structuredOutputPresent: boolean
+} {
   const parsed = readClaudeConversationResult(value)
 
   if (!isRecord(parsed)) {
@@ -1069,14 +1252,20 @@ function readClaudeConversationOutput(value: string): { sessionId: string; respo
   }
 
   const sessionId = getStringValue(parsed.session_id) || getStringValue(parsed.sessionId)
-  const structured = unwrapClaudeStructuredOutput(parsed)
-  const responseText =
-    typeof structured === 'string'
-      ? structured
-      : getStringValue(parsed.response) ||
-        getStringValue(parsed.message) ||
-        JSON.stringify(structured)
   const isError = parsed.is_error === true
+
+  // ADR-050 — distinguish "the StructuredOutput tool was used" from "Claude answered
+  // in the text channel and skipped it". When structured_output is present it is the
+  // authoritative outcome (normalized to a JSON string for parseAgentTurnOutcome);
+  // when absent, the `result` text is a plain prose answer and must NOT be
+  // force-parsed as JSON — doing so threw here before the recovery/fallback path in
+  // resolveClaudeConversationOutcome could ever run.
+  const structuredOutputPresent = parsed.structured_output != null
+  const responseText = structuredOutputPresent
+    ? renderClaudeStructuredOutput(parsed.structured_output)
+    : getStringValue(parsed.result) ||
+      getStringValue(parsed.response) ||
+      getStringValue(parsed.message)
 
   if (isError) {
     throw new Error(firstLine(responseText) || 'Claude conversation turn failed.')
@@ -1088,8 +1277,16 @@ function readClaudeConversationOutput(value: string): { sessionId: string; respo
 
   return {
     sessionId,
-    responseText: responseText.trim()
+    responseText: responseText.trim(),
+    structuredOutputPresent
   }
+}
+
+// structured_output may arrive as a JSON string or an already-parsed object;
+// normalize to a JSON string for parseAgentTurnOutcome.
+function renderClaudeStructuredOutput(value: unknown): string {
+  const resolved = typeof value === 'string' ? parseJsonFromCliOutput(value) : value
+  return typeof resolved === 'string' ? resolved : JSON.stringify(resolved)
 }
 
 function readClaudeConversationResult(value: string): unknown {
@@ -1112,12 +1309,4 @@ function readClaudeConversationResult(value: string): unknown {
   }
 
   return parseJsonFromCliOutput(value)
-}
-
-function readClaudeLastMessage(outputPath: string): string {
-  if (!existsSync(outputPath)) {
-    throw new Error('Claude did not write a conversation response.')
-  }
-
-  return readFileSync(outputPath, 'utf8').trim()
 }

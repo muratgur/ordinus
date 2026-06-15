@@ -576,7 +576,7 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.onboardingMarkProviderAuthed, input),
     resetProviders: async (): Promise<OnboardingStatus> =>
       ipcRenderer.invoke(ipcChannels.onboardingResetProviders),
-    complete: async (input: { agentId: string }): Promise<OnboardingStatus> =>
+    complete: async (input: { agentId?: string }): Promise<OnboardingStatus> =>
       ipcRenderer.invoke(ipcChannels.onboardingComplete, input),
     onInstallEvent: (
       callback: (envelope: OnboardingInstallEventEnvelope) => void

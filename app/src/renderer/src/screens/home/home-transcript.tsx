@@ -20,7 +20,6 @@ import { Loader2, AlertCircle, Bookmark, Check } from 'lucide-react'
 import { MessageSourceBadge } from '@renderer/components/message-source-badge'
 import { CopyButton } from '@renderer/components/copy-button'
 import { MarkdownContent } from '@renderer/components/markdown-content'
-import { TurnFullResponse } from '@renderer/components/turn-full-response'
 import { FilesTouched } from '@renderer/components/files-touched'
 import { InspectGutterButton, LiveStatusRow } from '@renderer/components/run-inspector-sheet'
 import { cn } from '@renderer/lib/utils'
@@ -195,9 +194,6 @@ function TranscriptItem({
             iconClassName="size-4"
           />
           <MarkdownContent content={message.text} />
-          {message.resultContent.trim() ? (
-            <TurnFullResponse content={message.resultContent} />
-          ) : null}
           {onRevealFile ? (
             <FilesTouched
               artifactRefs={message.artifactRefs}

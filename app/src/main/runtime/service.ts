@@ -270,6 +270,8 @@ export function createRuntimeService(): RuntimeService {
         {
           turnId: input.runId,
           conversationId: input.workRequestId,
+          // ADR-049 — Workboard runs keep the summary/content split.
+          outcomeMode: 'work',
           providerId: input.providerId,
           model: input.model,
           sandbox: input.sandbox,

@@ -6,7 +6,7 @@
 // object that carries Ordinus's presence is also the working indicator (no
 // separate spinner needed for the high-level "Ordinus is working" cue).
 
-import { OrdinusMark } from './ordinus-mark'
+import { OrdinusAvatar } from './ordinus-avatar'
 
 export type HomeTopStripProps = {
   /** Conversation title shown after the Ordinus name. Empty is fine. */
@@ -21,7 +21,7 @@ export function HomeTopStrip({ title, busy, onRename }: HomeTopStripProps): Reac
     // `px-12` clears the section's absolute corner buttons (summon on the left,
     // memory on the right) so the strip content never collides with them.
     <div className="flex h-12 shrink-0 items-center gap-2 border-b px-12">
-      <OrdinusMark size="strip" state={busy ? 'thinking' : 'idle'} />
+      <OrdinusAvatar size="strip" thinking={busy} />
       <span className="text-sm font-semibold tracking-tight">Ordinus</span>
       {title ? (
         <>

@@ -2446,6 +2446,8 @@ async function runConversationAgentTurn(
     const result = await runtime.sendConversationTurn({
       turnId: agentTurn.agentTurnId,
       conversationId: agentTurn.conversationId,
+      // ADR-049 — Agent 1:1 rooms are a chat surface: the whole answer is inline.
+      outcomeMode: 'chat',
       providerId: agentTurn.agent.providerId,
       model: agentTurn.agent.model,
       sandbox: agentTurn.agent.sandbox,

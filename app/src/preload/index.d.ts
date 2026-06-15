@@ -353,7 +353,7 @@ export type OrdinusApi = {
       authed: boolean
     }) => Promise<OnboardingStatus>
     resetProviders: () => Promise<OnboardingStatus>
-    complete: (input: { agentId: string }) => Promise<OnboardingStatus>
+    complete: (input: { agentId?: string }) => Promise<OnboardingStatus>
     onInstallEvent: (callback: (envelope: OnboardingInstallEventEnvelope) => void) => () => void
   }
 }

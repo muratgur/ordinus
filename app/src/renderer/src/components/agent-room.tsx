@@ -14,7 +14,6 @@ import { InspectGutterButton, LiveStatusRow, RunInspectorSheet } from './run-ins
 import { AgentAvatar } from './agent-avatar'
 import { CopyButton } from './copy-button'
 import { MarkdownContent } from './markdown-content'
-import { TurnFullResponse } from './turn-full-response'
 import { FilesTouched } from './files-touched'
 import { QuestionPanel } from './question-panel'
 import { Button } from './ui/button'
@@ -564,10 +563,6 @@ function TranscriptTurn({
         )}
         {turn.truncated ? (
           <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
-        ) : null}
-
-        {turn.status === 'completed' && turn.resultContent.trim() ? (
-          <TurnFullResponse content={turn.resultContent} />
         ) : null}
 
         {turn.status === 'completed' ? (

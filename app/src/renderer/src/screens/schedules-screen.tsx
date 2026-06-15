@@ -16,6 +16,8 @@ import { agentColor } from '@renderer/lib/agent-color'
 import { useThemeMode } from '@renderer/hooks/use-theme-mode'
 import { useTickingNow } from '@renderer/hooks/use-ticking-now'
 import { appRoutePaths } from '@renderer/app/routes'
+import { ScreenIntroPopup } from '@renderer/components/screen-intro'
+import { useScreenIntro } from '@renderer/hooks/use-screen-intro'
 import { AgentScheduleGroup } from './schedules/agent-schedule-group'
 import { WhatsNextStrip } from './schedules/whats-next-strip'
 import { ScheduleSkeleton } from './schedules/schedule-skeleton'
@@ -102,6 +104,11 @@ export function SchedulesScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [loading, setLoading] = useState(true)
+  // ADR-048 — first-visit coach, two one-time variants gated on !loading.
+  const schedulesHasAgent = agents.length > 0
+  const schedulesIntro = useScreenIntro(
+    loading ? null : `schedules.${schedulesHasAgent ? 'has' : 'none'}`
+  )
   const [showSkeleton, setShowSkeleton] = useState(false)
   const [error, setError] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -314,6 +321,21 @@ export function SchedulesScreen(): React.JSX.Element {
 
   return (
     <div className="space-y-5 py-6">
+      <ScreenIntroPopup
+        open={schedulesIntro.open}
+        onDismiss={schedulesIntro.dismiss}
+        title={hasAnyAgent ? 'Put work on autopilot' : "You'll need an agent first"}
+        body={
+          hasAnyAgent
+            ? 'Schedule an agent to run on a cadence — a daily summary, a weekly report. Set it once and forget it.'
+            : 'Schedules run your agents automatically — create an agent first, then set a routine.'
+        }
+        cta={
+          hasAnyAgent
+            ? undefined
+            : { label: 'Go to Agents', onClick: () => navigate(appRoutePaths.agents) }
+        }
+      />
       {error ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <span className="truncate">{error}</span>

@@ -42,7 +42,9 @@ import {
 } from '../../prompts/work-plan'
 import {
   agentTurnOutcomeJsonSchema,
+  chatAgentTurnOutcomeJsonSchema,
   buildConversationOutcomeInstructions,
+  buildChatConversationOutcomeInstructions,
   buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
@@ -344,7 +346,10 @@ function buildCodexConversationPrompt(input: RuntimeConversationTurnInput): stri
     '',
     buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
-    buildConversationOutcomeInstructions(),
+    // ADR-049: chat carries the whole answer inline in `summary` (no `content`).
+    input.outcomeMode === 'chat'
+      ? buildChatConversationOutcomeInstructions()
+      : buildConversationOutcomeInstructions(),
     '',
     'User message:',
     input.message
@@ -367,7 +372,10 @@ function buildCodexResumePrompt(input: RuntimeConversationTurnInput, skillDelta 
 function writeCodexConversationOutcomeSchema(input: RuntimeConversationTurnInput): string {
   const schemaPath = join(dirname(input.eventLogPath), 'conversation-outcome.schema.json')
   mkdirSync(dirname(schemaPath), { recursive: true })
-  writeFileSync(schemaPath, JSON.stringify(agentTurnOutcomeJsonSchema, null, 2), 'utf8')
+  // ADR-049: chat drops `content` from the schema; Workboard keeps it.
+  const schema =
+    input.outcomeMode === 'chat' ? chatAgentTurnOutcomeJsonSchema : agentTurnOutcomeJsonSchema
+  writeFileSync(schemaPath, JSON.stringify(schema, null, 2), 'utf8')
   return schemaPath
 }
 

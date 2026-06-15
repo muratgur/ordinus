@@ -15,6 +15,12 @@ refined. Workboard worker agents gain a minimal scoped read-only subset of the O
 catalog (`getWorkRunResult`, `getRequestDigest`, scoped to their own Work Request). The full
 catalog — including destructive and privileged tools — remains exclusive to the in-app assistant.
 
+Amended by ADR-049 (surface-aware turn outcome): ADR-029 had Ordinus ride the same pipeline and the
+same outcome contract as Agent chat and Workboard. That uniformity leaked the Workboard
+`summary` / `content` split into chat. Ordinus and Agent rooms now share a single *chat* outcome
+shape (whole answer inline in `summary`, no `content`) distinct from the *work* shape, and the
+Ordinus-vs-Agent-room persistence asymmetry is removed.
+
 Amended by ADR-045 (Settings IA and copy system): resolves the "persona editing — name,
 avatar, extra instructions" deferred item below. The **display name is removed** (it was never
 consumed). **Extra instructions are wired** into the Ordinus system prompt — appended in

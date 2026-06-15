@@ -33,6 +33,7 @@ import type {
 import { ensureOrdinusMcpServer } from '../ordinus-mcp/lifecycle'
 import { ORDINUS_MCP_SERVER_ID } from '../ordinus-mcp/materialize'
 import { buildKnowledgePrompt } from '../ordinus-knowledge'
+import { invokeTool } from '../ordinus-tools'
 import {
   ensureWorkspaceRelativeDirectory,
   getOrdinusWorkingRoot,
@@ -138,18 +139,73 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
     return row
   }
 
-  function assembleSystemPrompt(): string {
+  // ADR-048 §7 — render the live-state snapshot for the session-start prompt.
+  // Reuses the get_app_status tool so the snapshot and the on-demand tool share
+  // ONE source of truth. Labeled "as of session start" and explicitly described
+  // as stale-able so Ordinus knows to re-check via get_app_status mid-session.
+  // Best-effort: if the digest can't be built (e.g. provider detection hiccup),
+  // we skip the snapshot rather than block the conversation from starting.
+  async function buildSessionSnapshot(): Promise<string | null> {
+    const result = await invokeTool(
+      'get_app_status',
+      {},
+      { database, observability, runtime, events: deps.events }
+    )
+    if (result.outcome !== 'ok') return null
+    const s = result.output as {
+      onboarding: { completed: boolean; stage: string }
+      providers: Array<{ id: string; installed: boolean; connected: boolean }>
+      connections: { connected: string[]; available: string[] }
+      agents: { count: number; enabled: number }
+      attention: { runningCount: number; waitingForUserCount: number; recentFailures: number }
+      schedules: { count: number; active: number }
+      workflows: { count: number }
+      skills: { libraryCount: number }
+    }
+
+    const providerLine = s.providers
+      .map(
+        (p) =>
+          `${p.id} (${p.connected ? 'connected' : p.installed ? 'installed' : 'not installed'})`
+      )
+      .join(', ')
+    const connected = s.connections.connected.length ? s.connections.connected.join(', ') : 'none'
+    const available = s.connections.available.length ? s.connections.available.join(', ') : 'none'
+
+    return [
+      '# Live app state (as of session start)',
+      '',
+      'A point-in-time snapshot — it can go stale during this conversation. Before you assert',
+      'anything about connection or provider state, or right after you direct the user to',
+      'connect or create something, re-check with `get_app_status`.',
+      '',
+      `- Onboarding: ${s.onboarding.completed ? 'completed' : `in progress (stage: ${s.onboarding.stage})`}`,
+      `- Providers: ${providerLine || 'none'}`,
+      `- Connections — connected: ${connected} · available to connect: ${available}`,
+      `- Agents: ${s.agents.count} (${s.agents.enabled} enabled)`,
+      `- Attention: ${s.attention.runningCount} running, ${s.attention.waitingForUserCount} waiting for the user, ${s.attention.recentFailures} recent failures`,
+      `- Schedules: ${s.schedules.count} (${s.schedules.active} active) · Workflows: ${s.workflows.count} · Library skills: ${s.skills.libraryCount}`
+    ].join('\n')
+  }
+
+  async function assembleSystemPrompt(): Promise<string> {
     // Compose at session-init only. Order: identity-bearing knowledge first,
-    // memory next, then the user's own standing instructions last so they read
-    // as the most salient directive. The tool catalog reaches the CLI via MCP,
-    // not via prompt. Because this is built once per conversation (first turn)
-    // and then cached by the CLI's --resume, editing instructions in Settings
-    // shapes NEW conversations and leaves existing sessions untouched (ADR-045).
+    // the live-state snapshot next (so Ordinus is situationally aware from the
+    // first message), memory next, then the user's own standing instructions
+    // last so they read as the most salient directive. The tool catalog reaches
+    // the CLI via MCP, not via prompt. Because this is built once per
+    // conversation (first turn) and then cached by the CLI's --resume, editing
+    // instructions in Settings shapes NEW conversations and leaves existing
+    // sessions untouched (ADR-045).
     const knowledge = buildKnowledgePrompt()
+    const snapshot = await buildSessionSnapshot()
     const memory = database.listOrdinusMemory()
     const extraInstructions = database.getOrdinusSingleton()?.extraInstructions?.trim()
 
     let prompt = knowledge
+    if (snapshot) {
+      prompt += `\n\n---\n\n${snapshot}`
+    }
     if (memory.length > 0) {
       const memoryLines = memory
         .map((entry) => `- [${entry.type}] ${entry.name}: ${entry.body}`)
@@ -273,7 +329,7 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         // cache holds the prompt — re-sending it would waste tokens AND, for
         // some CLIs, confuse the resume protocol.
         const isFirstTurn = !conversation.providerSessionRef
-        const instructions = isFirstTurn ? assembleSystemPrompt() : ''
+        const instructions = isFirstTurn ? await assembleSystemPrompt() : ''
 
         // workingRoot must be a workspace-RELATIVE path (validated by
         // WorkspaceRelativePathSchema in the runtime layer). All Ordinus
@@ -287,6 +343,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
         const runtimeInput: RuntimeConversationTurnInput = {
           turnId,
           conversationId: conversation.id,
+          // ADR-049 — Ordinus is a chat surface: the whole answer is inline.
+          outcomeMode: 'chat',
           providerId: conversation.providerId as RuntimeConversationTurnInput['providerId'],
           model: conversation.model,
           // sandbox: NOT 'read-only' — that value maps to "plan mode" for
@@ -394,11 +452,9 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           database.appendOrdinusTurn({
             conversationId: conversation.id,
             kind: 'assistant',
-            // ADR-030: the transcript message is the always-present summary;
-            // the full produced body (if any) is stored alongside and surfaced
-            // on demand ("Show full response") in the transcript.
+            // ADR-049: chat carries the whole answer inline in `content` (from the
+            // outcome's `summary`). The summary/content split is Workboard-only.
             content: result.outcome.summary,
-            resultContent: result.outcome.content,
             // ADR-035: persist file references so Home renders "files touched".
             artifactRefs: fileRefs.artifactRefs,
             changedFiles: fileRefs.changedFiles,

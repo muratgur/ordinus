@@ -7,20 +7,15 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
-  Star,
   X
 } from 'lucide-react'
 import type {
-  Agent,
-  AgentProfile,
   InstallErrorCause,
   OnboardingState,
   OnboardingStatus,
   ProviderId
 } from '@shared/contracts'
 import { getProviderDisplayName } from '@shared/provider-labels'
-import { packAgentAvatar, randomAgentAvatar } from '../../components/mascots'
-import { AgentCreationFlow } from '../../components/agent-creation-flow'
 import { Button } from '../../components/ui/button'
 import { notify } from '../../lib/notifications'
 import { cn } from '../../lib/utils'
@@ -128,10 +123,13 @@ export function OnboardingFlow({
         {stage === 'install' ? <InstallStage state={state} onStateChange={setStatus} /> : null}
 
         {stage === 'colleague' ? (
-          <ColleagueStage
-            existingAgentNames={[]}
-            onCompleted={async (agent) => {
-              const next = await window.ordinus.onboarding.complete({ agentId: agent.id })
+          <OnboardingHandoffStage
+            onFinish={async () => {
+              // ADR-048 phase 4: no forced first-agent creation and no separate
+              // full-page intro — that duplicated the in-Home welcome popup. After
+              // the provider hire/install, complete with no agent and land directly
+              // on Home, where the welcome popup introduces Ordinus.
+              const next = await window.ordinus.onboarding.complete({})
               setStatus(next)
               onCompleted()
             }}
@@ -807,161 +805,33 @@ function phaseToPercent(phase: OnboardingState['installPhases'][ProviderId]): nu
   }
 }
 
-// --- Colleague --------------------------------------------------------------
+// --- Onboarding handoff (ADR-048 phase 4) ----------------------------------
 
-function ColleagueStage({
-  existingAgentNames,
-  onCompleted
+// After the provider hire/install there is no separate full-page intro and no
+// forced first-agent creation — both duplicated the in-Home welcome popup. This
+// stage just completes onboarding and hands off to Home, where the welcome popup
+// introduces Ordinus. A brief spinner covers the one-shot completion call.
+function OnboardingHandoffStage({
+  onFinish
 }: {
-  existingAgentNames: string[]
-  onCompleted: (agent: Agent) => Promise<void>
+  onFinish: () => Promise<void>
 }): React.JSX.Element {
-  const [specialists, setSpecialists] = useState<AgentProfile[]>([])
-  const [busyKey, setBusyKey] = useState<string | null>(null)
-  const [creationOpen, setCreationOpen] = useState(false)
-  const generalButtonRef = useRef<HTMLButtonElement | null>(null)
-
+  const started = useRef(false)
   useEffect(() => {
-    void window.ordinus.agents.listProfiles().then((catalog) => {
-      // Pick 5 recommended-or-broad specialists, deduped by role.
-      const seen = new Set<string>()
-      const picks: AgentProfile[] = []
-      for (const profile of catalog.profiles) {
-        if (picks.length >= 5) break
-        if (seen.has(profile.role)) continue
-        seen.add(profile.role)
-        picks.push(profile)
-      }
-      setSpecialists(picks)
+    if (started.current) return
+    started.current = true
+    void onFinish().catch((error) => {
+      notify.attention({
+        title: 'Could not finish setup',
+        description: error instanceof Error ? error.message : 'Unknown error.'
+      })
     })
-  }, [])
-
-  useEffect(() => {
-    generalButtonRef.current?.focus()
-  }, [])
-
-  async function createGeneralAssistant(): Promise<void> {
-    if (busyKey) return
-    try {
-      setBusyKey('general')
-      const draft = await window.ordinus.agents.draftBlank()
-      const agent = await window.ordinus.agents.create({
-        ...draft,
-        name: uniqueName('General Assistant', existingAgentNames),
-        role: 'Helps with most things',
-        avatar: packAgentAvatar(0, 'slate'),
-        enabled: true
-      })
-      await onCompleted(agent)
-    } catch (error) {
-      notify.attention({
-        title: 'Could not create your first colleague',
-        description: error instanceof Error ? error.message : 'Unknown error.'
-      })
-    } finally {
-      setBusyKey(null)
-    }
-  }
-
-  async function createFromProfile(profile: AgentProfile): Promise<void> {
-    if (busyKey) return
-    try {
-      setBusyKey(profile.id)
-      const draft = await window.ordinus.agents.draftFromProfile({ profileId: profile.id })
-      const agent = await window.ordinus.agents.create({
-        ...draft,
-        name: uniqueName(draft.name, existingAgentNames),
-        avatar: draft.avatar || randomAgentAvatar(),
-        enabled: true
-      })
-      await onCompleted(agent)
-    } catch (error) {
-      notify.attention({
-        title: 'Could not create that colleague',
-        description: error instanceof Error ? error.message : 'Unknown error.'
-      })
-    } finally {
-      setBusyKey(null)
-    }
-  }
+  }, [onFinish])
 
   return (
-    <div className="grid w-full max-w-md gap-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-500">
-      <div className="text-center">
-        <p className="text-2xl font-semibold tracking-tight">Choose your first colleague.</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          You can hire more later from the Agents screen.
-        </p>
-      </div>
-
-      <button
-        ref={generalButtonRef}
-        type="button"
-        onClick={() => void createGeneralAssistant()}
-        disabled={Boolean(busyKey)}
-        className={cn(
-          'group grid gap-2 rounded-xl border-2 border-foreground/80 bg-card p-4 text-left transition-all',
-          'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-          busyKey && 'pointer-events-none opacity-60'
-        )}
-      >
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-500 text-white">
-            <Star className="size-5" strokeWidth={1.75} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-base font-semibold">General Assistant</p>
-            <p className="text-xs text-muted-foreground">Helps with most things.</p>
-          </div>
-          {busyKey === 'general' ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-          )}
-        </div>
-        <p className="pl-13 text-xs text-muted-foreground">Start here if unsure.</p>
-      </button>
-
-      <div className="grid gap-2">
-        <p className="text-center text-xs uppercase tracking-wide text-muted-foreground">
-          Or pick a specialist
-        </p>
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {specialists.map((profile) => (
-            <button
-              key={profile.id}
-              type="button"
-              onClick={() => void createFromProfile(profile)}
-              disabled={Boolean(busyKey)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs transition-colors',
-                'hover:border-foreground/30 hover:bg-accent',
-                busyKey === profile.id && 'opacity-60'
-              )}
-            >
-              {busyKey === profile.id ? <Loader2 className="size-3 animate-spin" /> : null}
-              {profile.name}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setCreationOpen(true)}
-            disabled={Boolean(busyKey)}
-            className="flex items-center gap-1.5 rounded-full border border-dashed bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-accent hover:text-foreground"
-          >
-            Define your own
-          </button>
-        </div>
-      </div>
-
-      <AgentCreationFlow
-        open={creationOpen}
-        onOpenChange={setCreationOpen}
-        onAgentCreated={(agent) => {
-          void onCompleted(agent)
-        }}
-        existingAgentNames={existingAgentNames}
-      />
+    <div className="flex flex-col items-center gap-3 text-muted-foreground motion-safe:animate-in motion-safe:fade-in motion-safe:duration-500">
+      <Loader2 className="size-5 animate-spin" />
+      <span className="text-sm">Taking you in…</span>
     </div>
   )
 }
@@ -1062,14 +932,6 @@ function providerColorClass(providerId: ProviderId): string {
     case 'gemini':
       return 'bg-sky-500'
   }
-}
-
-function uniqueName(seed: string, existing: string[]): string {
-  const base = seed.trim() || 'New agent'
-  if (!existing.includes(base)) return base
-  let suffix = 2
-  while (existing.includes(`${base} ${suffix}`)) suffix += 1
-  return `${base} ${suffix}`
 }
 
 export default OnboardingFlow

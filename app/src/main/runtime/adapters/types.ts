@@ -57,6 +57,11 @@ export type ProviderRuntimeContext = {
 export type RuntimeConversationTurnInput = {
   turnId: string
   conversationId: string
+  // ADR-049 — selects the outcome schema and prompt guidance. 'chat' (Ordinus
+  // assistant + Agent rooms) carries the whole answer inline in `summary` with no
+  // `content` field; 'work' (Workboard, via sendWorkRun) keeps the summary/content
+  // split. Adapters branch on this.
+  outcomeMode: 'chat' | 'work'
   providerId: ProviderId
   model: string
   sandbox: AgentSandbox

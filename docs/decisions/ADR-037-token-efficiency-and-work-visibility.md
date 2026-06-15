@@ -17,6 +17,18 @@ Amends ADR-011 (centralized agent observability): the observability pipeline now
 provider token usage per run. Builds on ADR-009 (request-scoped agent sessions) and
 ADR-036 (run inspector bottom sheet); neither is changed.
 
+Amended by ADR-049 (surface-aware turn outcome): the Claude relaxed StructuredOutput schema and the
+`normalizeAgentTurnOutcome` repair layer introduced here remain provider-level and unchanged. ADR-049
+adds a *surface* dimension on top of this *provider* dimension — the outcome schema and prompt
+guidance now also branch on `outcomeMode: 'chat' | 'work'`, with `content` removed from the chat
+schema.
+
+Related: ADR-050 (Claude structured-output reliability). Establishes empirically that this ADR's
+schema relaxation is **not** correlated with a separate, later failure mode — Claude *skipping* the
+StructuredOutput tool entirely on resume turns with long text answers (distinct from the empty-`{}`
+*fill* failure this ADR addressed). ADR-050 adds a Claude-only defense-in-depth fix (prompt nudge +
+recovery turn + parse fallback) plus catalog hygiene (`--strict-mcp-config`, `--tools`).
+
 ## Date
 
 2026-06-11

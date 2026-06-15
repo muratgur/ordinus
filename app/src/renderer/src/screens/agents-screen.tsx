@@ -38,6 +38,8 @@ import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
 import { notify } from '@renderer/lib/notifications'
 import { AgentCreationFlow } from '@renderer/components/agent-creation-flow'
+import { ScreenIntroPopup } from '@renderer/components/screen-intro'
+import { useScreenIntro } from '@renderer/hooks/use-screen-intro'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentAvatarPicker } from '@renderer/components/agent-avatar-picker'
 import { AgentRoom } from '@renderer/components/agent-room'
@@ -140,6 +142,11 @@ export function AgentsScreen(): React.JSX.Element {
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // ADR-048 — first-visit coach. Two one-time variants: before any agent exists,
+  // and the real "here's what you can do" once a teammate exists. Gated on
+  // !loading so the right variant is chosen after agents have loaded.
+  const agentsHasAgent = agents.length > 0
+  const agentsIntro = useScreenIntro(loading ? null : `agents.${agentsHasAgent ? 'has' : 'none'}`)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTargetAgentId, setDeleteTargetAgentId] = useState('')
   const [deleting, setDeleting] = useState(false)
@@ -468,6 +475,22 @@ export function AgentsScreen(): React.JSX.Element {
         onOpenChange={setCreateAgentOpen}
         onAgentCreated={handleAgentCreated}
         existingAgentNames={agents.map((agent) => agent.name)}
+      />
+
+      <ScreenIntroPopup
+        open={agentsIntro.open}
+        onDismiss={agentsIntro.dismiss}
+        title={agentsHasAgent ? 'Your team is taking shape' : 'This is your team'}
+        body={
+          agentsHasAgent
+            ? 'Open any teammate to chat with it directly, adjust how it works, or hand it a task. Add more specialists whenever you need them.'
+            : 'Agents are your specialists — each one handles a kind of work. Start by creating your first one; everything else here builds on having an agent.'
+        }
+        cta={
+          agentsHasAgent
+            ? undefined
+            : { label: 'Create an agent', onClick: () => setCreateAgentOpen(true) }
+        }
       />
 
       {deleteTargetAgent ? (
@@ -2865,12 +2888,10 @@ function EmptyState({
   detail: string
 }): React.JSX.Element {
   return (
-    <div className="grid min-h-48 place-items-center rounded-lg border border-dashed bg-accent p-6 text-center">
-      <div className="grid max-w-sm gap-2">
-        <span className="mx-auto text-muted-foreground [&_svg]:size-7">{icon}</span>
-        <p className="text-sm font-semibold">{title}</p>
-        <p className="text-sm text-muted-foreground">{detail}</p>
-      </div>
+    <div className="flex h-full min-h-48 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+      <span className="text-muted-foreground [&_svg]:size-7">{icon}</span>
+      <p className="text-sm font-semibold">{title}</p>
+      <p className="max-w-sm text-sm text-muted-foreground">{detail}</p>
     </div>
   )
 }

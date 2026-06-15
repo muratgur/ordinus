@@ -6,7 +6,7 @@
 // commit the regenerated webp files. Base.png is variant 0.
 
 import sharp from 'sharp'
-import { readdirSync, mkdirSync, rmSync } from 'node:fs'
+import { readdirSync, mkdirSync, rmSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -48,4 +48,31 @@ for (const file of sources.sort()) {
     .toFile(join(outDir, `${id}.webp`))
   console.log(`${file} -> mascots/${id}.webp`)
 }
+
+// ADR-048 §4 / phase 5 — Ordinus's signature character. Built SEPARATELY from
+// the agent mascot set (it is a distinct class, not a selectable variant) into
+// its own asset path. Source: docs/Chars/Ordinus.png (transparent, head/shoulders).
+const ordinusSrc = join(srcDir, 'Ordinus.png')
+const ordinusOutDir = join(root, 'app', 'src', 'renderer', 'src', 'assets', 'ordinus')
+if (existsSync(ordinusSrc)) {
+  mkdirSync(ordinusOutDir, { recursive: true })
+  const ordinusStats = await sharp(ordinusSrc).stats()
+  if (ordinusStats.isOpaque) {
+    console.error('Ordinus.png: no transparency — background must be removed; skipping')
+  } else {
+    await sharp(ordinusSrc)
+      .trim()
+      .resize(OUT_SIZE, OUT_SIZE, {
+        fit: 'contain',
+        position: 'south',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+      .webp({ quality: 92, alphaQuality: 95 })
+      .toFile(join(ordinusOutDir, 'portrait.webp'))
+    console.log('Ordinus.png -> ordinus/portrait.webp')
+  }
+} else {
+  console.warn('Ordinus.png not found in docs/Chars — skipping Ordinus portrait')
+}
+
 console.log('done')

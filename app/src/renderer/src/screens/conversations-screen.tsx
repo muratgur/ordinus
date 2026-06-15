@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useActiveOptionScroll } from '@renderer/hooks/use-active-option-scroll'
+import { ScreenIntroPopup } from '@renderer/components/screen-intro'
+import { useScreenIntro } from '@renderer/hooks/use-screen-intro'
 import {
   AlertTriangle,
   Bot,
@@ -54,7 +56,6 @@ import {
 import { FileReferenceList } from '@renderer/components/file-reference-list'
 import { getFileReferences, type FileReference } from '@renderer/components/file-reference-utils'
 import { MarkdownContent } from '@renderer/components/markdown-content'
-import { TurnFullResponse } from '@renderer/components/turn-full-response'
 import { cn } from '@renderer/lib/utils'
 import type {
   Agent,
@@ -119,11 +120,17 @@ type InputRequestProgress = {
 const composerTextareaMaxHeight = 160
 
 export function ConversationsScreen(): React.JSX.Element {
+  const navigate = useNavigate()
   const [agents, setAgents] = useState<Agent[]>([])
   const [conversations, setConversations] = useState<ConversationListItem[]>([])
   const [selectedConversationId, setSelectedConversationId] = useState('')
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  // ADR-048 — first-visit coach, two one-time variants gated on !loading.
+  const conversationsHasAgent = agents.length > 0
+  const conversationsIntro = useScreenIntro(
+    loading ? null : `conversations.${conversationsHasAgent ? 'has' : 'none'}`
+  )
   const [error, setError] = useState('')
   const [sidebarDocked, setSidebarDocked] = useState(true)
   const [message, setMessage] = useState('')
@@ -590,6 +597,21 @@ export function ConversationsScreen(): React.JSX.Element {
 
   return (
     <div className="flex h-[calc(100vh-3rem)] gap-3 py-4">
+      <ScreenIntroPopup
+        open={conversationsIntro.open}
+        onDismiss={conversationsIntro.dismiss}
+        title="Talk things through"
+        body={
+          conversationsHasAgent
+            ? 'Start a conversation with one of your agents, or bring a few together to compare their takes on the same question.'
+            : "Conversations is where you chat with your agents — one on one, or several together. You'll need an agent first."
+        }
+        cta={
+          conversationsHasAgent
+            ? undefined
+            : { label: 'Go to Agents', onClick: () => navigate(appRoutePaths.agents) }
+        }
+      />
       <ConversationList
         conversations={conversations}
         loading={loading}
@@ -1301,9 +1323,6 @@ function TurnCard({
       )}
       {turn.truncated ? (
         <p className="text-xs text-muted-foreground">Long output was shortened for this view.</p>
-      ) : null}
-      {!isUser && turn.status === 'completed' && turn.resultContent.trim() ? (
-        <TurnFullResponse content={turn.resultContent} />
       ) : null}
       {!isUser && turn.status === 'completed' ? (
         <TurnFiles turn={turn} onRevealPath={onRevealPath} />

@@ -63,6 +63,8 @@ import {
   writeViewport
 } from '@renderer/components/workflow-storage'
 import { appRoutePaths } from '@renderer/app/routes'
+import { ScreenIntroPopup } from '@renderer/components/screen-intro'
+import { useScreenIntro } from '@renderer/hooks/use-screen-intro'
 import { cn } from '@renderer/lib/utils'
 
 const AUTOSAVE_DELAY_MS = 600
@@ -78,6 +80,11 @@ export function WorkflowsScreen(): React.JSX.Element {
   const [requests, setRequests] = useState<WorkRequest[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // ADR-048 — first-visit coach, two one-time variants gated on !loading.
+  const workflowsHasAgent = agents.length > 0
+  const workflowsIntro = useScreenIntro(
+    loading ? null : `workflows.${workflowsHasAgent ? 'has' : 'none'}`
+  )
   const [error, setError] = useState<string | null>(null)
   const [sidebarDocked, setSidebarDocked] = useState(readSidebarDocked)
   const [deleteTarget, setDeleteTarget] = useState<WorkflowDesign | null>(null)
@@ -178,6 +185,21 @@ export function WorkflowsScreen(): React.JSX.Element {
 
   return (
     <div className="flex h-[calc(100vh-3rem)] gap-3 py-3">
+      <ScreenIntroPopup
+        open={workflowsIntro.open}
+        onDismiss={workflowsIntro.dismiss}
+        title={workflowsHasAgent ? 'Design repeatable processes' : "You'll need an agent first"}
+        body={
+          workflowsHasAgent
+            ? 'Chain tasks across your agents into a visual workflow you can reuse. Create one to capture a multi-step process.'
+            : 'Workflows orchestrate your agents — create an agent first, then design a flow.'
+        }
+        cta={
+          workflowsHasAgent
+            ? undefined
+            : { label: 'Go to Agents', onClick: () => navigate(appRoutePaths.agents) }
+        }
+      />
       <Rail
         aria-label="Your workflows"
         collapsed={!sidebarDocked}

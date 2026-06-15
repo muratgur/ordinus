@@ -1,6 +1,7 @@
 import {
   AgentTurnOutcomeSchema,
   agentTurnOutcomeContentMaxLength,
+  chatTurnSummaryMaxLength,
   workRunResultSummaryMaxLength,
   type AgentTurnOutcome
 } from '@shared/contracts'
@@ -160,6 +161,46 @@ export const claudeAgentTurnOutcomeJsonSchema = {
   required: ['outcome', 'summary']
 } as const
 
+// ADR-049 — chat outcome schemas. Chat (Ordinus assistant + Agent rooms) carries
+// the whole answer inline in `summary`; the `summary`/`content` split is
+// Workboard-only, so `content` is REMOVED from the schema the model fills. The
+// model cannot split a chat answer — it is structurally impossible, not merely
+// discouraged. `summary` gets the generous chat ceiling. The provider divergence
+// (strict for Codex/Gemini, relaxed for Claude) is preserved by deriving each
+// chat schema from its Workboard counterpart and dropping `content`.
+function omitContent<T extends { content?: unknown }>(properties: T): Omit<T, 'content'> {
+  const rest: Record<string, unknown> = { ...properties }
+  delete rest.content
+  return rest as Omit<T, 'content'>
+}
+
+export const chatAgentTurnOutcomeJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ...omitContent(agentTurnOutcomeJsonSchema.properties),
+    summary: { type: ['string', 'null'], maxLength: chatTurnSummaryMaxLength }
+  },
+  required: agentTurnOutcomeJsonSchema.required.filter((field) => field !== 'content')
+} as const
+
+export const claudeChatAgentTurnOutcomeJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ...omitContent(claudeAgentTurnOutcomeJsonSchema.properties),
+    summary: { type: ['string', 'null'], maxLength: chatTurnSummaryMaxLength }
+  },
+  // The relaxed Claude schema only requires outcome + summary (content was never
+  // required). Filter defensively anyway — mirroring the strict chat schema — so a
+  // future edit that adds 'content' to the relaxed required can't make the chat
+  // schema demand a field omitContent stripped from its properties (which would make
+  // every chat turn's StructuredOutput unsatisfiable).
+  required: claudeAgentTurnOutcomeJsonSchema.required.filter(
+    (field) => (field as string) !== 'content'
+  )
+} as const
+
 export function parseAgentTurnOutcome(value: unknown): AgentTurnOutcome {
   const parsed = typeof value === 'string' ? parseJsonFromCliOutput(value) : value
   return AgentTurnOutcomeSchema.parse(normalizeAgentTurnOutcome(parsed))
@@ -171,7 +212,11 @@ function normalizeAgentTurnOutcome(value: unknown): unknown {
   }
 
   if (value.outcome === 'final_response') {
-    const rawSummary = typeof value.summary === 'string' ? value.summary : ''
+    // summary is required non-empty by AgentTurnOutcomeSchema, but the outcome
+    // JSON schema allows null/empty (Claude's relaxed schema even drops it from
+    // required). Fall back to a neutral non-empty string so a degenerate output
+    // doesn't crash the turn with a Zod "too_small" on ["summary"].
+    const rawSummary = typeof value.summary === 'string' ? value.summary.trim() : ''
     const rawContent = typeof value.content === 'string' ? value.content : ''
     const artifacts = splitWorkspaceAndExternalPaths(normalizeStringArray(value.artifactRefs))
     const changes = splitWorkspaceAndExternalPaths(normalizeStringArray(value.changedFiles))
@@ -180,7 +225,7 @@ function normalizeAgentTurnOutcome(value: unknown): unknown {
     // appended to the summary (always shown) rather than the optional body.
     return {
       outcome: 'final_response',
-      summary: appendExternalWritesNotice(rawSummary, externalPaths),
+      summary: appendExternalWritesNotice(rawSummary || 'Done.', externalPaths),
       content: rawContent,
       artifactRefs: artifacts.workspaceRelative,
       changedFiles: changes.workspaceRelative
@@ -191,62 +236,113 @@ function normalizeAgentTurnOutcome(value: unknown): unknown {
     return value
   }
 
+  const rawTitle = typeof value.title === 'string' ? value.title.trim() : ''
+  const detailText = typeof value.detail === 'string' ? value.detail.trim() : ''
+  const questions = Array.isArray(value.questions)
+    ? value.questions.map((question, index) => normalizeQuestion(question, index))
+    : []
+
+  // questions is required .min(1) by AgentTurnOutcomeSchema, but the outcome JSON
+  // schema (especially Claude's relaxed one) permits an empty/absent array. A
+  // needs_input with no question is contradictory — surface it as a final
+  // response so the turn completes instead of failing the Zod "too_small" on
+  // ["questions"].
+  if (questions.length === 0) {
+    return {
+      outcome: 'final_response',
+      summary: rawTitle || detailText || 'Could you share a bit more so I can help?',
+      content: '',
+      artifactRefs: [],
+      changedFiles: []
+    }
+  }
+
+  // title is required non-empty by the internal schema but optional/nullable in
+  // the StructuredOutput schema; default to a neutral label (the renderer shows
+  // its own accent label anyway).
   return {
     outcome: 'needs_input',
-    title: typeof value.title === 'string' ? value.title : '',
+    title: rawTitle || 'A quick question',
     ...optionalStringProperty('detail', value.detail),
-    questions: Array.isArray(value.questions) ? value.questions.map(normalizeQuestion) : []
+    questions
   }
 }
 
-function normalizeQuestion(value: unknown): unknown {
+// Repair a question to satisfy InteractionQuestionSchema. The StructuredOutput
+// schema (especially Claude's relaxed one) permits shapes the internal Zod
+// rejects: empty id/label, a 'choice' with no usable options, a dangling
+// recommendedOptionId, or a non-object entry. We coerce id/label to non-empty,
+// degrade an option-less 'choice' to 'text', drop a recommendedOptionId that
+// doesn't reference an option, and omit boolean/required where Zod has defaults.
+function normalizeQuestion(value: unknown, index: number): unknown {
   if (!isRecord(value)) {
-    return value
+    return { id: `q${index + 1}`, label: 'Your input', kind: 'text' }
   }
 
+  const id = typeof value.id === 'string' && value.id.trim() ? value.id : `q${index + 1}`
+  const label = typeof value.label === 'string' && value.label.trim() ? value.label : 'Your input'
   const base = {
-    id: value.id,
-    label: value.label,
+    id,
+    label,
     ...optionalStringProperty('detail', value.detail),
-    kind: value.kind,
-    required: value.required
+    ...(typeof value.required === 'boolean' ? { required: value.required } : {})
   }
 
   if (value.kind === 'choice') {
-    return {
-      ...base,
-      options: Array.isArray(value.options) ? value.options.map(normalizeChoiceOption) : [],
-      ...optionalStringProperty('recommendedOptionId', value.recommendedOptionId),
-      ...(typeof value.allowCustom === 'boolean' ? { allowCustom: value.allowCustom } : {})
+    const options = Array.isArray(value.options)
+      ? value.options
+          .map(normalizeChoiceOption)
+          .filter((option): option is Record<string, string> => option !== null)
+      : []
+    if (options.length > 0) {
+      const optionIds = new Set(options.map((option) => option.id))
+      const recommended =
+        typeof value.recommendedOptionId === 'string' && optionIds.has(value.recommendedOptionId)
+          ? { recommendedOptionId: value.recommendedOptionId }
+          : {}
+      return {
+        ...base,
+        kind: 'choice',
+        options,
+        ...recommended,
+        ...(typeof value.allowCustom === 'boolean' ? { allowCustom: value.allowCustom } : {})
+      }
     }
-  }
-
-  if (value.kind === 'text') {
-    return {
-      ...base,
-      ...optionalStringProperty('placeholder', value.placeholder)
-    }
+    // No usable options — a choice question can't validate; degrade to text.
+    return { ...base, kind: 'text' }
   }
 
   if (value.kind === 'boolean') {
     return {
       ...base,
+      kind: 'boolean',
       ...optionalStringProperty('trueLabel', value.trueLabel),
       ...optionalStringProperty('falseLabel', value.falseLabel)
     }
   }
 
-  return value
+  // 'text' or any unrecognized kind.
+  return {
+    ...base,
+    kind: 'text',
+    ...optionalStringProperty('placeholder', value.placeholder)
+  }
 }
 
-function normalizeChoiceOption(value: unknown): unknown {
+function normalizeChoiceOption(value: unknown): Record<string, string> | null {
   if (!isRecord(value)) {
-    return value
+    return null
   }
-
+  const id = typeof value.id === 'string' ? value.id.trim() : ''
+  const label = typeof value.label === 'string' ? value.label.trim() : ''
+  // id and label are both .min(1) in the schema — an option missing either is
+  // unusable, so drop it rather than fabricate meaningless text.
+  if (!id || !label) {
+    return null
+  }
   return {
-    id: value.id,
-    label: value.label,
+    id,
+    label,
     ...optionalStringProperty('description', value.description)
   }
 }
@@ -325,7 +421,7 @@ export function buildResumeReminderInstructions(): string {
 // describes the fields rather than dictating a text-emitted JSON shape, and tells
 // the model to report through the structured output instead of as text.
 export function buildClaudeOutcomeFieldGuidance(): string {
-  return `When you have finished, report the result through your structured output. Do not also restate the answer as plain text. Guidance for the fields:
+  return `When you have finished, you MUST report the result by calling your StructuredOutput tool — that call is the ONLY channel the app reads. Even after you have used other tools, and even if you have already written your answer as text earlier in this turn, your FINAL action in the turn MUST be the StructuredOutput tool call. Never end a turn with only a text message: a turn that ends without a StructuredOutput call is a hard failure. Put your actual answer inside the structured output instead of restating it as plain text. Guidance for the fields:
 
 Final response (outcome = "final_response"):
 - "summary" is required: a concise GitHub-flavored Markdown description of what you did. It is always shown to the user and passed to any dependent work. Keep it under ${workRunResultSummaryMaxLength} characters.
@@ -345,6 +441,88 @@ Needs input (outcome = "needs_input"): use only when you cannot continue without
 - Do not create placeholder choice options such as "I will write it myself"; use a text question instead.
 - Set recommendedOptionId only for a substantive recommended option, not for a custom-entry placeholder.
 - Set allowCustom to true unless custom answers would be unsafe.`
+}
+
+// ADR-049 — chat variant of the Claude field guidance. Chat has no `content`
+// field: the entire answer goes in `summary` and is shown inline in the message.
+// The Workboard "summary is short, long body goes in content" split does not
+// apply here.
+export function buildClaudeChatOutcomeFieldGuidance(): string {
+  return `When you have finished, you MUST report the result by calling your StructuredOutput tool — that call is the ONLY channel the app reads. Even after you have used other tools, and even if you have already written your answer as text earlier in this turn, your FINAL action in the turn MUST be the StructuredOutput tool call. Never end a turn with only a text message: a turn that ends without a StructuredOutput call is a hard failure. Put your actual answer inside the structured output instead of restating it as plain text. Guidance for the fields:
+
+Final response (outcome = "final_response"):
+- "summary" is required and holds your ENTIRE answer to the user, as GitHub-flavored Markdown. It is shown inline in the conversation. Do not abbreviate it into a short blurb — write the full reply here. There is no separate "content" field in chat.
+- Do NOT write your textual answer to a workspace file to get around any length limit. Long text belongs in "summary".
+- Only write a workspace file when the output is inherently a file: an edit to an existing project file, source code, HTML, JavaScript, a PDF, a spreadsheet, an image, or another binary/format-bearing deliverable; or when the user explicitly asked for a file.
+- In "summary": use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose; use fenced code blocks for code, commands, diffs, logs, or snippets; do not use raw HTML.
+- Use "artifactRefs" for genuine user-facing file deliverables (PDFs, spreadsheets, images, exported documents).
+- Use "changedFiles" for every file you created or modified, including artifacts.
+- All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..". Do not include a file path unless you actually created or modified that file in the workspace.
+
+Needs input (outcome = "needs_input"): use only when you cannot continue without user input.
+- Ask at most 3 questions, only for information that is necessary to continue.
+- Use text questions for free-form facts.
+- Use choice questions only when the options are real alternatives the user can select; prefer 2 or 3 useful options when there are meaningful alternatives, with 1 to 4 options total.
+- Do not create placeholder choice options such as "I will write it myself"; use a text question instead.
+- Set recommendedOptionId only for a substantive recommended option, not for a custom-entry placeholder.
+- Set allowCustom to true unless custom answers would be unsafe.`
+}
+
+// ADR-049 — chat variant of the Codex/Gemini text-channel instructions. The JSON
+// shape has no "content" field; "summary" carries the whole answer.
+export function buildChatConversationOutcomeInstructions(): string {
+  return `Return JSON only. Do not wrap the JSON response in markdown fences, prose, or comments.
+
+Your response must match exactly one of these shapes:
+
+For a normal answer:
+{
+  "outcome": "final_response",
+  "summary": "Your ENTIRE answer to the user as GitHub-flavored Markdown.",
+  "artifactRefs": ["workspace-relative/path/to/user-facing-output.pdf"],
+  "changedFiles": ["workspace-relative/path/to/created-or-modified-file.ts"]
+}
+
+If you cannot continue without user input:
+{
+  "outcome": "needs_input",
+  "title": "Short title for what you need",
+  "detail": "Optional brief explanation.",
+  "questions": [
+    {
+      "id": "stable_snake_case_id",
+      "label": "Question for the user",
+      "kind": "choice",
+      "required": true,
+      "options": [
+        { "id": "option_id", "label": "Option label", "description": "Optional detail" }
+      ],
+      "recommendedOptionId": "option_id",
+      "allowCustom": true
+    }
+  ]
+}
+
+Input request rules:
+- Ask at most 3 questions.
+- Use text questions for free-form facts.
+- Use choice questions only when the options are real alternatives the user can select.
+- Prefer choice questions with 2 or 3 useful options when there are meaningful alternatives.
+- Use 1 to 4 options for any choice question.
+- Do not create placeholder choice options such as "I will write it myself"; use a text question instead.
+- Set recommendedOptionId only for a substantive recommended option, not for a custom-entry placeholder.
+- Set allowCustom to true unless custom answers would be unsafe.
+- Ask only for information that is necessary to continue.
+
+Final response rules:
+- "summary" is required and holds your ENTIRE answer to the user, as GitHub-flavored Markdown. It is shown inline in the conversation. Write the full reply here — there is no separate "content" field.
+- Do NOT write your textual answer to a workspace file to get around any length limit. Long text belongs in "summary".
+- Only write a workspace file when the output is inherently a file: an edit to an existing project file, source code, HTML, JavaScript, a PDF, a spreadsheet, an image, or another binary/format-bearing deliverable; or when the user explicitly asked for a file.
+- In "summary": use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose; use fenced code blocks for code, commands, diffs, logs, or snippets; do not use raw HTML.
+- Use artifactRefs for genuine user-facing file deliverables (PDFs, spreadsheets, images, exported documents).
+- Use changedFiles for every file you created or modified, including artifacts.
+- All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..".
+- Do not include a file path unless you actually created or modified that file in the workspace.`
 }
 
 export function buildConversationOutcomeInstructions(): string {

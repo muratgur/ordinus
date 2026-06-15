@@ -19,6 +19,14 @@ type AgentCreationFlowProps = {
   onOpenChange: (open: boolean) => void
   onAgentCreated: (agent: Agent) => void
   existingAgentNames: string[]
+  /**
+   * ADR-048 §6/phase 3 — when Ordinus proposes an agent (`propose_agent`), it
+   * has already produced the draft through the same engine the wizard uses. The
+   * flow opens pre-seeded with this draft and jumps straight to the "shape" step
+   * (name / avatar / color), skipping the capabilities step. Pass a stable value
+   * (set once when the proposal arrives), not a fresh object each render.
+   */
+  initialDraft?: AgentDraft | null
 }
 
 /**
@@ -38,19 +46,25 @@ export function AgentCreationFlow({
   open,
   onOpenChange,
   onAgentCreated,
-  existingAgentNames
+  existingAgentNames,
+  initialDraft
 }: AgentCreationFlowProps): React.JSX.Element {
-  const [step, setStep] = useState<CreationStep>('capabilities')
+  // ADR-048 phase 3 — when Ordinus proposes an agent, the flow mounts with a
+  // pre-built draft and starts at the "shape" step (the parent remounts it via a
+  // key per proposal, so these initializers seed cleanly — no setState-in-effect).
+  const [step, setStep] = useState<CreationStep>(initialDraft ? 'shape' : 'capabilities')
   const [intent, setIntent] = useState('')
-  const [draft, setDraft] = useState<AgentDraft | null>(null)
+  const [draft, setDraft] = useState<AgentDraft | null>(initialDraft ?? null)
   // The intent text the current draft was built from. Editing the intent away
   // from this invalidates the draft (a new "bring to life" pass is needed).
   // Kept separately from draft.capabilities: capabilities is the AI-authored
   // planner-facing line and must NOT be overwritten by the raw intent text —
   // the planner reads capabilities to route work (ADR-016/ADR-037).
-  const [draftSource, setDraftSource] = useState('')
+  const [draftSource, setDraftSource] = useState(initialDraft?.requestedWork ?? '')
   const [busy, setBusy] = useState(false)
-  const [name, setName] = useState('')
+  const [name, setName] = useState(
+    initialDraft ? uniqueName(initialDraft.name || 'New agent', existingAgentNames) : ''
+  )
   // Random pre-selection: the shape step can be skipped in one click.
   const [avatarParts, setAvatarParts] = useState(randomAvatarParts)
   const [aiThinking, setAiThinking] = useState(false)

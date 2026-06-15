@@ -41,6 +41,7 @@ import { buildOrchestrationPrompt, parseOrchestrationPlan } from '../../prompts/
 import { buildWorkboardPlanPrompt, parseWorkboardDraftPlan } from '../../prompts/work-plan'
 import {
   buildConversationOutcomeInstructions,
+  buildChatConversationOutcomeInstructions,
   buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
@@ -282,7 +283,10 @@ function buildGeminiConversationPrompt(input: RuntimeConversationTurnInput): str
     '',
     buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
-    buildConversationOutcomeInstructions(),
+    // ADR-049: chat carries the whole answer inline in `summary` (no `content`).
+    input.outcomeMode === 'chat'
+      ? buildChatConversationOutcomeInstructions()
+      : buildConversationOutcomeInstructions(),
     '',
     'User message:',
     input.message
