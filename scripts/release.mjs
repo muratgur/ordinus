@@ -123,7 +123,7 @@ if (dryRun) {
   console.log(`    npm version ${newVersion} --no-git-tag-version  (root and app/)`)
   console.log(`    git add ${VERSION_FILES.join(' ')}`)
   console.log(`    git commit -m "chore: release ${tag}"`)
-  console.log(`    git tag ${tag}`)
+  console.log(`    git tag -a ${tag} -m "Release ${tag}"`)
   console.log(`    git push --follow-tags\n`)
   process.exit(0)
 }
@@ -137,7 +137,8 @@ run('npm', npmVersionArgs, { cwd: appDir, stdio: 'pipe' })
 // ── commit + tag ──────────────────────────────────────────────────────────────
 git(['add', ...VERSION_FILES])
 git(['commit', '-m', `chore: release ${tag}`])
-git(['tag', tag])
+// annotated (not lightweight) — `git push --follow-tags` only pushes annotated tags
+git(['tag', '-a', tag, '-m', `Release ${tag}`])
 console.log(`  Committed and tagged ${tag}.`)
 console.log('\n' + git(['show', '--stat', '--oneline', 'HEAD']))
 
@@ -158,6 +159,10 @@ async function confirmPush() {
 if (await confirmPush()) {
   console.log('\n  Pushing…')
   git(['push', '--follow-tags'])
+  // verify the tag actually landed — don't trust the exit code, since
+  // --follow-tags silently skips tags it won't push.
+  const onOrigin = git(['ls-remote', '--tags', 'origin', tag], { stdio: 'pipe' })
+  if (!onOrigin) fail(`Push succeeded but ${tag} never reached origin. Run:  git push origin ${tag}`)
   console.log(`\n  ✓ Pushed ${tag}. Watch the build:`)
   console.log('    https://github.com/muratgur/ordinus/actions\n')
 } else {

@@ -44,8 +44,8 @@ import {
   workboardDraftPlanJsonSchema
 } from '../../prompts/work-plan'
 import {
-  agentTurnOutcomeJsonSchema,
-  buildConversationOutcomeInstructions,
+  claudeAgentTurnOutcomeJsonSchema,
+  buildClaudeOutcomeFieldGuidance,
   buildResumeReminderInstructions,
   parseAgentTurnOutcome
 } from '../../prompts/conversation-outcome'
@@ -252,7 +252,10 @@ function buildClaudeConversationArgs(
     'stream-json',
     '--verbose',
     '--json-schema',
-    JSON.stringify(agentTurnOutcomeJsonSchema),
+    // ADR-037: the relaxed Claude variant — the strict all-required schema makes
+    // Claude's forced StructuredOutput tool bail to an empty {} and exhaust the
+    // CLI's retries. See claudeAgentTurnOutcomeJsonSchema for the full rationale.
+    JSON.stringify(claudeAgentTurnOutcomeJsonSchema),
     '--permission-mode',
     getClaudePermissionMode(input.sandbox),
     '--append-system-prompt-file',
@@ -312,7 +315,11 @@ function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
     '',
     buildExtraDirectoriesInstructions(input.extraDirectories),
     '',
-    buildConversationOutcomeInstructions()
+    // ADR-037: Claude enforces the outcome schema via the native StructuredOutput
+    // tool (--json-schema), so it gets field guidance rather than the text-channel
+    // "return JSON only" shape dictation Codex/Gemini use — the latter makes Claude
+    // answer in text and then call StructuredOutput empty, exhausting CLI retries.
+    buildClaudeOutcomeFieldGuidance()
   ].join('\n')
 }
 

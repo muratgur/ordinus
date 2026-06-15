@@ -87,6 +87,79 @@ export const agentTurnOutcomeJsonSchema = {
   ]
 } as const
 
+// ADR-037 — Claude enforces this schema through a native forced StructuredOutput
+// TOOL call, not by constraining the text channel the way Codex/Gemini's
+// --output-schema does. Empirically, when that forced tool's required object is
+// heavy — every top-level field required, additionalProperties:false, and a
+// deeply nested all-required `questions` shape — Claude (opus-4-8) frequently
+// "bails": it calls StructuredOutput with an empty {} instead of filling it,
+// fails the schema, and exhausts the CLI's 5 retries ("Failed to provide valid
+// structured output after N attempts"). The trigger is the schema weight, not
+// any prompt sentence (trivial system-prompt perturbations flip a turn between
+// 0/6 and 6/6). Relaxing to the two fields the downstream Zod parse actually
+// needs (outcome + summary) and loosening the nested requireds makes the tool
+// trivial to fill: 6/6 against the exact production prompt. The behavioral
+// guidance (buildClaudeOutcomeFieldGuidance) still tells the model to populate
+// content / artifactRefs / changedFiles / needs_input fields when relevant, and
+// AgentTurnOutcomeSchema re-validates the result, so nothing downstream loosens.
+// Codex/Gemini keep the strict schema above — they constrain the text channel
+// and do not exhibit the bail.
+export const claudeAgentTurnOutcomeJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    outcome: { type: 'string', enum: ['final_response', 'needs_input'] },
+    summary: { type: ['string', 'null'], maxLength: workRunResultSummaryMaxLength },
+    content: { type: ['string', 'null'], maxLength: agentTurnOutcomeContentMaxLength },
+    artifactRefs: {
+      type: ['array', 'null'],
+      maxItems: 64,
+      items: { type: 'string' }
+    },
+    changedFiles: {
+      type: ['array', 'null'],
+      maxItems: 128,
+      items: { type: 'string' }
+    },
+    title: { type: ['string', 'null'], maxLength: 160 },
+    detail: { type: ['string', 'null'], maxLength: 1000 },
+    questions: {
+      type: ['array', 'null'],
+      maxItems: 3,
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          label: { type: 'string' },
+          detail: { type: ['string', 'null'] },
+          kind: { type: 'string', enum: ['choice', 'text', 'boolean'] },
+          required: { type: 'boolean' },
+          options: {
+            type: ['array', 'null'],
+            maxItems: 4,
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                label: { type: 'string' },
+                description: { type: ['string', 'null'] }
+              },
+              required: ['id', 'label']
+            }
+          },
+          recommendedOptionId: { type: ['string', 'null'] },
+          allowCustom: { type: ['boolean', 'null'] },
+          placeholder: { type: ['string', 'null'] },
+          trueLabel: { type: ['string', 'null'] },
+          falseLabel: { type: ['string', 'null'] }
+        },
+        required: ['id', 'label', 'kind']
+      }
+    }
+  },
+  required: ['outcome', 'summary']
+} as const
+
 export function parseAgentTurnOutcome(value: unknown): AgentTurnOutcome {
   const parsed = typeof value === 'string' ? parseJsonFromCliOutput(value) : value
   return AgentTurnOutcomeSchema.parse(normalizeAgentTurnOutcome(parsed))
@@ -239,6 +312,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // wrong place.
 export function buildResumeReminderInstructions(): string {
   return 'Reminder: the workspace, private-folder, and structured JSON outcome rules given at the start of this session still apply unchanged.'
+}
+
+// ADR-037 — Claude enforces the outcome schema through a native StructuredOutput
+// TOOL call (--json-schema), a channel SEPARATE from the model's text output.
+// The text-channel instructions in buildConversationOutcomeInstructions (which
+// Codex/Gemini need, since their --output-schema constrains the text channel)
+// actively conflict on Claude: told to "return JSON only", the model writes the
+// answer as text, then calls StructuredOutput with an empty {} — failing the
+// schema and exhausting the CLI's 5 retries ("Failed to provide valid structured
+// output after N attempts"). This variant keeps the behavioral guidance but
+// describes the fields rather than dictating a text-emitted JSON shape, and tells
+// the model to report through the structured output instead of as text.
+export function buildClaudeOutcomeFieldGuidance(): string {
+  return `When you have finished, report the result through your structured output. Do not also restate the answer as plain text. Guidance for the fields:
+
+Final response (outcome = "final_response"):
+- "summary" is required: a concise GitHub-flavored Markdown description of what you did. It is always shown to the user and passed to any dependent work. Keep it under ${workRunResultSummaryMaxLength} characters.
+- "content" is optional: the full textual body you produced (a report, an analysis, a written document) as GitHub-flavored Markdown. Put long produced text here; it lives in the app and is shown on demand. Leave it empty ("") when the result is just the summary or when the deliverable is a file.
+- Do NOT write your textual result to a workspace file to get around any length limit. Long text belongs in "content", not in an extra file.
+- Only write a workspace file when the output is inherently a file: an edit to an existing project file, source code, HTML, JavaScript, a PDF, a spreadsheet, an image, or another binary/format-bearing deliverable; or when the user explicitly asked for a file. Reports, analyses, plans, and summaries are not files by default.
+- In "summary" and "content": use paragraph breaks, bullet lists, or numbered lists instead of dense inline prose; use fenced code blocks for code, commands, diffs, logs, or snippets; do not use raw HTML.
+- Use "artifactRefs" for genuine user-facing file deliverables (PDFs, spreadsheets, images, exported documents).
+- Newly created user-facing Markdown files should follow the workspace Markdown frontmatter and References policy.
+- Use "changedFiles" for every file you created or modified, including artifacts.
+- All file paths must be relative to the workspace root. Do not return absolute paths or paths with "..". Do not include a file path unless you actually created or modified that file in the workspace.
+
+Needs input (outcome = "needs_input"): use only when you cannot continue without user input.
+- Ask at most 3 questions, only for information that is necessary to continue.
+- Use text questions for free-form facts.
+- Use choice questions only when the options are real alternatives the user can select; prefer 2 or 3 useful options when there are meaningful alternatives, with 1 to 4 options total.
+- Do not create placeholder choice options such as "I will write it myself"; use a text question instead.
+- Set recommendedOptionId only for a substantive recommended option, not for a custom-entry placeholder.
+- Set allowCustom to true unless custom answers would be unsafe.`
 }
 
 export function buildConversationOutcomeInstructions(): string {

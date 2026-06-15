@@ -272,6 +272,7 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
   // pointing it at the working folder (not the workspace root) is what physically
   // keeps the agent out of neighbouring projects.
   const workingDirectory = resolveWorkspaceRelativePath(input.workspaceRoot, input.workingRoot)
+  const schemaPath = writeCodexConversationOutcomeSchema(input)
   if (input.providerSessionRef) {
     const args = [
       'exec',
@@ -287,6 +288,8 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
       'resume',
       input.providerSessionRef,
       '-',
+      '--output-schema',
+      schemaPath,
       '--json',
       '--skip-git-repo-check',
       '--output-last-message',
@@ -298,7 +301,6 @@ function buildCodexConversationArgs(input: RuntimeConversationTurnInput): string
     return args
   }
 
-  const schemaPath = writeCodexConversationOutcomeSchema(input)
   const args = [
     'exec',
     '--json',
