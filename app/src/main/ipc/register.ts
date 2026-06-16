@@ -155,6 +155,7 @@ import type {
   PreparedWorkRun
 } from '../db/database'
 import { getSystemPaths } from '../paths'
+import { getActiveProfile } from '../profile'
 import type { OrchestrationTranscriptEntry } from '../runtime/prompts/orchestration'
 import type { RuntimeService } from '../runtime'
 import type { ObservabilityService } from '../observability/service'
@@ -261,7 +262,8 @@ export function registerIpcHandlers(
       version: app.getVersion(),
       platform: process.platform,
       arch: process.arch,
-      isPackaged: app.isPackaged
+      isPackaged: app.isPackaged,
+      profile: getActiveProfile()
     })
   )
 

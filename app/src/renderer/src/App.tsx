@@ -10,6 +10,7 @@ import type {
   WorkspaceUpdateSystemDefaultInput
 } from '@shared/contracts'
 import { AppShell } from './app/app-shell'
+import { ScratchProfileBadge } from './components/scratch-profile-badge'
 import { NotificationPolicyBridge } from './app/notification-policy-bridge'
 import { OrdinusActionBridge } from './app/ordinus-action-bridge'
 import { usePlanOperations, type PlanOperation } from './app/plan-operations'
@@ -204,6 +205,7 @@ function App(): React.JSX.Element {
 
   return (
     <HashRouter>
+      <ScratchProfileBadge appInfo={state.appInfo} />
       <NotificationPolicyBridge
         workboardDraftReview={workboardDraftReview}
         planOperations={planOperations.operations}

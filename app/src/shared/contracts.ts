@@ -7,7 +7,10 @@ export const AppInfoSchema = z.object({
   version: z.string(),
   platform: z.string(),
   arch: z.string(),
-  isPackaged: z.boolean()
+  isPackaged: z.boolean(),
+  // ADR-051 — active data profile. `scratch` is an isolated, resettable sandbox;
+  // the renderer surfaces a badge so it can't be confused with `real`.
+  profile: z.enum(['real', 'scratch'])
 })
 
 export const SystemPathsSchema = z.object({

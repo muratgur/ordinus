@@ -18,6 +18,8 @@
   "scripts": {
     "app:install": "npm install --prefix app",
     "dev": "npm run dev --prefix app",
+    "dev:scratch": "npm run dev:scratch --prefix app",
+    "scratch:reset": "npm run scratch:reset --prefix app",
     "db:generate": "npm run db:generate --prefix app",
     "typecheck": "npm run typecheck --prefix app",
     "lint": "npm run lint --prefix app",

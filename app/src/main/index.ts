@@ -13,8 +13,14 @@ import { shutdownOrdinusMcpServer } from './ordinus-mcp/lifecycle'
 import { initConnectorService, startPersistentConnectors } from './integrations/service'
 import { shutdownLocalMcp } from './local-mcp/supervisor'
 import { ensureBundledNodeOnPath } from './runtime/cli/bundled-node'
+import { applyDataProfile, getActiveProfile } from './profile'
 
 app.setName('Ordinus')
+
+// ADR-051 — must run after setName and BEFORE the database singleton, which reads
+// userData in its constructor. For `scratch`, this redirects userData to a sibling
+// directory so experimental data is fully isolated from real data.
+applyDataProfile()
 
 const database = new OrdinusDatabase()
 const runtime = createRuntimeService()
@@ -101,6 +107,8 @@ function createWindow(): void {
     minWidth: minimumWindowSize.width,
     minHeight: minimumWindowSize.height,
     show: false,
+    // ADR-051 — make the scratch profile unmistakable; real keeps the bare title.
+    ...(getActiveProfile() === 'scratch' ? { title: 'Ordinus — SCRATCH' } : {}),
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
@@ -114,6 +122,15 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+
+  // ADR-051 — the renderer's <title> would otherwise overwrite the window title on
+  // load; in scratch we pin the SCRATCH marker so the two profiles stay distinct.
+  if (getActiveProfile() === 'scratch') {
+    mainWindow.on('page-title-updated', (event) => {
+      event.preventDefault()
+      mainWindow.setTitle('Ordinus — SCRATCH')
+    })
+  }
 
   attachWindowSecurity(mainWindow)
 

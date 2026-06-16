@@ -321,13 +321,15 @@ function WorkspaceStage({
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    // Compute the default once main can tell us the user's home — userData
-    // sits next to home in SystemPaths. We use it to suggest "~/Ordinus".
+    // Propose the active profile's own userData directory as the fresh space.
+    // ADR-051: must use `paths.userData` verbatim — the previous code stripped the
+    // basename and re-appended a hardcoded "Ordinus", which under the `scratch`
+    // profile resolved to the *real* profile's directory and would have written
+    // scratch's workspace into real data. `paths.userData` is already profile-correct
+    // (`…/Ordinus` for real, `…/Ordinus-scratch` for scratch).
     if (workspaceRoot) return
     void window.ordinus.system.getPaths().then((paths) => {
-      const parent = paths.userData.replace(/[\\/][^\\/]+[\\/]?$/, '')
-      const proposed = `${parent}/Ordinus`
-      setProposedRoot(proposed)
+      setProposedRoot(paths.userData)
     })
   }, [workspaceRoot])
 
