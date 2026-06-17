@@ -12,6 +12,14 @@ A complete Brotato-like with 6 characters, 7 weapons, 8 waves, a boss, draft upg
 
 ---
 
+## Riley Brown — a personalized creator intelligence report in 23 minutes
+
+The YouTuber Intelligence Pipeline: point a 5-agent crew at any YouTube channel and it researches the creator across the whole web, analyzes their brand and growth, and assembles a polished, personalized HTML report *about them*. One run, five sequential agents, zero failures, ~23 minutes. The twist: three of the five agents were built for a totally different job (solo-dev product marketing) and were retargeted onto a creator purely by the workflow instructions. This run profiled Riley Brown (@rileybrownai) — one folder per creator, so future runs live alongside it.
+
+**[Read the story →](riley-brown/)** &nbsp;·&nbsp; **[Final report →](riley-brown/outputs/youtuber-report.html)**
+
+---
+
 ## What goes in a use case
 
 Each `<slug>/` folder contains:
