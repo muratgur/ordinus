@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Moon, Settings, Sun } from 'lucide-react'
 import type { DbStatus, SetupStatus } from '@shared/contracts'
 import { appNavigation, ordinusHomeNavItem } from './routes'
@@ -23,11 +23,24 @@ export function AppShell({ workboardPlanReady, planQueue }: AppShellProps): Reac
   const navItems = [ordinusHomeNavItem, ...appNavigation]
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme())
   const navigate = useNavigate()
+  const location = useLocation()
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
     window.localStorage.setItem('ordinus-theme', theme)
   }, [theme])
+
+  // Safety net for a Radix overlay leak: when nested dismissable layers
+  // (e.g. a DropdownMenu opening a Dialog) tear down in a racing order, the
+  // `pointer-events: none` lock Radix puts on <body> can be left behind,
+  // freezing every click except elements with their own pointer-events
+  // (the React Flow canvas). Any route change unmounts open overlays, so
+  // clearing a stuck lock here can never fight a legitimately-open one.
+  useEffect(() => {
+    if (document.body.style.pointerEvents === 'none') {
+      document.body.style.pointerEvents = ''
+    }
+  }, [location.pathname])
 
   useEffect(() => {
     const off = window.ordinus.schedules.onChanged((event) => {

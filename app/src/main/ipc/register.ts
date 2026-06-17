@@ -156,6 +156,7 @@ import type {
 } from '../db/database'
 import { getSystemPaths } from '../paths'
 import { getActiveProfile } from '../profile'
+import { focusMainWindow } from '../window'
 import type { OrchestrationTranscriptEntry } from '../runtime/prompts/orchestration'
 import type { RuntimeService } from '../runtime'
 import type { ObservabilityService } from '../observability/service'
@@ -1443,14 +1444,7 @@ export function registerIpcHandlers(
         { type: 'separator' },
         {
           label: 'Ordinus’u Göster',
-          click: () => {
-            const window = BrowserWindow.getAllWindows()[0]
-            if (window) {
-              if (window.isMinimized()) window.restore()
-              window.show()
-              window.focus()
-            }
-          }
+          click: () => focusMainWindow()
         },
         {
           label: 'Telegram Bağlantısını Kes',

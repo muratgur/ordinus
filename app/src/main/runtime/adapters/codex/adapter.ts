@@ -68,7 +68,9 @@ import {
   createProviderLoginResult,
   createProviderStatusBase,
   disconnectCliProvider,
+  EmptyProviderResponseError,
   getCliVersion,
+  isEmptyProviderResponseMessage,
   isInvalidProviderSessionMessage,
   matchSkillActivation,
   ProviderSessionInvalidError,
@@ -191,6 +193,12 @@ async function sendCodexConversationTurn(
 
     if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
       throw new ProviderSessionInvalidError(message)
+    }
+
+    // ADR-053: a non-zero exit whose message is an empty-response flake is
+    // retryable; surface it as such so the runtime replays the turn once.
+    if (isEmptyProviderResponseMessage(message)) {
+      throw new EmptyProviderResponseError(message)
     }
 
     throw new Error(message)
@@ -769,11 +777,18 @@ function readAgentDraftOutput(outputPath: string): unknown {
 }
 
 function readCodexLastMessage(outputPath: string): string {
+  // ADR-053: a missing or empty last-message file means the model produced no
+  // usable answer — the retryable empty-response flake, not a hard error.
   if (!existsSync(outputPath)) {
-    throw new Error('Codex did not write a conversation response.')
+    throw new EmptyProviderResponseError('Codex did not write a conversation response.')
   }
 
-  return readFileSync(outputPath, 'utf8').trim()
+  const message = readFileSync(outputPath, 'utf8').trim()
+  if (!message) {
+    throw new EmptyProviderResponseError('Codex returned an empty conversation response.')
+  }
+
+  return message
 }
 
 function extractCodexSessionRef(value: string): string {

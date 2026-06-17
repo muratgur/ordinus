@@ -76,7 +76,10 @@ deliberate divergence forced by X's token model (refresh-token rotation, below).
 - **User-context OAuth 2.0, loopback PKCE, no DCR.** Posting requires
   **user-context OAuth 2.0 Authorization Code + PKCE** (app-only bearer tokens
   cannot write). The ADR-043 static-client fork of `oauth-broker.ts` (skip
-  `registerClient()`, use the pasted credentials directly) is reused. Manifest:
+  `registerClient()`, use the pasted credentials directly) is reused. (ADR-052
+  later folds this static-client loopback machinery into a shared
+  `runLoopbackAuth` helper common to all OAuth connectors; X's fixed-port and
+  main-process rotating-refresh divergences below are unaffected.) Manifest:
   `transport: 'mcp-stdio'`, `authMethod: 'oauth'`, `kind: 'local'`, `loginMode:
   'byo-oauth'`, with `byoOAuth` pointing at X's static endpoints — authorize
   `https://x.com/i/oauth2/authorize` (**`x.com`, not `twitter.com`** — the latter

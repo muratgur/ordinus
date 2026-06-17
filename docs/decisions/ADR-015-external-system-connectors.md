@@ -128,3 +128,11 @@ client_id/secret or env vars. Refresh metadata (token endpoint, client
 credentials, resource) is stored with the token so refresh needs no
 rediscovery. Connection is initiated from the dedicated Connections screen;
 agents reference connected connectors via their per-agent allowlist.
+
+**Consent surface (updated by ADR-052).** The first implementation opened the
+consent screen in an embedded Electron `BrowserWindow`. As of ADR-052 this is
+replaced by the **user's system default browser** (`shell.openExternal`) hitting
+the same `127.0.0.1/callback` loopback, so saved passwords and existing provider
+sessions are available and the waiting/cancel state moves inline onto the
+connector row. The DCR discovery + registration described above is unchanged;
+only the browser that renders the consent screen changed.

@@ -1675,14 +1675,14 @@ function SkillsPanel({
             >
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                  <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
                     <span className="truncate">{skill.name}</span>
                     {skill.source === 'library' ? (
                       <Badge variant="secondary" className="shrink-0">
                         Library
                       </Badge>
                     ) : null}
-                  </p>
+                  </div>
                   <p className="truncate font-mono text-xs text-muted-foreground">
                     {skill.relativePath}
                   </p>
@@ -1862,14 +1862,14 @@ function LibraryPickerDialog({
                   className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3"
                 >
                   <div className="min-w-0">
-                    <p className="flex items-center gap-2 text-sm font-semibold">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
                       <span className="truncate">{librarySkill.name}</span>
                       {librarySkill.origin === 'builtin' ? (
                         <Badge variant="outline" className="shrink-0">
                           Ordinus
                         </Badge>
                       ) : null}
-                    </p>
+                    </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {librarySkill.description}
                     </p>

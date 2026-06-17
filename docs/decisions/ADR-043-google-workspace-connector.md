@@ -74,7 +74,11 @@ their own Google Cloud project and keeps in Testing publishing status.
   redirect-URI configuration and the existing dynamic-port loopback flow in
   `oauth-broker.ts` is reused as-is. The broker is forked only to **skip
   `registerClient()` (DCR)** and use the pasted `client_id`/`client_secret`
-  directly. A new manifest `loginMode: 'byo-oauth'` selects this path.
+  directly. A new manifest `loginMode: 'byo-oauth'` selects this path. This BYO
+  path opens consent in the **system default browser** (`shell.openExternal`) —
+  the pattern ADR-052 later generalized to *every* brokered OAuth connector
+  (DCR included), retiring the embedded `BrowserWindow` and merging both paths
+  onto a shared `runLoopbackAuth` helper.
 
 - **The user's app stays in Testing publishing status.** Publishing to
   Production with the restricted `gmail.readonly` scope re-introduces

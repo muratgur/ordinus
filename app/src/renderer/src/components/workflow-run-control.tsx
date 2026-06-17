@@ -73,7 +73,16 @@ export function RunControl({
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setPickerOpen(true)}>
+          <DropdownMenuItem
+            onSelect={() => {
+              // Open the picker only after the menu's own close cycle finishes.
+              // Opening a Radix Dialog synchronously while the DropdownMenu is
+              // still tearing down races their body `pointer-events: none` locks,
+              // and the loser leaves the lock stuck — freezing all clicks except
+              // the React Flow canvas (which sets its own pointer-events).
+              setTimeout(() => setPickerOpen(true), 0)
+            }}
+          >
             <Target className="size-4" /> Add to an existing request…
           </DropdownMenuItem>
         </DropdownMenuContent>

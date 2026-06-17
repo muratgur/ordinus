@@ -56,8 +56,10 @@ import {
   createProviderLoginResult,
   createProviderStatusBase,
   disconnectCliProvider,
+  EmptyProviderResponseError,
   getCliVersion,
   getStringValue,
+  isEmptyProviderResponseMessage,
   isInvalidProviderSessionMessage,
   ProviderSessionInvalidError,
   readCliFailureMessage,
@@ -197,6 +199,12 @@ async function sendGeminiConversationTurn(
 
       if (input.providerSessionRef && isInvalidProviderSessionMessage(message)) {
         throw new ProviderSessionInvalidError(message)
+      }
+
+      // ADR-053: a non-zero exit whose message is the INVALID_STREAM flake is
+      // retryable; surface it as such so the runtime replays the turn once.
+      if (isEmptyProviderResponseMessage(message)) {
+        throw new EmptyProviderResponseError(message)
       }
 
       throw new Error(message)
@@ -876,6 +884,12 @@ function readGeminiConversationOutput(value: string): {
   const error = isRecord(parsed.error) ? parsed.error : null
   if (error) {
     const message = getStringValue(error.message) || 'Gemini conversation turn failed.'
+    // ADR-053: the Gemini CLI reports INVALID_STREAM (empty response / malformed
+    // tool call) through this `error` block on a zero-exit run — the actual
+    // failure mode we observed. Classify it as retryable.
+    if (isEmptyProviderResponseMessage(message)) {
+      throw new EmptyProviderResponseError(message)
+    }
     throw new Error(message)
   }
 
@@ -889,7 +903,8 @@ function readGeminiConversationOutput(value: string): {
         : ''
 
   if (!responseText.trim()) {
-    throw new Error('Gemini returned an empty conversation response.')
+    // ADR-053: zero-exit but no usable text — retryable empty-response flake.
+    throw new EmptyProviderResponseError('Gemini returned an empty conversation response.')
   }
 
   return {

@@ -18,7 +18,7 @@
 
 import { createServer, type Server as HttpServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -356,6 +356,14 @@ async function runPairingLoginOnce(
   onEvent: (event: PairingLoginEvent) => void,
   timeoutMs: number
 ): Promise<void> {
+  // Each pairing attempt must start from a clean session dir. A failed attempt
+  // (expired code, wrong code, WhatsApp-side close) leaves Baileys auth files
+  // (creds.json, pre-keys) behind half-registered; reloading them on the next
+  // attempt makes WhatsApp reject the session with status 401 (DisconnectReason.
+  // loggedOut) — so retries get stuck failing. Pairing is always a fresh login,
+  // so wiping here is safe and makes each attempt atomic. resolveChildLaunch
+  // recreates the dir.
+  rmSync(getConnectorSessionDir(connectorId), { recursive: true, force: true })
   const launch = await resolveChildLaunch(connectorId, ['--login'])
   console.log(`[local-mcp] ${connectorId} pairing login starting`)
   await new Promise<void>((resolve, reject) => {

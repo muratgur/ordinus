@@ -787,10 +787,23 @@ function ConnectionsSettingsSection(): React.JSX.Element {
           : await window.ordinus.connectors.disconnect({ connectorId })
       setConnectors(next)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : `Failed to ${action} connector.`)
+      const message = cause instanceof Error ? cause.message : `Failed to ${action} connector.`
+      // ADR-052: an intentional teardown — a user-initiated Cancel or a superseding
+      // attempt — is a clean reset of the row, not an error. Match the exact abort
+      // sentinels so genuine failures (denials, state mismatches, token errors,
+      // including the "…or returned an invalid response" fallback) still surface.
+      const intentionalTeardown =
+        message === 'Sign-in was cancelled.' || message === 'A new sign-in attempt was started.'
+      setError(intentionalTeardown ? '' : message)
     } finally {
       setBusyId('')
     }
+  }, [])
+
+  // ADR-052: abort an in-flight DCR connect from the row. The main process tears
+  // down the loopback flow; the connect promise above rejects and clears busyId.
+  const runCancel = useCallback((connectorId: string) => {
+    void window.ordinus.connectors.cancelConnect({ connectorId })
   }, [])
 
   // ADR-043: "Remove setup" — drop the stored BYO OAuth client entirely, so the
@@ -920,25 +933,38 @@ function ConnectionsSettingsSection(): React.JSX.Element {
                       </div>
                     ) : (
                       <div className="flex shrink-0 items-center gap-2">
-                        <Button
-                          size="sm"
-                          disabled={busyId === connector.id}
-                          onClick={() =>
-                            // Reconnect (BYO client already stored) skips the
-                            // intro — the user has seen it. Fresh connects open it.
-                            connector.byoClientConfigured
-                              ? setByoConnector(connector)
-                              : setIntroConnector(connector)
-                          }
-                        >
-                          {busyId === connector.id
-                            ? connector.kind === 'local'
-                              ? 'Preparing…'
-                              : 'Connecting…'
-                            : connector.byoClientConfigured
-                              ? 'Reconnect'
-                              : 'Connect'}
-                        </Button>
+                        {busyId === connector.id && connector.kind === 'remote' ? (
+                          // ADR-052: a DCR connect opens the system browser; the
+                          // row's Cancel is the primary way back (no window-close
+                          // event to detect). Aborts the loopback flow at once.
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => runCancel(connector.id)}
+                          >
+                            Cancel
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            disabled={busyId === connector.id}
+                            onClick={() =>
+                              // Reconnect (BYO client already stored) skips the
+                              // intro — the user has seen it. Fresh connects open it.
+                              connector.byoClientConfigured
+                                ? setByoConnector(connector)
+                                : setIntroConnector(connector)
+                            }
+                          >
+                            {busyId === connector.id
+                              ? connector.kind === 'local'
+                                ? 'Preparing…'
+                                : 'Connecting…'
+                              : connector.byoClientConfigured
+                                ? 'Reconnect'
+                                : 'Connect'}
+                          </Button>
+                        )}
                         {removeSetupButton}
                       </div>
                     )}

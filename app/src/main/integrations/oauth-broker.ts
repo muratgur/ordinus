@@ -1,12 +1,13 @@
-import { BrowserWindow, shell } from 'electron'
+import { shell } from 'electron'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { getConnectorManifest } from './registry'
-import { discoverAuthServer, registerClient, type RegisteredClient } from './mcp-oauth'
+import { discoverAuthServer, registerClient } from './mcp-oauth'
 import { readCredential, readRedirectPort, storeCredential, storeRedirectPort } from './vault'
 import type { ByoOAuthClient, StoredCredential } from './types'
+import { focusMainWindow } from '../window'
 
 function base64Url(input: Buffer): string {
   return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -62,10 +63,13 @@ function getMcpUrl(connectorId: string): string {
 }
 
 /**
- * Discovers the connector's authorization server (RFC 9728 / RFC 8414),
- * registers a client dynamically (RFC 7591), then runs authorization-code +
- * PKCE in a dedicated window. Ordinus only obtains and stores the token, never
- * the data behind it.
+ * ADR-052: Discovers the connector's authorization server (RFC 9728 / RFC 8414),
+ * then runs authorization-code + PKCE through the shared `runLoopbackAuth`
+ * helper — the consent screen opens in the user's system default browser (not an
+ * embedded window), so saved passwords and existing provider sessions are
+ * available. Dynamic Client Registration (RFC 7591) happens inside
+ * `acquireClient`, once the loopback redirect URI is known. Ordinus only obtains
+ * and stores the token, never the data behind it.
  */
 export async function authorizeConnector(connectorId: string): Promise<void> {
   const manifest = getConnectorManifest(connectorId)
@@ -74,123 +78,33 @@ export async function authorizeConnector(connectorId: string): Promise<void> {
   if (!meta.registrationEndpoint) {
     throw new Error(`${manifest.label} does not advertise a dynamic client registration endpoint.`)
   }
+  const registrationEndpoint = meta.registrationEndpoint
 
-  const { verifier, challenge, state } = createPkceParams()
-  const scopes = manifest.scopes ?? meta.scopesSupported ?? []
-
-  const credential = await new Promise<StoredCredential>((rawResolve, rawReject) => {
-    let redirectUri = ''
-    let client: RegisteredClient | null = null
-    let authWindow: BrowserWindow | null = null
-    let settled = false
-    let receivedCallback = false
-
-    const resolve = (value: StoredCredential): void => {
-      if (settled) return
-      settled = true
-      rawResolve(value)
-    }
-    const reject = (cause: Error): void => {
-      if (settled) return
-      settled = true
-      rawReject(cause)
-    }
-
-    const server = createServer((req, res) => {
-      const url = new URL(req.url ?? '', 'http://127.0.0.1')
-      if (url.pathname !== '/callback') {
-        res.writeHead(404).end()
-        return
-      }
-      receivedCallback = true
-      res
-        .writeHead(200, { 'content-type': 'text/html' })
-        .end('<html><body>You can close this window and return to Ordinus.</body></html>')
-      const code = url.searchParams.get('code')
-      const returnedState = url.searchParams.get('state')
-      server.close()
-      if (!code || returnedState !== state || !client) {
-        authWindow?.close()
-        reject(new Error('OAuth authorization was cancelled or returned an invalid state.'))
-        return
-      }
-      const activeClient = client
-      void (async () => {
-        try {
-          const json = await postToken(meta.tokenEndpoint, {
-            grant_type: 'authorization_code',
-            code,
-            redirect_uri: redirectUri,
-            code_verifier: verifier,
-            client_id: activeClient.clientId,
-            ...(activeClient.clientSecret ? { client_secret: activeClient.clientSecret } : {}),
-            resource: mcpUrl
-          })
-          resolve(
-            readTokenResponse(json, {
-              tokenEndpoint: meta.tokenEndpoint,
-              clientId: activeClient.clientId,
-              clientSecret: activeClient.clientSecret,
-              resource: mcpUrl
-            })
-          )
-        } catch (cause) {
-          reject(cause instanceof Error ? cause : new Error(String(cause)))
-        } finally {
-          authWindow?.close()
-        }
-      })()
-    })
-
-    server.on('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address() as AddressInfo | null
-      if (!address) {
-        reject(new Error('Could not start the OAuth callback server.'))
-        return
-      }
-      redirectUri = `http://127.0.0.1:${address.port}/callback`
-
-      void (async () => {
-        try {
-          client = await registerClient(
-            meta.registrationEndpoint as string,
-            redirectUri,
-            `Ordinus (${manifest.label})`
-          )
-
-          const authorizeUrl = new URL(meta.authorizationEndpoint)
-          authorizeUrl.searchParams.set('response_type', 'code')
-          authorizeUrl.searchParams.set('client_id', client.clientId)
-          authorizeUrl.searchParams.set('redirect_uri', redirectUri)
-          if (scopes.length > 0) {
-            authorizeUrl.searchParams.set('scope', scopes.join(' '))
-          }
-          authorizeUrl.searchParams.set('state', state)
-          authorizeUrl.searchParams.set('code_challenge', challenge)
-          authorizeUrl.searchParams.set('code_challenge_method', 'S256')
-          authorizeUrl.searchParams.set('resource', mcpUrl)
-
-          authWindow = new BrowserWindow({
-            width: 520,
-            height: 720,
-            title: `Connect ${manifest.label}`,
-            webPreferences: { nodeIntegration: false, contextIsolation: true }
-          })
-          authWindow.on('closed', () => {
-            if (receivedCallback || settled) {
-              return
-            }
-            server.close()
-            reject(new Error('OAuth window was closed before authorization completed.'))
-          })
-          void authWindow.loadURL(authorizeUrl.toString())
-        } catch (cause) {
-          server.close()
-          reject(cause instanceof Error ? cause : new Error(String(cause)))
-        }
-      })()
-    })
+  const credential = await runLoopbackAuth({
+    connectorId,
+    authorizationEndpoint: meta.authorizationEndpoint,
+    tokenEndpoint: meta.tokenEndpoint,
+    scopes: manifest.scopes ?? meta.scopesSupported ?? [],
+    redirectPath: '/callback',
+    port: 0,
+    resource: mcpUrl,
+    // DCR: the client is registered against the loopback redirect URI, so it
+    // can only be created once the port is bound.
+    acquireClient: async (redirectUri) => {
+      const client = await registerClient(
+        registrationEndpoint,
+        redirectUri,
+        `Ordinus (${manifest.label})`
+      )
+      return { clientId: client.clientId, clientSecret: client.clientSecret }
+    },
+    // DCR providers have no BYO setup wizard to surface fixes; keep messages
+    // generic. (Do NOT route through translateOAuthError — its default branch is
+    // Google-specific and would mislead Datadog/Linear/etc.)
+    translateError: (code, fallback) =>
+      code === 'access_denied'
+        ? `You declined access in your browser. Retry and authorize ${manifest.label} to continue.`
+        : fallback
   })
 
   storeCredential(connectorId, credential)
@@ -307,12 +221,275 @@ export function cancelStaticClientAuth(connectorId: string): void {
 }
 
 /**
- * ADR-043: authorize a 'byo-oauth' connector against the user's own ("bring
- * your own") OAuth client — loopback + PKCE, but with a static client_id/secret
- * (no Dynamic Client Registration) and the manifest's fixed authorization/token
- * endpoints. `access_type=offline` + `prompt=consent` are required to obtain a
- * refresh token. Returns the credential; the caller persists it (so token and
- * BYO-client storage stay ordered together).
+ * ADR-052: configuration for one system-browser loopback authorization-code +
+ * PKCE flow, shared by the DCR (`authorizeConnector`) and BYO
+ * (`authorizeStaticClient`) callers. Everything downstream of "I have an
+ * authorize URL and a port" lives in `runLoopbackAuth`; the callers differ only
+ * in how the client is acquired (`acquireClient`) and a few provider params.
+ */
+interface LoopbackAuthConfig {
+  connectorId: string
+  authorizationEndpoint: string
+  tokenEndpoint: string
+  scopes: string[]
+  /** Appended to the loopback redirect URI. DCR: '/callback'; BYO dynamic: ''; X: the fixed path. */
+  redirectPath: string
+  /** Loopback port to bind. 0 = OS-assigned (DCR, Google); fixed = X's locked port. */
+  port: number
+  /** RFC 8707 resource indicator — set for DCR (the MCP URL), undefined for BYO. */
+  resource?: string
+  /** Extra authorize-URL params (Google: access_type=offline + prompt=consent). */
+  extraAuthParams?: Record<string, string>
+  /** Produce the OAuth client once the redirect URI is known. DCR runs RFC 7591 here; BYO returns its static client. */
+  acquireClient: (redirectUri: string) => Promise<{ clientId: string; clientSecret?: string }>
+  /** Map a raw OAuth error code (or token-exchange failure) into a user-facing message. */
+  translateError: (code: string | undefined, fallback: string) => string
+  /** Message for a port-bind failure on a fixed port (X). Omitted for dynamic ports. */
+  bindErrorMessage?: (port: number) => string
+}
+
+/**
+ * ADR-052: the branded page the user's browser lands on after consent. Fully
+ * self-contained (inline CSS/SVG) — the loopback server can't serve app assets,
+ * and `charset=utf-8` is mandatory or the em-dash/UTF-8 text shows as mojibake.
+ * Two variants: a success confirmation and a cancelled/failed notice.
+ */
+function renderCallbackPage(ok: boolean): string {
+  const badge = ok
+    ? `<div class="badge ok"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>`
+    : `<div class="badge cancel"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></div>`
+  const title = ok ? 'Connected' : 'Sign-in cancelled'
+  const sub = ok
+    ? 'You can close this tab and return to Ordinus.'
+    : 'No problem — you can close this tab and return to Ordinus to try again.'
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ordinus</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #faf9f8; color: #1c1917;
+  }
+  .card {
+    width: min(92vw, 400px); padding: 44px 36px; text-align: center;
+    background: #fff; border: 1px solid #f0eeec; border-radius: 18px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 16px 40px rgba(0,0,0,.07);
+  }
+  .badge {
+    width: 60px; height: 60px; margin: 0 auto 22px; border-radius: 999px;
+    display: grid; place-items: center;
+  }
+  .badge.ok { background: #e9683f; box-shadow: 0 6px 16px rgba(233,104,63,.35); }
+  .badge.cancel { background: #f0eeec; color: #78716c; }
+  h1 { margin: 0 0 8px; font-size: 21px; font-weight: 600; letter-spacing: -.012em; }
+  p { margin: 0; font-size: 14px; line-height: 1.55; color: #78716c; }
+  .brand {
+    margin-top: 30px; font-size: 11px; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: #b6b0aa;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0c0a09; color: #f5f5f4; }
+    .card { background: #1c1917; border-color: #292524; box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 40px rgba(0,0,0,.5); }
+    .badge.cancel { background: #292524; color: #a8a29e; }
+    p { color: #a8a29e; }
+    .brand { color: #57534e; }
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    ${badge}
+    <h1>${title}</h1>
+    <p>${sub}</p>
+    <div class="brand">Ordinus</div>
+  </main>
+</body>
+</html>`
+}
+
+/**
+ * ADR-052: run one loopback + PKCE authorization-code flow in the user's system
+ * default browser, returning the credential (the caller persists it). Owns the
+ * loopback server, the in-flight cancel registration (`pendingStaticAuth`), the
+ * 3-minute timeout, validate-before-respond branching of the callback page, and
+ * the token exchange. Generalizes the flow validated in the Phase 0 PoCs.
+ */
+async function runLoopbackAuth(cfg: LoopbackAuthConfig): Promise<StoredCredential> {
+  const { connectorId } = cfg
+  const { verifier, challenge, state } = createPkceParams()
+
+  // A new attempt for the same connector supersedes any in-flight one — closes
+  // the prior loopback server instead of stacking listeners (e.g. the user
+  // retries after abandoning a consent tab).
+  pendingStaticAuth.get(connectorId)?.('A new sign-in attempt was started.')
+
+  return new Promise<StoredCredential>((rawResolve, rawReject) => {
+    let redirectUri = ''
+    let client: { clientId: string; clientSecret?: string } | null = null
+    let settled = false
+    let timer: NodeJS.Timeout | null = null
+
+    const finish = (): void => {
+      if (timer) clearTimeout(timer)
+      if (pendingStaticAuth.get(connectorId) === abort) {
+        pendingStaticAuth.delete(connectorId)
+      }
+      server.close()
+    }
+    const resolve = (value: StoredCredential): void => {
+      if (settled) return
+      settled = true
+      finish()
+      rawResolve(value)
+    }
+    const reject = (cause: Error): void => {
+      if (settled) return
+      settled = true
+      finish()
+      rawReject(cause)
+    }
+    // Registered so cancelStaticClientAuth (UI Cancel) and a superseding attempt
+    // can tear this flow down without waiting for the timeout.
+    const abort = (reason: string): void => reject(new Error(reason))
+    pendingStaticAuth.set(connectorId, abort)
+
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '', 'http://127.0.0.1')
+      const code = url.searchParams.get('code')
+      const returnedState = url.searchParams.get('state')
+      const errorCode = url.searchParams.get('error') ?? undefined
+      // Only the redirect carries `code`/`error`. Ignore everything else (the
+      // browser also fetches /favicon.ico, which would otherwise race the
+      // in-flight token exchange and reject the whole flow).
+      if (!code && !errorCode) {
+        res.writeHead(404).end()
+        return
+      }
+      // ADR-052: validate BEFORE responding, then branch the page — a denial must
+      // not show a "Connected" message. The success page renders only on success.
+      const ok = !errorCode && !!code && returnedState === state && !!client
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(renderCallbackPage(ok))
+      if (!ok) {
+        reject(
+          new Error(
+            cfg.translateError(errorCode, 'Sign-in was cancelled or returned an invalid response.')
+          )
+        )
+        return
+      }
+      // ADR-052: consent succeeded — meet the user back in Ordinus (the success
+      // page just told them to return). Token exchange continues below.
+      focusMainWindow()
+      const activeClient = client as { clientId: string; clientSecret?: string }
+      void (async () => {
+        try {
+          const json = await postToken(cfg.tokenEndpoint, {
+            grant_type: 'authorization_code',
+            code: code as string,
+            redirect_uri: redirectUri,
+            code_verifier: verifier,
+            client_id: activeClient.clientId,
+            ...(activeClient.clientSecret ? { client_secret: activeClient.clientSecret } : {}),
+            ...(cfg.resource ? { resource: cfg.resource } : {})
+          })
+          resolve(
+            readTokenResponse(json, {
+              tokenEndpoint: cfg.tokenEndpoint,
+              clientId: activeClient.clientId,
+              clientSecret: activeClient.clientSecret,
+              ...(cfg.resource ? { resource: cfg.resource } : {})
+            })
+          )
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          const match = /"error"\s*:\s*"([a-z_]+)"/.exec(message)?.[1]
+          reject(new Error(cfg.translateError(match, message)))
+        }
+      })()
+    })
+
+    // ADR-046: a fixed-port connector (X) binds its locked port; if that port is
+    // busy the bind fails here — surface a fixable message instead of the raw
+    // EADDRINUSE. Dynamic-port connectors (Google, DCR) can't realistically collide.
+    server.on('error', (cause) => {
+      if (cfg.port && cfg.bindErrorMessage) {
+        reject(new Error(cfg.bindErrorMessage(cfg.port)))
+        return
+      }
+      reject(cause)
+    })
+    const onListening = (): void => {
+      if (cfg.port) {
+        redirectUri = `http://127.0.0.1:${cfg.port}${cfg.redirectPath}`
+      } else {
+        const address = server.address() as AddressInfo | null
+        if (!address) {
+          reject(new Error('Could not start the OAuth callback server.'))
+          return
+        }
+        redirectUri = `http://127.0.0.1:${address.port}${cfg.redirectPath}`
+      }
+
+      void (async () => {
+        try {
+          // DCR registers its client against this exact redirect URI; BYO returns
+          // its static client. Either way the client is known before consent opens.
+          client = await cfg.acquireClient(redirectUri)
+
+          const authorizeUrl = new URL(cfg.authorizationEndpoint)
+          authorizeUrl.searchParams.set('response_type', 'code')
+          authorizeUrl.searchParams.set('client_id', client.clientId)
+          authorizeUrl.searchParams.set('redirect_uri', redirectUri)
+          if (cfg.scopes.length > 0) {
+            authorizeUrl.searchParams.set('scope', cfg.scopes.join(' '))
+          }
+          authorizeUrl.searchParams.set('state', state)
+          authorizeUrl.searchParams.set('code_challenge', challenge)
+          authorizeUrl.searchParams.set('code_challenge_method', 'S256')
+          if (cfg.resource) {
+            authorizeUrl.searchParams.set('resource', cfg.resource)
+          }
+          // ADR-046: provider-specific authorize params (Google: access_type=offline
+          // + prompt=consent for a refresh token; X: none — offline.access handles it).
+          for (const [key, value] of Object.entries(cfg.extraAuthParams ?? {})) {
+            authorizeUrl.searchParams.set(key, value)
+          }
+
+          // The system browser, NOT an embedded BrowserWindow (ADR-052): providers
+          // reject OAuth in embedded webviews ("disallowed_useragent"), and the real
+          // browser carries the user's saved passwords and provider session.
+          timer = setTimeout(
+            () => reject(new Error('Sign-in timed out — the consent screen was not completed.')),
+            3 * 60_000
+          )
+          void shell.openExternal(authorizeUrl.toString())
+        } catch (cause) {
+          reject(cause instanceof Error ? cause : new Error(String(cause)))
+        }
+      })()
+    }
+    if (cfg.port) {
+      server.listen(cfg.port, '127.0.0.1', onListening)
+    } else {
+      server.listen(0, '127.0.0.1', onListening)
+    }
+  })
+}
+
+/**
+ * ADR-043/052: authorize a 'byo-oauth' connector against the user's own ("bring
+ * your own") OAuth client — a thin wrapper over `runLoopbackAuth` that supplies
+ * the static client_id/secret (no Dynamic Client Registration) and the
+ * manifest's fixed authorization/token endpoints. `access_type=offline` +
+ * `prompt=consent` (via extraAuthParams) are required to obtain a refresh token.
+ * Returns the credential; the caller persists it (so token and BYO-client
+ * storage stay ordered together).
  */
 export async function authorizeStaticClient(
   connectorId: string,
@@ -336,153 +513,20 @@ export async function authorizeStaticClient(
   if (fixedRedirect && !fixedPort) {
     throw new Error('Sign-in setup is incomplete — re-run setup so the callback URL can be locked.')
   }
-  const scopes = manifest.scopes ?? []
-  const { verifier, challenge, state } = createPkceParams()
 
-  // A new attempt for the same connector supersedes any in-flight one — closes
-  // the prior loopback server instead of stacking listeners (e.g. the user
-  // retries after abandoning a consent tab).
-  pendingStaticAuth.get(connectorId)?.('A new sign-in attempt was started.')
-
-  return new Promise<StoredCredential>((rawResolve, rawReject) => {
-    let redirectUri = ''
-    let settled = false
-    let timer: NodeJS.Timeout | null = null
-
-    const finish = (): void => {
-      if (timer) clearTimeout(timer)
-      if (pendingStaticAuth.get(connectorId) === abort) {
-        pendingStaticAuth.delete(connectorId)
-      }
-      server.close()
-    }
-    const resolve = (value: StoredCredential): void => {
-      if (settled) return
-      settled = true
-      finish()
-      rawResolve(value)
-    }
-    const reject = (cause: Error): void => {
-      if (settled) return
-      settled = true
-      finish()
-      rawReject(cause)
-    }
-    // Registered so cancelStaticClientAuth (dialog Cancel) and a superseding
-    // attempt can tear this flow down without waiting for the timeout.
-    const abort = (reason: string): void => reject(new Error(reason))
-    pendingStaticAuth.set(connectorId, abort)
-
-    const server = createServer((req, res) => {
-      const url = new URL(req.url ?? '', 'http://127.0.0.1')
-      const code = url.searchParams.get('code')
-      const returnedState = url.searchParams.get('state')
-      const errorCode = url.searchParams.get('error') ?? undefined
-      // Desktop clients use a bare loopback redirect, so accept any path — but
-      // only the redirect carries `code`/`error`. Ignore everything else (the
-      // browser also fetches /favicon.ico, which would otherwise race the
-      // in-flight token exchange and reject the whole flow).
-      if (!code && !errorCode) {
-        res.writeHead(404).end()
-        return
-      }
-      res
-        .writeHead(200, { 'content-type': 'text/html' })
-        .end('<html><body>You can close this tab and return to Ordinus.</body></html>')
-      if (errorCode || !code || returnedState !== state) {
-        reject(
-          new Error(
-            translateOAuthError(
-              connectorId,
-              errorCode,
-              'Sign-in was cancelled or returned an invalid response.'
-            )
-          )
-        )
-        return
-      }
-      void (async () => {
-        try {
-          const json = await postToken(tokenEndpoint, {
-            grant_type: 'authorization_code',
-            code,
-            redirect_uri: redirectUri,
-            code_verifier: verifier,
-            client_id: client.clientId,
-            ...(client.clientSecret ? { client_secret: client.clientSecret } : {})
-          })
-          resolve(
-            readTokenResponse(json, {
-              tokenEndpoint,
-              clientId: client.clientId,
-              clientSecret: client.clientSecret
-            })
-          )
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          const match = /"error"\s*:\s*"([a-z_]+)"/.exec(message)?.[1]
-          reject(new Error(translateOAuthError(connectorId, match, message)))
-        }
-      })()
-    })
-
-    // ADR-046: a fixedRedirect connector (X) binds its locked port; if that port
-    // is busy the bind fails here — surface a fixable message instead of the raw
-    // EADDRINUSE. Dynamic-port connectors (Google) can't realistically collide.
-    server.on('error', (cause) => {
-      if (fixedPort) {
-        reject(
-          new Error(
-            `Couldn't open the sign-in callback on port ${fixedPort} — another app may be using it. ` +
-              'Close it and try again, or re-run setup to pick a new port.'
-          )
-        )
-        return
-      }
-      reject(cause)
-    })
-    const onListening = (): void => {
-      if (fixedRedirect && fixedPort) {
-        redirectUri = `http://127.0.0.1:${fixedPort}${fixedRedirect.path}`
-      } else {
-        const address = server.address() as AddressInfo | null
-        if (!address) {
-          reject(new Error('Could not start the OAuth callback server.'))
-          return
-        }
-        redirectUri = `http://127.0.0.1:${address.port}`
-      }
-
-      const authorizeUrl = new URL(authorizationEndpoint)
-      authorizeUrl.searchParams.set('response_type', 'code')
-      authorizeUrl.searchParams.set('client_id', client.clientId)
-      authorizeUrl.searchParams.set('redirect_uri', redirectUri)
-      if (scopes.length > 0) {
-        authorizeUrl.searchParams.set('scope', scopes.join(' '))
-      }
-      authorizeUrl.searchParams.set('state', state)
-      authorizeUrl.searchParams.set('code_challenge', challenge)
-      authorizeUrl.searchParams.set('code_challenge_method', 'S256')
-      // ADR-046: provider-specific authorize params (Google: access_type=offline
-      // + prompt=consent for a refresh token; X: none — offline.access handles it).
-      for (const [key, value] of Object.entries(extraAuthParams ?? {})) {
-        authorizeUrl.searchParams.set(key, value)
-      }
-
-      // The system browser, NOT an embedded BrowserWindow: providers reject OAuth
-      // in embedded webviews ("disallowed_useragent"). The loopback server above
-      // catches the redirect. This is the flow validated in the Phase 0 PoCs.
-      timer = setTimeout(
-        () => reject(new Error('Sign-in timed out — the consent screen was not completed.')),
-        3 * 60_000
-      )
-      void shell.openExternal(authorizeUrl.toString())
-    }
-    if (fixedRedirect && fixedPort) {
-      server.listen(fixedPort, '127.0.0.1', onListening)
-    } else {
-      server.listen(0, '127.0.0.1', onListening)
-    }
+  return runLoopbackAuth({
+    connectorId,
+    authorizationEndpoint,
+    tokenEndpoint,
+    scopes: manifest.scopes ?? [],
+    redirectPath: fixedRedirect?.path ?? '',
+    port: fixedPort ?? 0,
+    extraAuthParams,
+    acquireClient: async () => ({ clientId: client.clientId, clientSecret: client.clientSecret }),
+    translateError: (code, fallback) => translateOAuthError(connectorId, code, fallback),
+    bindErrorMessage: (port) =>
+      `Couldn't open the sign-in callback on port ${port} — another app may be using it. ` +
+      'Close it and try again, or re-run setup to pick a new port.'
   })
 }
 

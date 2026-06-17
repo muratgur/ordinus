@@ -20,7 +20,7 @@ import {
 import { providerIds, type RuntimeEventListener, type RuntimeProviderCapabilities } from './types'
 import { getProviderAdapter, listProviderAdapters } from './adapters/registry'
 import { partitionExtraDirectoriesByExistence } from '../workspace/extra-directory-policy'
-import { isProviderSessionInvalidError } from './adapters/shared'
+import { isEmptyProviderResponseError, isProviderSessionInvalidError } from './adapters/shared'
 import { buildWorkspaceWorkingFolderInstructions } from './prompts/workspace'
 import type {
   ProviderRuntimeContext,
@@ -361,30 +361,53 @@ async function sendConversationTurnWithFreshSessionFallback(
   try {
     return await adapter.sendConversationTurn(filtered, context)
   } catch (error) {
-    if (!filtered.providerSessionRef || !isProviderSessionInvalidError(error)) {
-      throw error
+    // ADR-013: a resumed session went stale — retry once with a brand-new session.
+    if (filtered.providerSessionRef && isProviderSessionInvalidError(error)) {
+      filtered.observability?.record({
+        kind: 'status',
+        source: 'runtime',
+        confidence: 'reported',
+        phase: 'starting',
+        summary: 'Started a new provider session after the stored session was unavailable.',
+        payload: {
+          reason: 'invalid_provider_session'
+        }
+      })
+
+      const retried = await adapter.sendConversationTurn(
+        {
+          ...filtered,
+          providerSessionRef: null,
+          message: rebuildMessageForFreshSession?.() ?? filtered.message
+        },
+        context
+      )
+      return { ...retried, sessionReset: true }
     }
 
-    filtered.observability?.record({
-      kind: 'status',
-      source: 'runtime',
-      confidence: 'reported',
-      phase: 'starting',
-      summary: 'Started a new provider session after the stored session was unavailable.',
-      payload: {
-        reason: 'invalid_provider_session'
-      }
-    })
+    // ADR-053: the provider returned an empty/invalid stream — no text and no
+    // tool call. This is a transient model-side flake (e.g. the model spent its
+    // budget thinking and emitted zero output tokens), not a config or prompt
+    // error, so retry the same turn once before surfacing the failure. A single
+    // retry bounds the blast radius: in Workboard one empty run cascades to every
+    // downstream dependent; in chat the user otherwise just sees an error. The
+    // session is still valid, so the turn is replayed unchanged.
+    if (isEmptyProviderResponseError(error)) {
+      filtered.observability?.record({
+        kind: 'status',
+        source: 'runtime',
+        confidence: 'reported',
+        phase: 'starting',
+        summary: 'Retried the turn after the model returned an empty response.',
+        payload: {
+          reason: 'empty_provider_response'
+        }
+      })
 
-    const retried = await adapter.sendConversationTurn(
-      {
-        ...filtered,
-        providerSessionRef: null,
-        message: rebuildMessageForFreshSession?.() ?? filtered.message
-      },
-      context
-    )
-    return { ...retried, sessionReset: true }
+      return adapter.sendConversationTurn(filtered, context)
+    }
+
+    throw error
   }
 }
 

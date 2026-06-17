@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Library, Loader2, Search } from 'lucide-react'
 import type { Agent, AgentDraft, AgentProfile, AgentProfileCatalog } from '@shared/contracts'
 import { agentProfileCategories } from '@shared/contracts'
-import { Dialog, DialogContent } from './ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
 import { Input } from './ui/input'
 import { packAgentAvatar, randomAvatarParts } from './mascots'
 import { AgentAvatarPicker } from './agent-avatar-picker'
@@ -219,6 +219,10 @@ export function AgentCreationFlow({
         className="grid h-[min(640px,calc(100vh-4rem))] grid-rows-1 gap-0 overflow-hidden p-0"
         style={{ width: 'min(576px, calc(100vw - 2rem))', maxWidth: 'none' }}
       >
+        <DialogTitle className="sr-only">Create an agent</DialogTitle>
+        <DialogDescription className="sr-only">
+          Describe what the agent should do, shape its name and avatar, then greet it.
+        </DialogDescription>
         <div className="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] bg-background">
           {step !== 'capabilities' ? (
             <button

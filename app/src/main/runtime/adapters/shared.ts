@@ -75,6 +75,18 @@ const invalidSessionPatterns = [
   /\binvalid thread\b/i
 ]
 
+// ADR-053: a CLI can finish "successfully" yet hand back no usable answer — the
+// model spends its budget thinking and emits zero output tokens, or the output
+// stream is malformed. Each provider phrases this differently (Gemini's CLI:
+// "Invalid stream: ... empty response or malformed tool call"; our own adapters:
+// "<provider> returned an empty conversation response"). These patterns let any
+// throw site classify a CLI-originated message as the empty-response flake.
+const emptyProviderResponsePatterns = [
+  /\bempty (?:conversation )?response\b/i,
+  /\binvalid stream\b/i,
+  /\bmalformed tool call\b/i
+]
+
 const conversationProcessTimeoutMs = 30 * 60 * 1000
 
 export class ProviderSessionInvalidError extends Error {
@@ -92,6 +104,25 @@ export function isProviderSessionInvalidError(
 
 export function isInvalidProviderSessionMessage(message: string): boolean {
   return invalidSessionPatterns.some((pattern) => pattern.test(message))
+}
+
+// ADR-053: a transient, retryable "the model returned nothing usable" failure.
+// The runtime service retries the turn once when it sees this; adapters raise it
+// (rather than a plain Error) so the retry never fires on genuine, non-transient
+// errors such as bad config, auth, or quota.
+export class EmptyProviderResponseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'EmptyProviderResponseError'
+  }
+}
+
+export function isEmptyProviderResponseError(error: unknown): error is EmptyProviderResponseError {
+  return error instanceof EmptyProviderResponseError
+}
+
+export function isEmptyProviderResponseMessage(message: string): boolean {
+  return emptyProviderResponsePatterns.some((pattern) => pattern.test(message))
 }
 
 export function runConversationProcess({

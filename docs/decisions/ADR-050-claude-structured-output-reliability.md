@@ -94,6 +94,11 @@ than betting on any single lever. Five changes, Claude-only:
    `AskUserQuestion`). `ToolSearch` is deliberately **kept** so deferral still works for large
    connectors.
 
+   > **Follow-up (2026-06-17), see Addendum below:** `--tools` governs only tool *visibility*, not
+   > *permission*. Shipping decision #5 without a matching `--allowedTools` entry left WebSearch,
+   > WebFetch, and general Bash visible-but-denied in the non-interactive CLI. The Addendum bridges
+   > the sandbox-appropriate built-ins into `--allowedTools` to fix it.
+
 **Explicitly excluded: `ENABLE_TOOL_SEARCH=0`.** It disables deferral globally and would force a
 large connector's whole tool catalog into context every turn. Deferral is the correct design at
 scale; the fix above makes deferral *safe*, it does not remove it.
@@ -137,3 +142,53 @@ recovery turn recovers those losslessly; the fallback is only the last resort.
   StructuredOutput; normal turns are unaffected.
 - **Deferred:** if Ordinus later lets users curate which functions a connector exposes (e.g. 10 of
   Datadog's 250), that further reduces deferral pressure and is complementary to this ADR.
+
+## Addendum (2026-06-17): `--tools` ≠ permission — bridge built-ins into `--allowedTools`
+
+### Context
+
+A live `workspace-write` agent reported WebSearch and WebFetch as persistently blocked ("approval
+doesn't appear to be registering"), and confabulated a non-existent Ordinus permission panel for the
+user to approve. Investigation (confirmed against the Claude Code docs) found the cause in decision #5
+above, not the user's setup:
+
+- `--tools` controls only which built-ins are **visible** to the model; it does **not** grant
+  permission to run them. Permission for a built-in comes from `--allowedTools` (pre-approve, run
+  without prompt) or `--permission-mode`.
+- `--permission-mode acceptEdits` (our `workspace-write` mapping) auto-approves only file edits plus a
+  few filesystem Bash commands (`mkdir/touch/rm/rmdir/mv/cp/sed`). It does **not** auto-approve
+  WebSearch, WebFetch, or general Bash.
+- In non-interactive `-p` mode there is no prompt path, so any tool needing permission that is not in
+  `--allowedTools` is **silently auto-denied**.
+
+Ordinus only ever passed the materialized MCP connector ids (`mcp__*`) to `--allowedTools`; the
+built-in allowlist went solely to `--tools`. Net effect: WebSearch/WebFetch/general-Bash were
+visible-but-denied for every agent. Read/Glob/Grep worked (read-only, auto-approved) and Edit/Write
+worked under `acceptEdits`, which is why it went unnoticed until a web-research turn.
+
+### Decision
+
+Pre-approve the **sandbox-appropriate built-ins** in `--allowedTools` alongside the MCP connector
+tools, split by whether a tool needs permission:
+
+- **Read/research** (`Read, Glob, Grep, WebSearch, WebFetch, ToolSearch`) — no mutation; pre-approved
+  in **every** sandbox tier, including `read-only`/`plan`.
+- **Mutating/side-effecting** (`Edit, Write, NotebookEdit, Bash, Skill`) — pre-approved **only** when
+  the sandbox grants write access (`workspace-write`, `full-access`); **never** in `read-only`, so the
+  no-mutation guarantee holds (plan mode also blocks them, and read-only Bash stays auto-approved).
+
+`--tools` (visibility) and the host-orchestration-tool exclusion from decision #5 are unchanged; the
+two flags are complementary (`--tools` = visibility, `--allowedTools` = pre-approval).
+
+### Consequences
+
+- `workspace-write`/`full-access` agents can actually use web search/fetch and general Bash
+  non-interactively; the silent denial is gone.
+- `read-only` agents keep their guarantee — only the read/research subset is pre-approved.
+- Pre-approving Bash wholesale in write tiers is consistent with the non-interactive, sandbox-tiered
+  trust model (the same `trust:true` rationale already applied to MCP tools); optional `--disallowedTools`
+  patterns remain available as extra hardening.
+- **Still open (not in this addendum):** the model confabulates a permission/settings panel when a
+  tool is denied, because nothing tells it that permissions are fixed at launch and no approval UI
+  exists. A system-prompt rule ("permissions are fixed for the session; there is no approval dialog;
+  report an unavailable tool as a plain limitation") is the proposed follow-up.

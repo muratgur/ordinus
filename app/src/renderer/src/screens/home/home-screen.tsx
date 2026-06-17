@@ -17,7 +17,6 @@ import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Brain, HelpCircle } from 'lucide-react'
 import type {
-  Agent,
   AgentDraft,
   InteractionAnswer,
   OrdinusActionEvent,
@@ -279,16 +278,16 @@ export function HomeScreen(): React.JSX.Element {
   )
 
   // ADR-048 phase 3 — propose_agent. Ordinus produces a draft through the shared
-  // engine and the creation pop-up opens pre-seeded at the "shape" step. The
-  // conversation it was proposed in is stamped so post-creation guidance lands
-  // in the right place.
+  // engine and the creation pop-up opens pre-seeded at the "shape" step. Ordinus
+  // already explains what the agent does and what connection it needs in its
+  // propose-time reply (in the user's language), so creation itself sends no
+  // follow-up message on the user's behalf.
   const [proposedDraft, setProposedDraft] = useState<AgentDraft | null>(null)
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
   // Bumped per proposal so the creation flow remounts and re-seeds from the new
   // draft via its useState initializers (avoids setState-in-effect seeding).
   const [proposalNonce, setProposalNonce] = useState(0)
   const [existingAgentNames, setExistingAgentNames] = useState<string[]>([])
-  const proposalConversationIdRef = useRef<string | null>(null)
   const refreshAgentNames = useCallback(async () => {
     try {
       const agents = await window.ordinus.agents.list()
@@ -316,7 +315,6 @@ export function HomeScreen(): React.JSX.Element {
       if (event.kind !== 'agent_draft_ready') return
       const parsed = AgentDraftSchema.safeParse(event.draft)
       if (!parsed.success) return
-      proposalConversationIdRef.current = activeIdRef.current
       setProposedDraft(parsed.data)
       setProposalNonce((n) => n + 1)
       setCreateAgentOpen(true)
@@ -1204,27 +1202,19 @@ export function HomeScreen(): React.JSX.Element {
       </section>
 
       {/* ADR-048 phase 3 — agent creation pop-up, opened pre-seeded when Ordinus
-          proposes an agent. On creation, Ordinus continues in the same
-          conversation with post-creation guidance (what to do next, connections,
-          starter messages) — a natural follow-up to the user's confirm action. */}
+          proposes an agent. Creation sends no follow-up message on the user's
+          behalf: Ordinus already covered what the agent does and what it needs
+          in its propose-time reply, in the user's own language. */}
       <AgentCreationFlow
         key={`agent-flow-${proposalNonce}`}
         open={createAgentOpen}
         onOpenChange={setCreateAgentOpen}
         initialDraft={proposedDraft}
         existingAgentNames={existingAgentNames}
-        onAgentCreated={(agent: Agent) => {
+        onAgentCreated={() => {
           setCreateAgentOpen(false)
           setProposedDraft(null)
           void refreshAgentNames()
-          if (proposalConversationIdRef.current && proposalConversationIdRef.current === activeId) {
-            void handleSend(
-              `I just created the "${agent.name}" agent (${agent.role}). In one short reply: ` +
-                'tell me what I can do with it now, whether it needs any connection set up, and ' +
-                'offer me a couple of starter messages to begin working with it.'
-            )
-          }
-          proposalConversationIdRef.current = null
         }}
       />
 

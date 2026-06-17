@@ -65,8 +65,10 @@ import {
   createProviderLoginResult,
   createProviderStatusBase,
   disconnectCliProvider,
+  EmptyProviderResponseError,
   getCliVersion,
   getStringValue,
+  isEmptyProviderResponseMessage,
   isInvalidProviderSessionMessage,
   ProviderSessionInvalidError,
   matchSkillActivation,
@@ -224,6 +226,12 @@ async function sendClaudeConversationTurn(
         throw new ProviderSessionInvalidError(message)
       }
 
+      // ADR-053: a non-zero exit whose message is an empty-response flake is
+      // retryable; surface it as such so the runtime replays the turn once.
+      if (isEmptyProviderResponseMessage(message)) {
+        throw new EmptyProviderResponseError(message)
+      }
+
       throw new Error(message)
     }
 
@@ -376,10 +384,10 @@ function buildClaudeStructuredOutputRecoveryPrompt(): string {
   return 'You ended your previous turn without calling the StructuredOutput tool. Do not use any other tools now. Call the StructuredOutput tool exactly once to report the result of the work you just did, following the outcome field guidance from the system prompt.'
 }
 
-// ADR-050 — the built-in tools Ordinus agents are allowed to see. Excludes the
-// harness orchestration tools the host account exposes; keeps ToolSearch so the
-// deferred-tool path keeps working for large MCP connectors. MCP connector functions
-// are unaffected (they arrive via --mcp-config, not this list).
+// ADR-050 — the built-in tools Ordinus agents are allowed to SEE (`--tools` governs
+// availability/visibility, not permission). Excludes the harness orchestration tools the
+// host account exposes; keeps ToolSearch so the deferred-tool path keeps working for large
+// MCP connectors. MCP connector functions are unaffected (they arrive via --mcp-config).
 const claudeBuiltinToolAllowlist = [
   'Bash',
   'Read',
@@ -393,6 +401,37 @@ const claudeBuiltinToolAllowlist = [
   'NotebookEdit',
   'ToolSearch'
 ] as const
+
+// ADR-050 — `--tools` only makes a built-in visible; `--allowedTools` is what lets the
+// fully non-interactive CLI (`-p`, no permission prompt path) RUN it. WebSearch/WebFetch
+// and general Bash are NOT auto-approved by acceptEdits, so without an explicit
+// --allowedTools entry every such call is silently denied. These two groups split the
+// built-ins by whether they need permission, so read-only agents keep their no-mutation
+// guarantee while write-capable agents can actually use web + shell.
+//
+// Read/research built-ins: no permission required, safe to pre-approve in every tier
+// (including read-only / plan mode).
+const claudeReadResearchBuiltins = [
+  'Read',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+  'ToolSearch'
+] as const
+
+// Mutating / side-effecting built-ins: pre-approved only when the sandbox grants write
+// access — never in read-only.
+const claudeMutatingBuiltins = ['Edit', 'Write', 'NotebookEdit', 'Bash', 'Skill'] as const
+
+// The built-in tools Ordinus pre-approves in --allowedTools for a given sandbox tier.
+function getClaudePreApprovedBuiltins(sandbox: AgentSandbox): string[] {
+  const parsed = AgentSandboxSchema.parse(sandbox)
+  if (parsed === 'read-only') {
+    return [...claudeReadResearchBuiltins]
+  }
+  return [...claudeReadResearchBuiltins, ...claudeMutatingBuiltins]
+}
 
 function buildClaudeConversationArgs(
   input: RuntimeConversationTurnInput,
@@ -448,8 +487,12 @@ function buildClaudeConversationArgs(
     args.push('--mcp-config', mcpConfigPath)
   }
 
-  if (allowedTools.length > 0) {
-    args.push('--allowedTools', allowedTools.join(','))
+  // ADR-050 — pre-approve the sandbox-appropriate built-ins alongside the MCP connector
+  // tools so the non-interactive CLI does not auto-deny WebSearch/WebFetch/Bash (acceptEdits
+  // only auto-approves file edits + a few fs Bash commands, never web/shell).
+  const preApprovedTools = [...getClaudePreApprovedBuiltins(input.sandbox), ...allowedTools]
+  if (preApprovedTools.length > 0) {
+    args.push('--allowedTools', preApprovedTools.join(','))
   }
 
   if (input.providerSessionRef) {
@@ -1268,11 +1311,17 @@ function readClaudeConversationOutput(value: string): {
       getStringValue(parsed.message)
 
   if (isError) {
-    throw new Error(firstLine(responseText) || 'Claude conversation turn failed.')
+    const message = firstLine(responseText) || 'Claude conversation turn failed.'
+    // ADR-053: classify an empty-response/invalid-stream error as retryable.
+    if (isEmptyProviderResponseMessage(message)) {
+      throw new EmptyProviderResponseError(message)
+    }
+    throw new Error(message)
   }
 
   if (!responseText.trim()) {
-    throw new Error('Claude returned an empty conversation response.')
+    // ADR-053: zero-exit but no usable text — retryable empty-response flake.
+    throw new EmptyProviderResponseError('Claude returned an empty conversation response.')
   }
 
   return {

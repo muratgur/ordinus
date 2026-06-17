@@ -38,6 +38,10 @@ export default {
           DEFAULT: 'hsl(var(--card) / <alpha-value>)',
           foreground: 'hsl(var(--card-foreground) / <alpha-value>)'
         },
+        popover: {
+          DEFAULT: 'hsl(var(--popover) / <alpha-value>)',
+          foreground: 'hsl(var(--popover-foreground) / <alpha-value>)'
+        },
         surface: {
           subtle: 'hsl(var(--surface-subtle) / <alpha-value>)',
           strong: 'hsl(var(--surface-strong) / <alpha-value>)'

@@ -348,15 +348,13 @@ export async function connectConnector(
 }
 
 /**
- * ADR-043: cancel an in-flight Connect. For byo-oauth this aborts the loopback
- * OAuth flow (the user closed the wizard mid-consent) so it doesn't linger
- * until the timeout. No-op for other connectors.
+ * ADR-043/052: cancel an in-flight Connect. For any OAuth connector — BYO (local)
+ * or DCR (remote) — this aborts the loopback flow (the user backed out of the
+ * browser consent) so it doesn't linger until the 3-minute timeout. No-op for
+ * pairing/interactive connectors, which register no loopback.
  */
 export function cancelConnect(connectorId: string): void {
-  const manifest = getConnectorManifest(connectorId)
-  if (manifest.local?.loginMode === 'byo-oauth') {
-    cancelStaticClientAuth(connectorId)
-  }
+  cancelStaticClientAuth(connectorId)
 }
 
 export async function disconnectConnector(connectorId: string): Promise<ConnectorSummary[]> {
