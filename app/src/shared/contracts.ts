@@ -1690,6 +1690,11 @@ export const WorkboardStartRequestPlanInputSchema = z.object({
   // Ignored when destinationRequestId is set (the request inherits that
   // request's folder). When omitted, a new title-based folder is allocated.
   workingRoot: WorkspaceRelativePathSchema.optional(),
+  // ADR-054: set only when this plan is compiled from a saved workflow design and
+  // started as a new Work Request, so run history records the source workflow.
+  // Null for planner-authored requests and for appends (which keep the
+  // destination request's existing linkage).
+  workflowDesignId: z.string().min(1).nullable().default(null),
   plan: WorkboardDraftPlanSchema
 })
 
@@ -1833,9 +1838,18 @@ export const WorkflowRunTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('append'), requestId: z.string().min(1) })
 ])
 
+// ADR-054: a workflow run carries the same target shape the Describe composer
+// builds (a WorkComposerTarget subset), so it can route through the unified
+// createWorkRequestPlan path: new vs append (destinationRequestId), an explicit
+// Existing-folder choice (workingRoot, new-WR only), and continue-from-run
+// dependencies (contextReferences). WorkflowRunTargetSchema is retained as the
+// canvas Run control's internal quick-run shape (ADR-026) and mapped to these
+// fields at the call site.
 export const WorkflowRunInputSchema = z.object({
   designId: z.string().min(1),
-  target: WorkflowRunTargetSchema
+  destinationRequestId: z.string().min(1).optional(),
+  workingRoot: WorkspaceRelativePathSchema.optional(),
+  contextReferences: z.array(WorkboardContextReferenceInputSchema).max(32).default([])
 })
 
 export const ObservedRunSourceSurfaceSchema = z.enum(['workboard', 'conversation'])

@@ -52,11 +52,11 @@ import type {
   WorkboardDraftPlan,
   WorkboardRun,
   WorkflowDesign,
-  WorkflowRunTarget,
   WorkRunInputRequest
 } from '@shared/contracts'
 import { appRoutePaths } from '@renderer/app/routes'
 import { Badge } from '@renderer/components/ui/badge'
+import { readPendingWorkflowRun } from '@renderer/components/workflow-storage'
 import { Button } from '@renderer/components/ui/button'
 import { CopyButton as SharedCopyButton } from '@renderer/components/copy-button'
 import { RunInspectorSheet } from '@renderer/components/run-inspector-sheet'
@@ -295,6 +295,21 @@ export function WorkboardScreen({
   }, [])
 
   useEffect(() => {
+    // ADR-054: honor a pending "Run with options…" hand-off from the Workflows
+    // canvas — open the composer in workflow mode with that design preselected.
+    const pendingWorkflowId = readPendingWorkflowRun()
+    if (pendingWorkflowId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot mount read of an external hand-off (localStorage)
+      setComposer({
+        ...emptyComposerState,
+        open: true,
+        mode: 'workflow',
+        workflowId: pendingWorkflowId
+      })
+    }
+  }, [])
+
+  useEffect(() => {
     return window.ordinus.observability.onRunChanged((snapshot) => {
       if (snapshot.sourceSurface !== 'workboard') return
       setObservedRuns((current) => {
@@ -435,15 +450,20 @@ export function WorkboardScreen({
     setError('')
     setBusy('submit')
     try {
-      // The composer's destination drives the target: empty = new Work Request,
-      // set = append into that request (ADR-025). Both go through the single
-      // workflowRun IPC / compileDesign funnel.
-      const target: WorkflowRunTarget = nextComposer.destinationRequestId
-        ? { kind: 'append', requestId: nextComposer.destinationRequestId }
-        : { kind: 'new' }
+      // ADR-054: the workflow run carries the same target the Describe composer
+      // builds — destination (new vs append), an explicit Existing-folder choice
+      // (new-WR only; empty selection falls back to an allocated folder, matching
+      // Describe), and continue-from-run dependencies. The workflowRun IPC routes
+      // these through the unified createWorkRequestPlan path.
+      const bindsExistingFolder =
+        !nextComposer.destinationRequestId &&
+        nextComposer.folderMode === 'existing' &&
+        nextComposer.existingFolder !== ''
       const nextData = await window.ordinus.workflows.run({
         designId: nextComposer.workflowId,
-        target
+        destinationRequestId: nextComposer.destinationRequestId || undefined,
+        workingRoot: bindsExistingFolder ? nextComposer.existingFolder : undefined,
+        contextReferences: nextComposer.contextReferences.map((reference) => reference.input)
       })
       setData(nextData)
       setComposer(emptyComposerState)
@@ -956,7 +976,10 @@ function RequestComposerDialog({
   )
   const isWorkflowMode = composer.mode === 'workflow'
   const canSubmit = isWorkflowMode
-    ? Boolean(composer.workflowId) && !busy
+    ? // ADR-054: require the design to exist in the loaded list, so a stale/deleted
+      // workflowId (e.g. from a Run-with-options hand-off) keeps the button disabled
+      // instead of enabling a submit that fails with "Workflow design not found."
+      workflows.some((workflow) => workflow.id === composer.workflowId) && !busy
     : composer.request.trim().length >= 12 && agents.length > 0 && !busy
   const showMentionPicker = Boolean(mentionPicker && mentionOptions.length > 0)
 
@@ -1076,9 +1099,9 @@ function RequestComposerDialog({
                   destinationRequestId={composer.destinationRequestId}
                   onDestinationChange={handleDestinationChange}
                 />
-                {isWorkflowMode ? null : (
-                  <ContinueFromSelect composer={composer} data={data} onComposerChange={update} />
-                )}
+                {/* ADR-054: continue-from-run is available to workflows too; the
+                    picker self-disables until a destination request is chosen. */}
+                <ContinueFromSelect composer={composer} data={data} onComposerChange={update} />
               </div>
 
               {isWorkflowMode ? (
@@ -1126,7 +1149,9 @@ function RequestComposerDialog({
               )}
             </div>
 
-            {isWorkflowMode || composer.destinationRequestId ? null : (
+            {/* ADR-054: workflows pick a working folder for a new Work Request too;
+                hidden when a destination request is set (its folder is inherited). */}
+            {composer.destinationRequestId ? null : (
               <WorkingFolderPanel composer={composer} onComposerChange={update} />
             )}
           </div>
@@ -1313,7 +1338,9 @@ function WorkRequestSelect({
                     key={request.id}
                     selected={selected}
                     label={request.title}
-                    detail={`${request.status} - ${runCount} item${runCount === 1 ? '' : 's'}`}
+                    detail={`${request.status} - ${runCount} item${runCount === 1 ? '' : 's'}${
+                      request.archivedAt ? ' · Archived' : ''
+                    }`}
                     icon={selected ? <Check className="size-4" /> : <Columns3 className="size-4" />}
                     onClick={() => selectRequest(request.id)}
                   />
@@ -4248,6 +4275,8 @@ function startPlan(
     contextReferences: target.contextReferences,
     requestedAgentIds: target.requestedAgentIds,
     workingRoot: target.workingRoot,
+    // ADR-054: planner-authored (Describe) requests carry no source workflow.
+    workflowDesignId: null,
     plan
   })
 }

@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react'
-import { ChevronDown, Loader2, Play, Sparkles, Target } from 'lucide-react'
+import { ChevronDown, Loader2, Play, SlidersHorizontal, Sparkles, Target } from 'lucide-react'
 import type { WorkflowRunTarget, WorkRequest } from '@shared/contracts'
 import { Button } from '@renderer/components/ui/button'
 import {
@@ -10,31 +9,30 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@renderer/components/ui/dropdown-menu'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@renderer/components/ui/dialog'
 
-/** Split Run button with per-workflow target memory (IDE run-config style, ADR-026). */
+/**
+ * Split Run button with per-workflow target memory (IDE run-config style, ADR-026).
+ *
+ * The main button and the quick menu items run directly with the remembered or a
+ * fresh target (auto folder). "Run with options…" hands off to the Workboard
+ * composer in workflow mode, where working-folder and continue-from-run selection
+ * live (ADR-054) — it supersedes the old bare "add to an existing request" picker.
+ */
 export function RunControl({
-  requests,
   running,
   disabled,
   lastTargetRequest,
   defaultTarget,
-  onRun
+  onRun,
+  onRunWithOptions
 }: {
-  requests: WorkRequest[]
   running: boolean
   disabled: boolean
   lastTargetRequest: WorkRequest | null
   defaultTarget: WorkflowRunTarget
   onRun: (target: WorkflowRunTarget) => void
+  onRunWithOptions: () => void
 }): React.JSX.Element {
-  const [pickerOpen, setPickerOpen] = useState(false)
   const targetLabel =
     defaultTarget.kind === 'append' && lastTargetRequest ? lastTargetRequest.title : 'a new request'
 
@@ -73,105 +71,11 @@ export function RunControl({
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={() => {
-              // Open the picker only after the menu's own close cycle finishes.
-              // Opening a Radix Dialog synchronously while the DropdownMenu is
-              // still tearing down races their body `pointer-events: none` locks,
-              // and the loser leaves the lock stuck — freezing all clicks except
-              // the React Flow canvas (which sets its own pointer-events).
-              setTimeout(() => setPickerOpen(true), 0)
-            }}
-          >
-            <Target className="size-4" /> Add to an existing request…
+          <DropdownMenuItem onSelect={() => onRunWithOptions()}>
+            <SlidersHorizontal className="size-4" /> Run with options…
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <ExistingRequestPicker
-        open={pickerOpen}
-        requests={requests}
-        onOpenChange={setPickerOpen}
-        onPick={(requestId) => {
-          setPickerOpen(false)
-          onRun({ kind: 'append', requestId })
-        }}
-      />
     </div>
-  )
-}
-
-function ExistingRequestPicker({
-  open,
-  requests,
-  onOpenChange,
-  onPick
-}: {
-  open: boolean
-  requests: WorkRequest[]
-  onOpenChange: (open: boolean) => void
-  onPick: (requestId: string) => void
-}): React.JSX.Element {
-  const [showArchived, setShowArchived] = useState(false)
-  const visible = useMemo(
-    () =>
-      requests
-        .filter((request) => (showArchived ? true : !request.archivedAt))
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
-    [requests, showArchived]
-  )
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md p-0">
-        <DialogHeader className="border-b px-5 py-3">
-          <DialogTitle>Add to an existing request</DialogTitle>
-          <DialogDescription>The steps join that request as a new group of work.</DialogDescription>
-        </DialogHeader>
-        <div className="flex items-center justify-between px-5 py-2">
-          <span className="text-xs text-muted-foreground">
-            {visible.length} request{visible.length === 1 ? '' : 's'}
-          </span>
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(event) => setShowArchived(event.target.checked)}
-            />
-            Show archived
-          </label>
-        </div>
-        <div className="ordinus-scrollbar max-h-80 overflow-y-auto px-2 pb-3">
-          {visible.length === 0 ? (
-            <p className="px-3 py-4 text-center text-sm text-muted-foreground">
-              No requests to add to yet.
-            </p>
-          ) : (
-            visible.map((request) => (
-              <button
-                key={request.id}
-                type="button"
-                onClick={() => onPick(request.id)}
-                className="flex w-full flex-col items-start gap-0.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent"
-              >
-                <span className="flex w-full items-center gap-1.5">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                    {request.title}
-                  </span>
-                  {request.archivedAt ? (
-                    <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
-                      Archived
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {request.status} · {new Date(request.createdAt).toLocaleString()}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
   )
 }

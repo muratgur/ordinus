@@ -1003,20 +1003,20 @@ export function registerIpcHandlers(
 
     const { plan, originalRequest } = compileWorkflowDesign(design)
 
-    // New-WR target links the request back to the design for run history.
-    // Append target reuses the follow-up path as a self-contained sub-DAG and
-    // does NOT claim the existing request's design link (ADR-025).
-    const request =
-      input.target.kind === 'new'
-        ? database.createWorkRequest({
-            originalRequest,
-            plan,
-            workflowDesignId: design.id
-          })
-        : database.createWorkRequestFollowUp({
-            requestId: input.target.requestId,
-            plan
-          })
+    // ADR-054: compile-then-delegate. A workflow run is a subset of the Describe
+    // start, so it routes through the unified createWorkRequestPlan path to gain
+    // folder selection, append, and continue-from-run with identical semantics.
+    // The design link is recorded only on the new-WR path; an append keeps the
+    // destination request's existing linkage (ADR-025).
+    const request = database.createWorkRequestPlan({
+      originalRequest,
+      destinationRequestId: input.destinationRequestId,
+      contextReferences: input.contextReferences,
+      requestedAgentIds: [],
+      workingRoot: input.workingRoot,
+      workflowDesignId: input.destinationRequestId ? null : design.id,
+      plan
+    })
 
     startWorkRequestRuns(database, runtime, observability, request.id)
     return database.getWorkboardData()

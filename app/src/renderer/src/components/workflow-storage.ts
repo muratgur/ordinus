@@ -6,6 +6,10 @@ const sidebarDockedStorageKey = 'ordinus-workflows-sidebar-docked'
 // deep-link straight into the matching request.
 const workboardActiveRequestKey = 'ordinus-workboard-active-request'
 const workboardShowArchivedKey = 'ordinus-workboard-show-archived'
+// ADR-054: "Run with options…" writes the design id here; the Workboard reads &
+// consumes it on mount to open the composer in workflow mode. Single source of
+// truth for the key so producer and consumer can't drift.
+const workboardPendingWorkflowKey = 'ordinus-workboard-pending-workflow'
 
 const lastTargetStorageKey = (designId: string): string =>
   `ordinus-workflow-last-target-${designId}`
@@ -82,6 +86,26 @@ export function writeViewport(designId: string, viewport: SavedViewport): void {
     window.localStorage.setItem(viewportStorageKey(designId), JSON.stringify(viewport))
   } catch {
     /* localStorage unavailable */
+  }
+}
+
+/** ADR-054: record a pending "Run with options…" hand-off for the Workboard. */
+export function writePendingWorkflowRun(designId: string): void {
+  try {
+    window.localStorage.setItem(workboardPendingWorkflowKey, designId)
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+/** Read and clear the pending workflow run hand-off (one-shot). */
+export function readPendingWorkflowRun(): string | null {
+  try {
+    const designId = window.localStorage.getItem(workboardPendingWorkflowKey)
+    if (designId) window.localStorage.removeItem(workboardPendingWorkflowKey)
+    return designId
+  } catch {
+    return null
   }
 }
 

@@ -59,6 +59,7 @@ import {
   readSidebarDocked,
   readViewport,
   writeLastTargetRequestId,
+  writePendingWorkflowRun,
   writeSidebarDocked,
   writeViewport
 } from '@renderer/components/workflow-storage'
@@ -311,7 +312,6 @@ export function WorkflowsScreen(): React.JSX.Element {
             <WorkflowCanvasEditor
               design={selectedDesign}
               agents={agents}
-              requests={requests}
               requestById={requestById}
               onSaved={handleDesignSaved}
               onRefreshRequests={load}
@@ -370,14 +370,12 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 function WorkflowCanvasEditor({
   design,
   agents,
-  requests,
   requestById,
   onSaved,
   onRefreshRequests
 }: {
   design: WorkflowDesign
   agents: Agent[]
-  requests: WorkRequest[]
   requestById: Map<string, WorkRequest>
   onSaved: (design: WorkflowDesign) => void
   onRefreshRequests: () => Promise<void>
@@ -597,7 +595,14 @@ function WorkflowCanvasEditor({
       try {
         // Flush the latest canvas first — run compiles the persisted design.
         await persist()
-        await window.ordinus.workflows.run({ designId: design.id, target })
+        // ADR-054: quick-run maps the canvas target to the flat workflow-run
+        // input — new = auto folder, append = the remembered request. Folder and
+        // continue-from selection happen via "Run with options…" instead.
+        await window.ordinus.workflows.run({
+          designId: design.id,
+          destinationRequestId: target.kind === 'append' ? target.requestId : undefined,
+          contextReferences: []
+        })
         const nextTargetId = target.kind === 'append' ? target.requestId : null
         writeLastTargetRequestId(design.id, nextTargetId)
         setLastTargetRequestId(nextTargetId)
@@ -614,6 +619,31 @@ function WorkflowCanvasEditor({
   const defaultTarget: WorkflowRunTarget = lastTargetRequest
     ? { kind: 'append', requestId: lastTargetRequest.id }
     : { kind: 'new' }
+
+  const runWithOptions = useCallback(() => {
+    if (runValidation) {
+      setRunError(runValidation)
+      return
+    }
+    setRunError(null)
+    // ADR-054: hand off to the Workboard composer (workflow mode) where folder
+    // and continue-from selection live. Record the intent BEFORE the async flush
+    // so a persist failure can't strand the navigation with no pending hand-off.
+    writePendingWorkflowRun(design.id)
+    // Defer the flush + navigation past this menu-item's own close cycle: the Run
+    // control's modal DropdownMenu must finish closing (restoring the body
+    // pointer-events lock) before its subtree is unmounted by navigation.
+    setTimeout(() => {
+      void (async () => {
+        try {
+          await persist()
+        } catch {
+          /* persist unavailable — navigate anyway; the canvas autosaves */
+        }
+        navigate(appRoutePaths.workboard)
+      })()
+    }, 0)
+  }, [runValidation, persist, design.id, navigate])
 
   return (
     <div className="flex h-full min-h-0">
@@ -682,12 +712,12 @@ function WorkflowCanvasEditor({
         {/* Run control */}
         <div className="absolute bottom-4 right-4 z-10 flex flex-col items-end">
           <RunControl
-            requests={requests}
             running={running}
             disabled={runValidation !== null}
             lastTargetRequest={lastTargetRequest}
             defaultTarget={defaultTarget}
             onRun={(target) => void runTarget(target)}
+            onRunWithOptions={runWithOptions}
           />
           {runError ? (
             <p className="mt-2 max-w-xs rounded-md bg-destructive/10 px-2 py-1 text-right text-xs text-destructive">

@@ -2046,6 +2046,9 @@ export class OrdinusDatabase {
             summary: plan.summary,
             workingRoot,
             status: 'active',
+            // ADR-054: records the source workflow when this plan was compiled
+            // from a saved design and started as a new Work Request.
+            workflowDesignId: parsed.workflowDesignId,
             createdAt: now,
             updatedAt: now,
             startedAt: null,
