@@ -130,6 +130,8 @@ import type {
   WorkboardGeneratePlanInput,
   WorkboardGenerateRequestPlanInput,
   WorkboardRevealPathInput,
+  WorkboardOpenFolderInput,
+  WorkboardRenameRequestInput,
   WorkboardCheckPathsInput,
   WorkboardArchiveRequestInput,
   WorkboardUnarchiveRequestInput,
@@ -428,6 +430,10 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.workboardAnswerInputRequest, input),
     revealPath: async (input: WorkboardRevealPathInput): Promise<void> =>
       ipcRenderer.invoke(ipcChannels.workboardRevealPath, input),
+    openFolder: async (input: WorkboardOpenFolderInput): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.workboardOpenFolder, input),
+    renameRequest: async (input: WorkboardRenameRequestInput): Promise<WorkboardData> =>
+      ipcRenderer.invoke(ipcChannels.workboardRenameRequest, input),
     saveRunResult: async (input: WorkRunActionInput): Promise<WorkboardSaveRunResultResult> =>
       ipcRenderer.invoke(ipcChannels.workboardSaveRunResult, input),
     checkPaths: async (input: WorkboardCheckPathsInput): Promise<WorkboardPathStatus[]> =>

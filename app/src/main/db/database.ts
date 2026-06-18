@@ -2540,6 +2540,20 @@ export class OrdinusDatabase {
     return WorkRequestSchema.parse(request)
   }
 
+  updateWorkRequestTitle(input: { id: string; title: string }): WorkRequest {
+    // Renaming only updates the display label. The working folder name was
+    // derived from the title once at creation and stays frozen — the folder is
+    // an implementation detail surfaced via the Files drawer's "Open folder".
+    this.getWorkRequest(input.id) // throws if the request does not exist
+    const now = new Date().toISOString()
+    this.db
+      .update(workRequests)
+      .set({ title: input.title, updatedAt: now })
+      .where(eq(workRequests.id, input.id))
+      .run()
+    return this.getWorkRequest(input.id)
+  }
+
   archiveWorkRequest(requestId: string): WorkRequest {
     const request = this.getWorkRequest(requestId)
     if (!isTerminalWorkRequestStatus(request.status)) {

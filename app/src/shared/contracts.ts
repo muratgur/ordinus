@@ -2011,6 +2011,17 @@ export const WorkboardCheckPathsInputSchema = z.object({
   requestId: z.string().min(1)
 })
 
+export const WorkboardRenameRequestInputSchema = z.object({
+  requestId: z.string().min(1),
+  // Matches the 1-160 cap used when a Work Request title is first created
+  // from its plan (WorkboardDraftPlanSchema.title).
+  title: z.string().trim().min(1).max(160)
+})
+
+export const WorkboardOpenFolderInputSchema = z.object({
+  requestId: z.string().min(1)
+})
+
 export const WorkboardArchiveRequestInputSchema = z.object({
   requestId: z.string().min(1)
 })
@@ -2450,6 +2461,8 @@ export type WorkboardAnswerInputRequestInput = z.infer<
 >
 export type WorkboardRevealPathInput = z.infer<typeof WorkboardRevealPathInputSchema>
 export type WorkboardCheckPathsInput = z.infer<typeof WorkboardCheckPathsInputSchema>
+export type WorkboardRenameRequestInput = z.infer<typeof WorkboardRenameRequestInputSchema>
+export type WorkboardOpenFolderInput = z.infer<typeof WorkboardOpenFolderInputSchema>
 export type WorkboardArchiveRequestInput = z.infer<typeof WorkboardArchiveRequestInputSchema>
 export type WorkboardUnarchiveRequestInput = z.infer<typeof WorkboardUnarchiveRequestInputSchema>
 export type WorkboardPathStatus = z.infer<typeof WorkboardPathStatusSchema>

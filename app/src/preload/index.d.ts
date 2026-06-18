@@ -128,6 +128,8 @@ import type {
   WorkboardGeneratePlanInput,
   WorkboardGenerateRequestPlanInput,
   WorkboardRevealPathInput,
+  WorkboardOpenFolderInput,
+  WorkboardRenameRequestInput,
   WorkboardCheckPathsInput,
   WorkboardArchiveRequestInput,
   WorkboardUnarchiveRequestInput,
@@ -283,6 +285,8 @@ export type OrdinusApi = {
     cancelRun: (input: WorkRunActionInput) => Promise<WorkboardData>
     answerInputRequest: (input: WorkboardAnswerInputRequestInput) => Promise<WorkboardData>
     revealPath: (input: WorkboardRevealPathInput) => Promise<void>
+    openFolder: (input: WorkboardOpenFolderInput) => Promise<void>
+    renameRequest: (input: WorkboardRenameRequestInput) => Promise<WorkboardData>
     saveRunResult: (input: WorkRunActionInput) => Promise<WorkboardSaveRunResultResult>
     checkPaths: (input: WorkboardCheckPathsInput) => Promise<WorkboardPathStatus[]>
     archiveRequest: (input: WorkboardArchiveRequestInput) => Promise<WorkboardData>

@@ -118,6 +118,8 @@ export const ipcChannels = {
   workboardCancelRun: 'workboard:cancel-run',
   workboardAnswerInputRequest: 'workboard:answer-input-request',
   workboardRevealPath: 'workboard:reveal-path',
+  workboardOpenFolder: 'workboard:open-folder',
+  workboardRenameRequest: 'workboard:rename-request',
   workboardSaveRunResult: 'workboard:save-run-result',
   workboardCheckPaths: 'workboard:check-paths',
   workboardArchiveRequest: 'workboard:archive-request',

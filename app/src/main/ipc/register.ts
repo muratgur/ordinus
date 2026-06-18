@@ -114,6 +114,8 @@ import {
   OrdinusWriteMemoryInputSchema,
   WorkboardGenerateRequestPlanInputSchema,
   WorkboardRevealPathInputSchema,
+  WorkboardOpenFolderInputSchema,
+  WorkboardRenameRequestInputSchema,
   WorkboardCheckPathsInputSchema,
   WorkboardArchiveRequestInputSchema,
   WorkboardUnarchiveRequestInputSchema,
@@ -1079,6 +1081,15 @@ export function registerIpcHandlers(
       paths.map((path) => ({ path, exists: existing.has(path) }))
     )
   })
+  ipcMain.handle(ipcChannels.workboardRenameRequest, (_event, payload) => {
+    const input = WorkboardRenameRequestInputSchema.parse(payload)
+    database.updateWorkRequestTitle({ id: input.requestId, title: input.title })
+    return database.getWorkboardData()
+  })
+  ipcMain.handle(ipcChannels.workboardOpenFolder, async (_event, payload) => {
+    const input = WorkboardOpenFolderInputSchema.parse(payload)
+    await openWorkRequestFolder(database, input.requestId)
+  })
   ipcMain.handle(ipcChannels.workboardArchiveRequest, (_event, payload) => {
     const input = WorkboardArchiveRequestInputSchema.parse(payload)
     database.archiveWorkRequest(input.requestId)
@@ -1529,6 +1540,25 @@ async function openConversationFolder(
   const openError = await shell.openPath(absolutePath)
   if (openError) {
     throw new Error(`Conversation folder could not be opened. ${openError}`)
+  }
+}
+
+async function openWorkRequestFolder(database: OrdinusDatabase, requestId: string): Promise<void> {
+  const workspace = database.getWorkspaceConfig()
+  if (!workspace) {
+    throw new Error('Choose a workspace before opening Work Request folders.')
+  }
+  const request = database.getWorkRequest(requestId)
+  const absolutePath = resolveWorkspaceRelativePath(workspace.workspaceRoot, request.workingRoot)
+  // Intentional divergence from openConversationFolder: a Work Request's folder
+  // is created lazily (only once an agent writes a file), so a fresh request
+  // legitimately has no folder yet. Ensure it exists rather than dead-ending the
+  // user with a "folder was not found" error.
+  mkdirSync(absolutePath, { recursive: true })
+
+  const openError = await shell.openPath(absolutePath)
+  if (openError) {
+    throw new Error(`Work Request folder could not be opened. ${openError}`)
   }
 }
 

@@ -30,6 +30,7 @@ import {
   Loader2,
   MoreHorizontal,
   PanelRight,
+  Pencil,
   Plus,
   Search,
   Play,
@@ -85,6 +86,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@renderer/components/ui/dialog'
+import { Input } from '@renderer/components/ui/input'
 import { SelectControl } from '@renderer/components/select-control'
 import { DraftItemFields } from '@renderer/components/draft-item-fields'
 import {
@@ -241,6 +243,13 @@ export function WorkboardScreen({
   const [staleConfirmOpen, setStaleConfirmOpen] = useState(false)
   const [watchedOpId, setWatchedOpId] = useState<string | null>(null)
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null)
+  const [renameTitle, setRenameTitle] = useState('')
+  // Dedicated flag for the rename dialog. The shared `busy` string is consumed
+  // as a generic gate by composer/workflow submits, so reusing it here would
+  // let an in-flight rename block those (and let unrelated ops disable this
+  // dialog's own Cancel/Save). Mirrors home-screen's `dialogBusy`.
+  const [renameBusy, setRenameBusy] = useState(false)
   const [viewerSource, setViewerSource] = useState<MarkdownDocumentSource | null>(null)
   const openFile = useCallback((path: string) => setViewerSource({ kind: 'file', path }), [])
   const openResult = useCallback(
@@ -612,6 +621,44 @@ export function WorkboardScreen({
     setSelectedRunId('')
   }
 
+  function openRenameDialog(request: { id: string; title: string }): void {
+    setRenameTarget({ id: request.id, title: request.title })
+    setRenameTitle(request.title)
+  }
+
+  async function handleSubmitRename(): Promise<void> {
+    if (!renameTarget) return
+    const title = renameTitle.trim()
+    if (!title) return
+    setRenameBusy(true)
+    setError('')
+    try {
+      const nextData = await window.ordinus.workboard.renameRequest({
+        requestId: renameTarget.id,
+        title
+      })
+      setData(nextData)
+      setRenameTarget(null)
+    } catch (renameError) {
+      setError(
+        renameError instanceof Error ? renameError.message : 'Work Request could not be renamed.'
+      )
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
+  async function handleOpenRequestFolder(requestId: string): Promise<void> {
+    setError('')
+    try {
+      await window.ordinus.workboard.openFolder({ requestId })
+    } catch (openError) {
+      setError(
+        openError instanceof Error ? openError.message : 'Work Request folder could not be opened.'
+      )
+    }
+  }
+
   async function handleArchiveRequest(requestId: string): Promise<void> {
     setBusy(`archive-${requestId}`)
     setError('')
@@ -696,6 +743,7 @@ export function WorkboardScreen({
           onNew={handleNewRequest}
           onToggleArchived={() => setShowArchived((value) => !value)}
           onArchive={handleArchiveRequest}
+          onRename={openRenameDialog}
         />
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           <RequestHeaderBar
@@ -705,6 +753,7 @@ export function WorkboardScreen({
             onOpenFiles={() => setFilesDrawerOpen(true)}
             onArchive={handleArchiveRequest}
             onUnarchive={handleUnarchiveRequest}
+            onRename={openRenameDialog}
           />
           <WorkColumns
             request={activeRequest}
@@ -783,6 +832,45 @@ export function WorkboardScreen({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => !open && setRenameTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rename Work Request</DialogTitle>
+            <DialogDescription>
+              Give this Work Request a short name for the sidebar. The working folder keeps its
+              original name — find it from Files → Open folder.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleSubmitRename()
+            }}
+          >
+            <Input
+              value={renameTitle}
+              onChange={(event) => setRenameTitle(event.target.value)}
+              autoFocus
+              maxLength={160}
+            />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRenameTarget(null)}
+                disabled={renameBusy}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={renameBusy || !renameTitle.trim()}>
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <RunDetailDrawer
         run={selectedRun}
         runs={data.runs}
@@ -812,6 +900,7 @@ export function WorkboardScreen({
             openRunDetail(runId)
           }}
           onOpenFile={openFile}
+          onOpenFolder={(requestId) => void handleOpenRequestFolder(requestId)}
           onError={setError}
         />
       ) : null}
@@ -1999,7 +2088,8 @@ function RequestSidebar({
   onSelect,
   onNew,
   onToggleArchived,
-  onArchive
+  onArchive,
+  onRename
 }: {
   requests: RequestRailStat[]
   activeRequestId: string
@@ -2012,6 +2102,7 @@ function RequestSidebar({
   onNew: () => void
   onToggleArchived: () => void
   onArchive: (requestId: string) => void
+  onRename: (request: { id: string; title: string }) => void
 }): React.JSX.Element {
   const searchItems = requests.map((request) => ({
     id: request.id,
@@ -2048,6 +2139,7 @@ function RequestSidebar({
             active={request.id === activeRequestId}
             onSelect={onSelect}
             onArchive={onArchive}
+            onRename={onRename}
           />
         ))}
       </RailList>
@@ -2059,12 +2151,14 @@ function RequestRailItem({
   request,
   active,
   onSelect,
-  onArchive
+  onArchive,
+  onRename
 }: {
   request: RequestRailStat
   active: boolean
   onSelect: (requestId: string) => void
   onArchive?: (requestId: string) => void
+  onRename?: (request: { id: string; title: string }) => void
 }): React.JSX.Element {
   const canArchive =
     Boolean(onArchive) && !request.archived && isTerminalRequestStatus(request.status)
@@ -2083,12 +2177,23 @@ function RequestRailItem({
       }
       onSelect={() => onSelect(request.id)}
       actions={
-        canArchive ? (
-          <RailItemAction
-            icon={Archive}
-            label="Archive Work Request"
-            onClick={() => onArchive?.(request.id)}
-          />
+        onRename || canArchive ? (
+          <>
+            {onRename ? (
+              <RailItemAction
+                icon={Pencil}
+                label="Rename Work Request"
+                onClick={() => onRename({ id: request.id, title: request.title })}
+              />
+            ) : null}
+            {canArchive ? (
+              <RailItemAction
+                icon={Archive}
+                label="Archive Work Request"
+                onClick={() => onArchive?.(request.id)}
+              />
+            ) : null}
+          </>
         ) : undefined
       }
     />
@@ -2101,7 +2206,8 @@ function RequestHeaderBar({
   onContinue,
   onOpenFiles,
   onArchive,
-  onUnarchive
+  onUnarchive,
+  onRename
 }: {
   request: WorkboardData['requests'][number] | null
   fileCount: number
@@ -2109,6 +2215,7 @@ function RequestHeaderBar({
   onOpenFiles: () => void
   onArchive: (requestId: string) => void
   onUnarchive: (requestId: string) => void
+  onRename: (request: { id: string; title: string }) => void
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const menu = useExitAnimation(menuOpen)
@@ -2131,66 +2238,75 @@ function RequestHeaderBar({
             <Files />
             Files ({fileCount})
           </Button>
-          {canArchive || isArchived ? (
-            <div className="relative">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="px-2"
-                aria-label="Work Request actions"
-                onClick={() => setMenuOpen((open) => !open)}
-              >
-                <MoreHorizontal />
-              </Button>
-              {menu.mounted ? (
-                <>
+          <div className="relative">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="px-2"
+              aria-label="Work Request actions"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <MoreHorizontal />
+            </Button>
+            {menu.mounted ? (
+              <>
+                <button
+                  type="button"
+                  aria-hidden
+                  tabIndex={-1}
+                  className="fixed inset-0 z-30 cursor-default"
+                  onClick={() => setMenuOpen(false)}
+                />
+                <div
+                  className={cn(
+                    'absolute right-0 top-full z-40 mt-1 w-44 rounded-lg border bg-card p-1 shadow-lg',
+                    menuOpen
+                      ? 'animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150'
+                      : 'animate-out fade-out-0 zoom-out-95 duration-100'
+                  )}
+                  onAnimationEnd={menu.handleAnimationEnd}
+                >
                   <button
                     type="button"
-                    aria-hidden
-                    tabIndex={-1}
-                    className="fixed inset-0 z-30 cursor-default"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <div
-                    className={cn(
-                      'absolute right-0 top-full z-40 mt-1 w-44 rounded-lg border bg-card p-1 shadow-lg',
-                      menuOpen
-                        ? 'animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150'
-                        : 'animate-out fade-out-0 zoom-out-95 duration-100'
-                    )}
-                    onAnimationEnd={menu.handleAnimationEnd}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      onRename({ id: request.id, title: request.title })
+                    }}
                   >
-                    {isArchived ? (
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-                        onClick={() => {
-                          setMenuOpen(false)
-                          onUnarchive(request.id)
-                        }}
-                      >
-                        <ArchiveRestore className="size-4" />
-                        Unarchive
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-                        onClick={() => {
-                          setMenuOpen(false)
-                          onArchive(request.id)
-                        }}
-                      >
-                        <Archive className="size-4" />
-                        Archive
-                      </button>
-                    )}
-                  </div>
-                </>
-              ) : null}
-            </div>
-          ) : null}
+                    <Pencil className="size-4" />
+                    Rename
+                  </button>
+                  {isArchived ? (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        onUnarchive(request.id)
+                      }}
+                    >
+                      <ArchiveRestore className="size-4" />
+                      Unarchive
+                    </button>
+                  ) : canArchive ? (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        onArchive(request.id)
+                      }}
+                    >
+                      <Archive className="size-4" />
+                      Archive
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </section>
@@ -3385,6 +3501,7 @@ function RequestFilesDrawer({
   onClose,
   onSelectRun,
   onOpenFile,
+  onOpenFolder,
   onError
 }: {
   request: WorkboardData['requests'][number]
@@ -3393,6 +3510,7 @@ function RequestFilesDrawer({
   onClose: () => void
   onSelectRun: (runId: string) => void
   onOpenFile: (path: string) => void
+  onOpenFolder: (requestId: string) => void
   onError: (message: string) => void
 }): React.JSX.Element {
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
@@ -3454,10 +3572,21 @@ function RequestFilesDrawer({
                   : `${files.length} ${files.length === 1 ? 'file' : 'files'} from this work request`}
               </p>
             </div>
-            <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
-              <XCircle />
-              <span className="sr-only">Close</span>
-            </Button>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                title="Open folder"
+                onClick={() => onOpenFolder(request.id)}
+              >
+                <FolderOpen />
+                <span className="sr-only">Open folder</span>
+              </Button>
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <XCircle />
+                <span className="sr-only">Close</span>
+              </Button>
+            </div>
           </div>
         </header>
 
