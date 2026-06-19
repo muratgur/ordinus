@@ -20,6 +20,14 @@ The YouTuber Intelligence Pipeline: point a 5-agent crew at any YouTube channel 
 
 ---
 
+## Failed Card Game — "Internship Inferno", a deckbuilder that never became playable
+
+A post-mortem, not a success story. I wanted a Slay-the-Spire-like, built a 9-agent crew, drew a workflow that looked great, and walked away. 2.5 hours and two maxed-out Codex usage limits later I got ~3,000 lines of GDScript, 9 design docs, and one non-runnable `.pck` — nothing I could open on my Mac. This page debugs exactly where and why it broke: a strictly linear pipeline with no isolation, an environment missing Godot export templates, a model that hallucinated its own test files, and a Definition of Done that measured "code compiles" instead of "game runs." The crew did good work; I never verified the one thing I actually wanted.
+
+**[Read the debug report →](failed-card-game/)**
+
+---
+
 ## What goes in a use case
 
 Each `<slug>/` folder contains:
