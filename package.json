@@ -1,7 +1,7 @@
 {
   "name": "ordinus-repo",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Repository workspace for the Ordinus desktop app.",
   "license": "MIT",
   "repository": {
