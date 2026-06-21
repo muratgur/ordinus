@@ -486,7 +486,7 @@ async function generateGeminiWorkboardPlan(
     cwd: input.workspaceRoot,
     env: getGeminiEnvironment(),
     shell: executable.shell,
-    timeoutMs: 90_000
+    timeoutMs: 600_000
   })
 
   if (result.code !== 0) {

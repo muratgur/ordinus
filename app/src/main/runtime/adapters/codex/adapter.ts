@@ -591,7 +591,7 @@ async function generateCodexWorkboardPlan(
       env: getCodexEnvironment(),
       shell: executable.shell,
       stdin: buildWorkboardPlanPrompt(input),
-      timeoutMs: 90_000
+      timeoutMs: 600_000
     })
 
     if (result.code !== 0) {
