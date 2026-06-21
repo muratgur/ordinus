@@ -25,7 +25,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from 'baileys'
 import pino from 'pino'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { openStore, ingestMessage, bareJid } from './store.mjs'
+import { openStore, ingestMessage, bareJid, linkIdentity, setContactName } from './store.mjs'
 import { registerTools } from './tools.mjs'
 
 const EXIT_LOGGED_OUT = 41
@@ -158,6 +158,61 @@ async function runServiceMode() {
     store.setMeta.run('owner', owner)
   }
 
+  // Group names complete themselves without looking like abnormal automation:
+  //  - enumerate every participating group at most once per cooldown window
+  //    (so a reconnect storm can't turn into a request storm), and
+  //  - fetch a single group's metadata at most once per session, and only when
+  //    a message arrives for a group whose name is still unknown.
+  // groupFetchAllParticipating mirrors what the official web client does on
+  // startup, so once-per-app-open is well within normal behaviour.
+  const GROUP_SYNC_COOLDOWN_MS = 10 * 60 * 1000
+  let lastGroupSync = 0
+  const groupMetaTried = new Set()
+
+  async function syncAllGroups() {
+    const now = Date.now()
+    if (now - lastGroupSync < GROUP_SYNC_COOLDOWN_MS) {
+      return
+    }
+    lastGroupSync = now
+    try {
+      const groups = await holder.sock.groupFetchAllParticipating()
+      store.db.exec('BEGIN')
+      try {
+        for (const g of Object.values(groups ?? {})) {
+          if (g.id && g.subject) {
+            store.upsertChat.run(g.id, g.subject, 0)
+          }
+        }
+        store.db.exec('COMMIT')
+      } catch (err) {
+        store.db.exec('ROLLBACK')
+        throw err
+      }
+    } catch (err) {
+      console.error(`Group list sync failed: ${err.message}`)
+      lastGroupSync = 0 // let the next reconnect retry
+    }
+  }
+
+  async function ensureGroupName(jid) {
+    if (!jid || !jid.endsWith('@g.us') || groupMetaTried.has(jid)) {
+      return
+    }
+    if (store.getChatName.get(jid)?.name) {
+      return
+    }
+    groupMetaTried.add(jid)
+    try {
+      const meta = await holder.sock.groupMetadata(jid)
+      if (meta?.subject) {
+        store.upsertChat.run(jid, meta.subject, 0)
+      }
+    } catch (err) {
+      console.error(`Group metadata fetch failed for ${jid}: ${err.message}`)
+    }
+  }
+
   function connect() {
     const sock = makeWASocket({ auth: state, logger: silentLogger, printQRInTerminal: false })
     holder.sock = sock
@@ -166,14 +221,23 @@ async function runServiceMode() {
 
     // One-time history sync (WhatsApp pushes a slice of recent chats after
     // pairing) + live stream, both into the same store.
-    sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
+    sock.ev.on('messaging-history.set', ({ chats, contacts, messages, lidPnMappings }) => {
       // One transaction: a history slice can carry thousands of rows, and
       // per-row autocommit means one fsync each.
       store.db.exec('BEGIN')
       try {
+        // WhatsApp hands us the LID<->phone mappings directly here — the most
+        // reliable source for the identity bridge. Seed them before contacts so
+        // names propagate across the link as contacts are recorded.
+        for (const map of lidPnMappings ?? []) {
+          linkIdentity(store, map.lid, map.pn)
+        }
         for (const contact of contacts ?? []) {
           if (contact.id) {
-            store.upsertContact.run(contact.id, contact.name ?? contact.notify ?? null)
+            if (contact.lid && contact.phoneNumber) {
+              linkIdentity(store, contact.lid, contact.phoneNumber)
+            }
+            setContactName(store, contact.id, contact.name ?? contact.notify ?? null)
           }
         }
         for (const chat of chats ?? []) {
@@ -197,19 +261,77 @@ async function runServiceMode() {
     sock.ev.on('contacts.upsert', (contacts) => {
       for (const contact of contacts ?? []) {
         if (contact.id) {
-          store.upsertContact.run(contact.id, contact.name ?? contact.notify ?? null)
+          if (contact.lid && contact.phoneNumber) {
+            linkIdentity(store, contact.lid, contact.phoneNumber)
+          }
+          setContactName(store, contact.id, contact.name ?? contact.notify ?? null)
+        }
+      }
+    })
+    sock.ev.on('contacts.update', (updates) => {
+      for (const contact of updates ?? []) {
+        if (contact?.id) {
+          setContactName(store, contact.id, contact.name ?? contact.notify ?? null)
+        }
+      }
+    })
+    // Live identity mappings (a LID's phone number revealed after the fact).
+    sock.ev.on('lid-mapping.update', (map) => {
+      if (map) {
+        linkIdentity(store, map.lid, map.pn)
+      }
+    })
+    // Direct-chat names and live-appearing chats (incl. groups) that did not
+    // come through the one-time history slice.
+    sock.ev.on('chats.upsert', (incoming) => {
+      for (const chat of incoming ?? []) {
+        if (chat.id && chat.id !== 'status@broadcast') {
+          store.upsertChat.run(chat.id, chat.name ?? null, Number(chat.conversationTimestamp ?? 0))
+        }
+      }
+    })
+    sock.ev.on('chats.update', (updates) => {
+      for (const chat of updates ?? []) {
+        if (chat?.id && chat.name) {
+          store.upsertChat.run(chat.id, chat.name, Number(chat.conversationTimestamp ?? 0))
+        }
+      }
+    })
+    // Group subjects: captured the moment you join (groups.upsert) and whenever
+    // a group is renamed (groups.update).
+    sock.ev.on('groups.upsert', (groups) => {
+      for (const g of groups ?? []) {
+        if (g.id && g.subject) {
+          store.upsertChat.run(g.id, g.subject, 0)
+        }
+      }
+    })
+    sock.ev.on('groups.update', (updates) => {
+      for (const g of updates ?? []) {
+        if (g?.id && g.subject) {
+          store.upsertChat.run(g.id, g.subject, 0)
         }
       }
     })
     sock.ev.on('messages.upsert', ({ messages }) => {
       for (const m of messages ?? []) {
         ingestMessage(store, m)
+        // Demand-driven fallback: if a group message lands for a group we still
+        // have no name for, fetch its subject once.
+        const jid = m.key?.remoteJid
+        if (jid && jid.endsWith('@g.us')) {
+          ensureGroupName(jid)
+        }
       }
     })
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
       if (connection === 'open') {
         holder.open = true
+        // Enumerate all participating groups so their names are complete even
+        // for groups joined while offline or absent from the history slice.
+        // Debounced inside syncAllGroups; fire-and-forget (errors self-logged).
+        syncAllGroups()
         return
       }
       if (connection !== 'close') {

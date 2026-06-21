@@ -55,6 +55,9 @@ export function openStore(authDir) {
       ON CONFLICT(jid) DO UPDATE SET name = COALESCE(excluded.name, contacts.name)
     `),
     upsertAlias: db.prepare('INSERT OR REPLACE INTO aliases (jid, alt) VALUES (?, ?)'),
+    getAlias: db.prepare('SELECT alt FROM aliases WHERE jid = ?'),
+    getContactName: db.prepare('SELECT name FROM contacts WHERE jid = ?'),
+    getChatName: db.prepare('SELECT name FROM chats WHERE jid = ?'),
     insertMessage: db.prepare(`
       INSERT OR IGNORE INTO messages (id, chat_jid, sender, ts, text, from_me)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -65,6 +68,47 @@ export function openStore(authDir) {
 /** Normalize a jid to its bare account form (strip the device suffix). */
 export function bareJid(jid) {
   return typeof jid === 'string' ? jid.replace(/:\d+(?=@)/, '') : null
+}
+
+/**
+ * Link a person's two jid forms — phone (@s.whatsapp.net) and WhatsApp's
+ * privacy-preserving LID (@lid) — so a name saved under one form resolves for
+ * a chat addressed by the other. Records the mapping both ways and copies any
+ * already-known name across the link, keeping the plain exact-jid name joins in
+ * tools.mjs working without a runtime traversal.
+ */
+export function linkIdentity(store, a, b) {
+  const ba = bareJid(a)
+  const bb = bareJid(b)
+  if (!ba || !bb || ba === bb) {
+    return
+  }
+  store.upsertAlias.run(ba, bb)
+  store.upsertAlias.run(bb, ba)
+  const na = store.getContactName.get(ba)?.name
+  const nb = store.getContactName.get(bb)?.name
+  if (na && !nb) {
+    store.upsertContact.run(bb, na)
+  } else if (nb && !na) {
+    store.upsertContact.run(ba, nb)
+  }
+}
+
+/**
+ * Record a contact's display name, propagating it to the linked jid form (if
+ * one is known) so the name is visible whichever form a chat is addressed by.
+ * No-op when the name is empty so a missing pushName never wipes a known name.
+ */
+export function setContactName(store, jid, name) {
+  const bj = bareJid(jid)
+  if (!bj || !name) {
+    return
+  }
+  store.upsertContact.run(bj, name)
+  const alt = store.getAlias.get(bj)?.alt
+  if (alt) {
+    store.upsertContact.run(alt, name)
+  }
 }
 
 /** Unwrap ephemeral / view-once containers down to the real message body. */
@@ -132,24 +176,22 @@ export function ingestMessage(store, m) {
   const ts = Number(m.messageTimestamp ?? 0)
   const sender = m.key.fromMe ? null : bareJid(m.key.participant ?? chatJid)
   store.insertMessage.run(m.key.id, chatJid, sender, ts, text, m.key.fromMe ? 1 : 0)
+
+  // Baileys v7 carries the alternate (phone <-> LID) form of both the chat and
+  // the group sender on the message key. Linking them keeps name resolution
+  // working whichever form a chat or contact happens to be addressed by, and
+  // makes phone-number search work for LID chats.
+  linkIdentity(store, m.key.remoteJid, m.key.remoteJidAlt)
+  linkIdentity(store, m.key.participant, m.key.participantAlt)
+
   // pushName is the SENDER's display name — it names the chat only for direct
-  // chats (group subjects arrive via the history sync's chat records).
+  // chats (group subjects arrive via the groups.* events / groupFetchAllParticipating).
   // Direct chats come either as phone-number jids (@s.whatsapp.net) or as
   // WhatsApp's newer privacy-preserving LID addressing (@lid).
   const isDirect = chatJid.endsWith('@s.whatsapp.net') || chatJid.endsWith('@lid')
   const senderName = isDirect && m.pushName && !m.key.fromMe ? m.pushName : null
   store.upsertChat.run(chatJid, senderName, ts)
   if (senderName) {
-    store.upsertContact.run(bareJid(chatJid), senderName)
-  }
-  // Baileys v7 sometimes carries the phone-number alias of a LID address
-  // (remoteJidAlt for the chat, participantAlt for a group sender). Recording
-  // the chat-level alias makes phone-number search work for LID chats too.
-  const chatAlt = bareJid(m.key.remoteJidAlt)
-  if (isDirect && chatAlt && chatAlt !== chatJid) {
-    store.upsertAlias.run(chatJid, chatAlt)
-    if (senderName) {
-      store.upsertContact.run(chatAlt, senderName)
-    }
+    setContactName(store, chatJid, senderName)
   }
 }
