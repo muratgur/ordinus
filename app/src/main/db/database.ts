@@ -426,9 +426,32 @@ export class OrdinusDatabase {
       )
     }
 
+    this.normalizeRemovedProviders()
     this.reconcileInterruptedConversations()
 
     return this.getStatus()
+  }
+
+  // ADR-056: Gemini was removed as a provider. provider_id is stored as plain
+  // text with no DB constraint, so stale 'gemini' rows do not break the schema —
+  // but they are re-validated through ProviderIdSchema at the runtime boundary,
+  // where a 'gemini' value would throw before any adapter lookup. Rewrite every
+  // stored 'gemini' to the default provider so no turn ever hits a dead id. This
+  // is an idempotent one-time data repair, not a versioned migration (there is
+  // no schema-shape change, and historical Gemini runs carry no kept value).
+  private normalizeRemovedProviders(): void {
+    this.sqlite.exec(
+      [
+        "UPDATE workspace_config SET default_provider_id = 'codex' WHERE default_provider_id = 'gemini';",
+        "UPDATE agents SET provider_id = 'codex' WHERE provider_id = 'gemini';",
+        "UPDATE conversation_participants SET provider_id = 'codex' WHERE provider_id = 'gemini';",
+        "UPDATE work_runs SET provider_id = 'codex' WHERE provider_id = 'gemini';",
+        "UPDATE work_request_agent_sessions SET provider_id = 'codex' WHERE provider_id = 'gemini';",
+        "UPDATE observed_runs SET provider_id = 'codex' WHERE provider_id = 'gemini';",
+        "UPDATE ordinus_singleton SET provider_id = 'codex' WHERE provider_id = 'gemini';",
+        "UPDATE ordinus_conversations SET provider_id = 'codex' WHERE provider_id = 'gemini';"
+      ].join('\n')
+    )
   }
 
   // ADR-041: managed local MCP connector state. Read/write paths are small
@@ -5490,7 +5513,7 @@ export class OrdinusDatabase {
         model: run.model,
         providerSessionRef,
         // ADR-040: written together with the session ref; an adapter that does
-        // not announce (Claude/Gemini) resets the map for its session.
+        // not announce (Claude) resets the map for its session.
         announcedSkills: announcedSkills ? JSON.stringify(announcedSkills) : null,
         status: 'active',
         lastRunId: run.id,

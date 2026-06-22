@@ -2,7 +2,7 @@
 
 # Ordinus
 
-> A local-first desktop app that lets you compose AI agents from your own Codex / Claude / Gemini CLIs into scheduled workflows — all your data stays on your machine.
+> A local-first desktop app that lets you compose AI agents from your own Codex / Claude CLIs into scheduled workflows — all your data stays on your machine.
 
 <!-- TODO: replace placeholder pitch above with final wording -->
 
@@ -98,7 +98,7 @@ Nothing about your data leaves your machine — Ordinus never collects, uploads,
 ## Why local-first
 
 - Your prompts, conversations, and workflow definitions live in a local SQLite database — no cloud account, no per-seat pricing.
-- Providers run as local CLI processes (Codex, Claude, Gemini). Ordinus orchestrates them; it does not proxy your tokens through a third-party service.
+- Providers run as local CLI processes (Codex, Claude). Ordinus orchestrates them; it does not proxy your tokens through a third-party service.
 - No telemetry. No phone-home.
 
 ## Build from source

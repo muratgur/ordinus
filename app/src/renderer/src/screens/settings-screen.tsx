@@ -593,8 +593,7 @@ function ImportSkillDialog({
               ))
             ) : (
               <p className="py-3 text-sm text-muted-foreground">
-                No skills found in the usual CLI folders (~/.claude, ~/.codex, ~/.gemini,
-                ~/.agents).
+                No skills found in the usual CLI folders (~/.claude, ~/.codex, ~/.agents).
               </p>
             )}
           </div>
@@ -1993,8 +1992,6 @@ function getProviderInstallCommand(providerId: ProviderId): string {
       return 'npm install -g @openai/codex'
     case 'claude':
       return 'npm install -g @anthropic-ai/claude-code'
-    case 'gemini':
-      return 'npm install -g @google/gemini-cli'
     default:
       return ''
   }

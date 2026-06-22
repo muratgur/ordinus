@@ -422,7 +422,7 @@ function updateActivity(
 
 // ADR-037 — fold a provider usage report (and/or an announced session ref)
 // into the run row. Raw counters are stored as reported; the delta fields are
-// the run's true cost. For 'invocation' reporters (Claude, Gemini) the delta
+// the run's true cost. For 'invocation' reporters (Claude) the delta
 // IS the raw report. For 'cumulative' reporters (Codex) the delta is raw
 // minus the latest prior run's raw counters on the same provider session —
 // a fresh session (or an ADR-013 fresh-session fallback, which re-announces

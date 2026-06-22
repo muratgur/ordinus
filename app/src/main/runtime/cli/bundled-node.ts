@@ -8,7 +8,7 @@ let cachedPath: string | null | undefined
  * Absolute path to the standalone Node runtime Ordinus bundles for running the
  * provider CLIs and npm (ADR-047).
  *
- * The CLIs (gemini/claude/codex) are Node scripts whose launchers resolve `node`
+ * The CLIs (claude/codex) are Node scripts whose launchers resolve `node`
  * from PATH, and npm's install-time lifecycle scripts need a real `node` too —
  * Electron-as-node is not findable as `node` on PATH. So we ship our own Node
  * and point at it here.

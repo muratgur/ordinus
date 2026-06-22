@@ -6,7 +6,6 @@ export type ExtraDirectoryErrorCode =
   | 'empty'
   | 'not_absolute'
   | 'null_bytes'
-  | 'path_contains_comma'
   | 'not_found'
   | 'not_directory'
   | 'broken_symlink'
@@ -64,14 +63,6 @@ export function validateExtraDirectoryPath(
   }
   if (!isAbsolute(rawPath)) {
     return { ok: false, code: 'not_absolute', message: 'Path must be absolute.' }
-  }
-  if (rawPath.includes(',')) {
-    return {
-      ok: false,
-      code: 'path_contains_comma',
-      message:
-        'Path contains a comma, which conflicts with Gemini’s --include-directories flag format.'
-    }
   }
 
   let resolvedPath: string

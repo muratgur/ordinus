@@ -3,6 +3,12 @@
 ## Status
 Accepted
 
+Amended by ADR-056 (Remove Gemini Provider Support): the set of selectable
+providers is narrowed from "Codex, Claude, and Gemini" to **Codex and Claude**.
+Google closed the Gemini CLI's individual-account auth on 2026-06-18. The
+app-owned system-default mechanism (provider + model via typed IPC) is unchanged;
+only the provider set shrinks. `defaultProviderId` remains `codex`.
+
 ## Date
 2026-05-09
 

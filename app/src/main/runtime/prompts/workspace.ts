@@ -26,8 +26,8 @@ export function buildWorkspaceWorkingFolderInstructions(workingRoot: string): st
   ].join('\n')
 }
 
-// ADR-040: skill discovery is no longer prompted here. Claude and Gemini
-// discover skills natively (symlinks into their discovery roots); Codex gets an
+// ADR-040: skill discovery is no longer prompted here. Claude
+// discovers skills natively (symlinks into its discovery root); Codex gets an
 // explicit frontmatter inventory via buildSkillInventoryInstructions.
 export function buildAgentPrivateFolderInstructions(agentHomePath: string): string {
   return [

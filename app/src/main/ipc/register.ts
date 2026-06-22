@@ -2276,7 +2276,7 @@ function buildProviderInvocationSummary(input: {
       '<workspace>',
       '--output-last-message',
       '<run-log>/last-message.txt',
-      input.providerId === 'gemini' ? '--include-directories' : '--add-dir',
+      '--add-dir',
       '<agent-home>'
     ],
     cwd: input.workspaceRoot,

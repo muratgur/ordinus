@@ -32,7 +32,7 @@ Schema changes must use Drizzle migrations under `app/resources/db/migrations`. 
 
 ## Runtime Boundary
 
-Codex, Claude, Gemini, and future providers will be integrated through provider-neutral main-process adapters. The current implementation only defines the safe contract and types; it does not run provider CLIs yet.
+Codex, Claude, and future providers will be integrated through provider-neutral main-process adapters. The current implementation only defines the safe contract and types; it does not run provider CLIs yet.
 
 Runtime rules:
 

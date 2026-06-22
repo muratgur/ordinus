@@ -1,6 +1,6 @@
 ---
 name: provider-runtime-adapter
-description: Design Ordinus provider runtime adapters for local AI CLIs. Use when working on Codex, Claude, Gemini, or future provider detection, auth status, run lifecycle, process management, cancellation, event parsing, output capture, or provider-neutral runtime interfaces.
+description: Design Ordinus provider runtime adapters for local AI CLIs. Use when working on Codex, Claude, or future provider detection, auth status, run lifecycle, process management, cancellation, event parsing, output capture, or provider-neutral runtime interfaces.
 ---
 
 # Provider Runtime Adapter
@@ -29,7 +29,7 @@ Do not implement all concepts until the product flow needs them.
 - Do not allow renderer to pass arbitrary shell commands.
 - Store run state and events durably only after the run model is intentionally designed.
 - Normalize provider behavior without erasing useful provider-specific diagnostics.
-- Treat Codex, Claude, and Gemini as peers. Do not let the first provider shape the whole architecture.
+- Treat Codex and Claude as peers. Do not let the first provider shape the whole architecture.
 - When provider state or events are shown in renderer UI, align user-visible statuses and event labels with the status vocabulary in `DESIGN.md`.
 
 ## Workflow

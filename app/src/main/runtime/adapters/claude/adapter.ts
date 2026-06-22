@@ -536,7 +536,7 @@ function buildClaudeSystemPrompt(input: RuntimeConversationTurnInput): string {
     '',
     // ADR-037: Claude enforces the outcome schema via the native StructuredOutput
     // tool (--json-schema), so it gets field guidance rather than the text-channel
-    // "return JSON only" shape dictation Codex/Gemini use — the latter makes Claude
+    // "return JSON only" shape dictation Codex uses — the latter makes Claude
     // answer in text and then call StructuredOutput empty, exhausting CLI retries.
     // ADR-049: chat guidance puts the whole answer in `summary` (no `content`).
     input.outcomeMode === 'chat'

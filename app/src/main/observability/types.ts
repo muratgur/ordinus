@@ -17,7 +17,7 @@ export type SanitizedInvocationSummary = {
 
 // ADR-037: token usage as the provider reported it. `semantics` declares how
 // the counters behave: Codex reports thread-cumulative values (the whole
-// resumed session so far), Claude and Gemini report per-invocation values.
+// resumed session so far), Claude reports per-invocation values.
 // The observability service derives the run's true cost (delta) from this.
 export type ProviderUsageReport = {
   semantics: 'cumulative' | 'invocation'

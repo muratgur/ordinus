@@ -3,7 +3,7 @@
 // Single mutating status line fed by the observability pipeline: while a turn
 // is in flight this hook turns ObservedRunSnapshot pushes into one calm
 // English sentence ("Reading agenda.md… · 12s"). Provider-agnostic with
-// graceful degradation — providers that emit no events (Gemini today) fall
+// graceful degradation — a provider that emits no events falls
 // back to the opening label + elapsed timer, and the quiet/stalled softening
 // still works because liveness is recomputed locally from lastActivityAt.
 //

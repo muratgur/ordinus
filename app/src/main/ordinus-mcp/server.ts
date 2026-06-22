@@ -1,7 +1,7 @@
 // ADR-029 §4 / M3 — Ordinus internal MCP server.
 //
 // One in-process HTTP MCP server that exposes the Ordinus tool registry to
-// any provider CLI configured to talk to us (Codex, Claude, Gemini — all three
+// any provider CLI configured to talk to us (Codex, Claude — both
 // use the same HTTP transport, only their config format differs; see
 // ../integrations/materialize.ts for the per-CLI wiring).
 //

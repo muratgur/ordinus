@@ -4,6 +4,11 @@
 
 Accepted
 
+Amended by ADR-056 (Remove Gemini Provider Support): the bundled Node still backs the
+remaining CLIs (`claude`, `codex`), but Gemini drops out of the set of CLIs it
+provisions. Google closed the Gemini CLI's individual-account auth on 2026-06-18. No
+change to the Node-on-PATH mechanism itself.
+
 Amends ADR-028 (First-Run Onboarding And Managed CLI Install). ADR-028 §1 assumed
 that "Ordinus reuses its bundled Electron Node runtime to `npm install` the selected
 CLI packages" and that, because "Electron already bundles a Node runtime", no further

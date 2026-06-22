@@ -13,6 +13,11 @@ onboarding flow and the data model (it was never read anywhere). Onboarding's Wo
 collects only the folder. This reinforces this ADR's existing rejection of "change the
 workspace anytime" — ADR-045 makes the folder read-only in Settings after onboarding.
 
+Amended by ADR-056 (Remove Gemini Provider Support): the onboarding "choose a CLI to
+install" stage no longer offers Gemini, and the managed-install package map drops
+`@google/gemini-cli`. Google closed the Gemini CLI's individual-account auth on
+2026-06-18. The onboarding flow and install machinery are otherwise unchanged.
+
 Amended by ADR-047 (Bundled Node runtime and install network resilience): this ADR's
 assumption that Electron's embedded Node alone is enough to `npm install` and run the CLIs
 proved incomplete in the field. `ELECTRON_RUN_AS_NODE` starts npm but does not give npm

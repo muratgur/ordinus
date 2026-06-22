@@ -27,7 +27,7 @@ export const SystemPathsSchema = z.object({
 // Declared up here (not next to its historical neighbors) so the install /
 // onboarding schemas below can reference it. Re-exported under the same name
 // so existing imports keep working.
-export const ProviderIdSchema = z.enum(['codex', 'claude', 'gemini'])
+export const ProviderIdSchema = z.enum(['codex', 'claude'])
 
 // ADR-047 §3a: classified cause of a managed-install failure, so onboarding can
 // tell the user what went wrong and what to do instead of one opaque exit code.
@@ -823,7 +823,6 @@ export const AgentExtraDirectoryErrorCodeSchema = z.enum([
   'empty',
   'not_absolute',
   'null_bytes',
-  'path_contains_comma',
   'not_found',
   'not_directory',
   'broken_symlink',
@@ -1001,7 +1000,7 @@ export const AgentSkillAssignInputSchema = z.object({
 })
 
 // ADR-040 §5: import. Candidates come from scanning local CLI skill folders
-// (~/.claude, ~/.codex, ~/.gemini, ~/.agents) or a user-picked folder; every
+// (~/.claude, ~/.codex, ~/.agents) or a user-picked folder; every
 // import passes a show-and-confirm preview before the library copy is made.
 export const LocalSkillCandidateSchema = z.object({
   sourcePath: z.string().min(1),
@@ -1976,8 +1975,8 @@ export const ObservedRunSnapshotSchema = z.object({
   elapsedMs: z.number().int().nonnegative(),
   idleMs: z.number().int().nonnegative().nullable(),
   // ADR-037: raw token counters as the provider reported them. Codex reports
-  // thread-cumulative values (the whole resumed session so far); Claude and
-  // Gemini report per-invocation values. The delta* fields are the run's true
+  // thread-cumulative values (the whole resumed session so far); Claude
+  // reports per-invocation values. The delta* fields are the run's true
   // cost in both cases — derived against the previous run on the same provider
   // session for cumulative reporters, equal to the raw values otherwise.
   inputTokens: z.number().int().nonnegative().nullable(),

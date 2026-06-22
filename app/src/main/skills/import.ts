@@ -1,5 +1,5 @@
 // ADR-040 §5: skill import. Two sources — a scan of the local CLI skill
-// folders (Claude/Codex/Gemini homes plus the shared ~/.agents) and a
+// folders (Claude/Codex homes plus the shared ~/.agents) and a
 // user-picked folder. Imports are copies into the library's `imported` root;
 // nothing is ever modified at the source. Every import goes through a
 // show-and-confirm preview (the SKILL.md body is agent instructions — the
@@ -38,7 +38,6 @@ const maxSkillBytes = 5_000_000
 const localScanRoots = [
   { path: join(homedir(), '.claude', 'skills'), label: 'Claude (~/.claude/skills)' },
   { path: join(homedir(), '.codex', 'skills'), label: 'Codex (~/.codex/skills)' },
-  { path: join(homedir(), '.gemini', 'skills'), label: 'Gemini (~/.gemini/skills)' },
   { path: join(homedir(), '.agents', 'skills'), label: 'Shared (~/.agents/skills)' }
 ]
 

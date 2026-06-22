@@ -258,8 +258,8 @@ function buildCodexExtraWritableRootsArgs(extraDirectories: string[]): string[] 
 // ADR-029 — Codex gates MCP tool calls behind an approval prompt routed to the
 // user (approval_policy default). In `codex exec` there is no interactive user,
 // so every MCP tool call resolves as "user cancelled MCP tool call" and fails
-// (observed: list_agents → status:failed). Gemini avoids this via per-server
-// `trust: true`; Codex's equivalent is to drop the approval prompt for the turn.
+// (observed: list_agents → status:failed). Codex's fix is to drop the approval
+// prompt for the turn (other CLIs achieve the same via per-server `trust: true`).
 //
 // We scope this to turns that inject our own loopback MCP server (Ordinus). It
 // is safe because:

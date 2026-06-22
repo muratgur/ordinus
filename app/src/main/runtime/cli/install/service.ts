@@ -54,11 +54,6 @@ const PROVIDER_PACKAGES: Record<ProviderId, ProviderPackage> = {
     packageName: '@openai/codex',
     command: 'codex',
     overrideEnvKey: 'CODEX_BIN'
-  },
-  gemini: {
-    packageName: '@google/gemini-cli',
-    command: 'gemini',
-    overrideEnvKey: 'GEMINI_BIN'
   }
 }
 

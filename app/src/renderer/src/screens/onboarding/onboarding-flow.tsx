@@ -20,7 +20,7 @@ import { Button } from '../../components/ui/button'
 import { notify } from '../../lib/notifications'
 import { cn } from '../../lib/utils'
 
-const INSTALLABLE_PROVIDERS: ProviderId[] = ['claude', 'codex', 'gemini']
+const INSTALLABLE_PROVIDERS: ProviderId[] = ['claude', 'codex']
 
 const PROVIDER_LINKS: Record<ProviderId, { signup: string; plans: string }> = {
   claude: {
@@ -30,10 +30,6 @@ const PROVIDER_LINKS: Record<ProviderId, { signup: string; plans: string }> = {
   codex: {
     signup: 'https://openai.com/',
     plans: 'https://openai.com/pricing'
-  },
-  gemini: {
-    signup: 'https://ai.google.dev/',
-    plans: 'https://ai.google.dev/pricing'
   }
 }
 
@@ -920,8 +916,6 @@ function providerPitch(providerId: ProviderId): string {
       return 'Anthropic — strong reasoning and code.'
     case 'codex':
       return 'OpenAI — quick coding partner.'
-    case 'gemini':
-      return 'Google — long context and search.'
   }
 }
 
@@ -931,8 +925,6 @@ function providerColorClass(providerId: ProviderId): string {
       return 'bg-amber-500'
     case 'codex':
       return 'bg-emerald-500'
-    case 'gemini':
-      return 'bg-sky-500'
   }
 }
 

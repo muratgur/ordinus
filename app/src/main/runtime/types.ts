@@ -1,4 +1,4 @@
-export const providerIds = ['codex', 'claude', 'gemini'] as const
+export const providerIds = ['codex', 'claude'] as const
 
 export type ProviderId = (typeof providerIds)[number]
 

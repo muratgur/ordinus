@@ -1,4 +1,4 @@
-// ADR-045 B5 — provider brand icon (Codex / Claude / Gemini). Thin wrapper over
+// ADR-045 B5 — provider brand icon (Codex / Claude). Thin wrapper over
 // BrandIcon: supplies the per-provider color + monogram. Drop an official SVG at
 // `./logos/<providerId>.svg` to replace the monogram.
 
@@ -8,8 +8,7 @@ type Brand = { color: string; mono: string }
 
 const BRAND: Record<string, Brand> = {
   codex: { color: '#0F0F0F', mono: '›_' },
-  claude: { color: '#D97757', mono: 'C' },
-  gemini: { color: '#4285F4', mono: 'G' }
+  claude: { color: '#D97757', mono: 'C' }
 }
 
 export function ProviderIcon({

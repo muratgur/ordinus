@@ -89,7 +89,7 @@ export const agentTurnOutcomeJsonSchema = {
 } as const
 
 // ADR-037 — Claude enforces this schema through a native forced StructuredOutput
-// TOOL call, not by constraining the text channel the way Codex/Gemini's
+// TOOL call, not by constraining the text channel the way Codex's
 // --output-schema does. Empirically, when that forced tool's required object is
 // heavy — every top-level field required, additionalProperties:false, and a
 // deeply nested all-required `questions` shape — Claude (opus-4-8) frequently
@@ -103,7 +103,7 @@ export const agentTurnOutcomeJsonSchema = {
 // guidance (buildClaudeOutcomeFieldGuidance) still tells the model to populate
 // content / artifactRefs / changedFiles / needs_input fields when relevant, and
 // AgentTurnOutcomeSchema re-validates the result, so nothing downstream loosens.
-// Codex/Gemini keep the strict schema above — they constrain the text channel
+// Codex keeps the strict schema above — it constrains the text channel
 // and do not exhibit the bail.
 export const claudeAgentTurnOutcomeJsonSchema = {
   type: 'object',
@@ -166,7 +166,7 @@ export const claudeAgentTurnOutcomeJsonSchema = {
 // Workboard-only, so `content` is REMOVED from the schema the model fills. The
 // model cannot split a chat answer — it is structurally impossible, not merely
 // discouraged. `summary` gets the generous chat ceiling. The provider divergence
-// (strict for Codex/Gemini, relaxed for Claude) is preserved by deriving each
+// (strict for Codex, relaxed for Claude) is preserved by deriving each
 // chat schema from its Workboard counterpart and dropping `content`.
 function omitContent<T extends { content?: unknown }>(properties: T): Omit<T, 'content'> {
   const rest: Record<string, unknown> = { ...properties }
@@ -403,7 +403,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // message behind a repeated prefix; a one-line pointer is enough.
 // Wording note: "given at the start of this session" is deliberately
 // channel-neutral. For Claude those rules live in the system prompt
-// (--append-system-prompt-file); for Codex and Gemini they were part of the
+// (--append-system-prompt-file); for Codex they were part of the
 // session's first user message. "First message" would point Claude at the
 // wrong place.
 export function buildResumeReminderInstructions(): string {
@@ -413,7 +413,7 @@ export function buildResumeReminderInstructions(): string {
 // ADR-037 — Claude enforces the outcome schema through a native StructuredOutput
 // TOOL call (--json-schema), a channel SEPARATE from the model's text output.
 // The text-channel instructions in buildConversationOutcomeInstructions (which
-// Codex/Gemini need, since their --output-schema constrains the text channel)
+// Codex needs, since its --output-schema constrains the text channel)
 // actively conflict on Claude: told to "return JSON only", the model writes the
 // answer as text, then calls StructuredOutput with an empty {} — failing the
 // schema and exhausting the CLI's 5 retries ("Failed to provide valid structured
@@ -468,7 +468,7 @@ Needs input (outcome = "needs_input"): use only when you cannot continue without
 - Set allowCustom to true unless custom answers would be unsafe.`
 }
 
-// ADR-049 — chat variant of the Codex/Gemini text-channel instructions. The JSON
+// ADR-049 — chat variant of the Codex text-channel instructions. The JSON
 // shape has no "content" field; "summary" carries the whole answer.
 export function buildChatConversationOutcomeInstructions(): string {
   return `Return JSON only. Do not wrap the JSON response in markdown fences, prose, or comments.

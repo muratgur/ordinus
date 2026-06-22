@@ -348,9 +348,8 @@ export function createOrdinusSessionService(deps: OrdinusSessionDeps): OrdinusSe
           providerId: conversation.providerId as RuntimeConversationTurnInput['providerId'],
           model: conversation.model,
           // sandbox: NOT 'read-only' — that value maps to "plan mode" for
-          // Claude and Gemini, which forbids ALL tool execution including
-          // MCP calls (we observed this empirically: Gemini received our
-          // tool catalog from MCP, then refused to invoke any of it). The
+          // Claude, which forbids ALL tool execution including
+          // MCP calls. The
           // sandbox enum doesn't have a "MCP yes, file edits no" value, so
           // we use 'workspace-write' and rely on:
           //   1. Ordinus's workingRoot being an isolated folder under

@@ -92,7 +92,7 @@ function App(): React.JSX.Element {
       // We intentionally do NOT call setup.getStatus() in this batch
       // because its main-side handler calls runtime.getProviderStatuses(),
       // which spawns CLI subprocesses (`--version` + `login status` for
-      // each of Codex/Claude/Gemini). That call is now cached in the
+      // each of Codex/Claude). That call is now cached in the
       // runtime layer with a boot pre-warm, but Phase 2 still streams it
       // in so the first paint doesn't depend on the cache being warm.
       const [appInfo, paths, dbStatus, onboardingStatus] = await Promise.all([

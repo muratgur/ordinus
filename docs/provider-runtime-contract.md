@@ -1,6 +1,6 @@
 # Provider Runtime Contract
 
-This contract defines the safety boundary for future Codex, Claude, Gemini, and similar local CLI providers. It does not implement provider execution yet.
+This contract defines the safety boundary for future Codex, Claude, and similar local CLI providers. It does not implement provider execution yet.
 
 ## Ownership
 

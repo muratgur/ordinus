@@ -77,8 +77,8 @@ const invalidSessionPatterns = [
 
 // ADR-053: a CLI can finish "successfully" yet hand back no usable answer — the
 // model spends its budget thinking and emits zero output tokens, or the output
-// stream is malformed. Each provider phrases this differently (Gemini's CLI:
-// "Invalid stream: ... empty response or malformed tool call"; our own adapters:
+// stream is malformed. Providers phrase this differently ("invalid stream" or
+// "malformed tool call" from a CLI; our own adapters:
 // "<provider> returned an empty conversation response"). These patterns let any
 // throw site classify a CLI-originated message as the empty-response flake.
 const emptyProviderResponsePatterns = [

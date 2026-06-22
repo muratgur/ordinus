@@ -65,53 +65,6 @@ export const providerModelOptions = {
       label: 'Claude Sonnet 4.6',
       description: 'Pinned Claude API model id for speed and intelligence.'
     }
-  ],
-  gemini: [
-    {
-      id: 'default',
-      label: 'Default',
-      description: 'Use the model selected by the Gemini CLI.'
-    },
-    {
-      id: 'auto',
-      label: 'Auto',
-      description: 'Gemini CLI alias that routes to the best available model for the task.'
-    },
-    {
-      id: 'pro',
-      label: 'Pro',
-      description: 'Gemini CLI alias for complex reasoning tasks.'
-    },
-    {
-      id: 'flash',
-      label: 'Flash',
-      description: 'Gemini CLI alias for fast, balanced work.'
-    },
-    {
-      id: 'flash-lite',
-      label: 'Flash Lite',
-      description: 'Gemini CLI alias for the fastest simple-task model.'
-    },
-    {
-      id: 'gemini-3.1-pro-preview',
-      label: 'Gemini 3.1 Pro Preview',
-      description: 'Specific preview model when the local CLI and account support it.'
-    },
-    {
-      id: 'gemini-3-flash-preview',
-      label: 'Gemini 3 Flash Preview',
-      description: 'Specific fast preview model when the local CLI and account support it.'
-    },
-    {
-      id: 'gemini-2.5-pro',
-      label: 'Gemini 2.5 Pro',
-      description: 'Deeper reasoning model when the local CLI supports it.'
-    },
-    {
-      id: 'gemini-2.5-flash',
-      label: 'Gemini 2.5 Flash',
-      description: 'Lower-latency Gemini model when the local CLI supports it.'
-    }
   ]
 } satisfies Record<ProviderId, ProviderModelOption[]>
 
