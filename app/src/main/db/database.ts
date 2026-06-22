@@ -37,9 +37,11 @@ import {
   ConversationCancelTurnInputSchema,
   ConversationAnswerInputRequestInputSchema,
   ConversationCancelInputRequestInputSchema,
-  ConversationCreateDirectInputSchema,
+  ConversationCreateRoomInputSchema,
   ConversationCreateManualInputSchema,
   ConversationGetOrCreateRoomInputSchema,
+  ConversationListAgentRoomsInputSchema,
+  ConversationRoomSummarySchema,
   ConversationDeleteInputSchema,
   ConversationDeleteResultSchema,
   ConversationDetailSchema,
@@ -114,7 +116,10 @@ import {
   type DepartmentReorderInput,
   type AgentTurnOutcome,
   type ConversationCreateManualInput,
+  type ConversationCreateRoomInput,
   type ConversationGetOrCreateRoomInput,
+  type ConversationListAgentRoomsInput,
+  type ConversationRoomSummary,
   type ConversationDeleteInput,
   type ConversationDeleteResult,
   type ConversationDetail,
@@ -4161,10 +4166,118 @@ export class OrdinusDatabase {
       })
   }
 
+  // ADR-057: live activity facts for a single room, shared by the per-conversation
+  // list and the per-agent rail aggregate.
+  // ADR-057: batched room-activity lookups for the list methods below. Each is
+  // one query for the whole id set instead of two-per-room — avoids the N+1 the
+  // old per-room helper caused. Latest turn = highest sequence per conversation
+  // (sequence is monotonic), resolved in memory from one ordered query.
+  private latestTurnByConversation(
+    conversationIds: string[]
+  ): Map<string, { preview: string; speaker: string; updatedAt: string; status: string }> {
+    const result = new Map<
+      string,
+      { preview: string; speaker: string; updatedAt: string; status: string }
+    >()
+    if (conversationIds.length === 0) return result
+    const rows = this.db
+      .select({
+        conversationId: conversationTurns.conversationId,
+        preview: conversationTurns.preview,
+        speaker: conversationTurns.speaker,
+        updatedAt: conversationTurns.updatedAt,
+        status: conversationTurns.status
+      })
+      .from(conversationTurns)
+      .where(inArray(conversationTurns.conversationId, conversationIds))
+      .orderBy(
+        asc(conversationTurns.conversationId),
+        desc(conversationTurns.sequence),
+        desc(conversationTurns.createdAt)
+      )
+      .all()
+    // Grouped by conversation, newest turn first — keep the first seen per id.
+    for (const row of rows) {
+      if (!result.has(row.conversationId)) {
+        result.set(row.conversationId, {
+          preview: row.preview,
+          speaker: row.speaker,
+          updatedAt: row.updatedAt,
+          status: row.status
+        })
+      }
+    }
+    return result
+  }
+
+  private pendingConversationIds(conversationIds: string[]): Set<string> {
+    if (conversationIds.length === 0) return new Set()
+    const rows = this.db
+      .select({ conversationId: conversationInputRequests.conversationId })
+      .from(conversationInputRequests)
+      .where(
+        and(
+          inArray(conversationInputRequests.conversationId, conversationIds),
+          eq(conversationInputRequests.status, 'pending')
+        )
+      )
+      .all()
+    return new Set(rows.map((row) => row.conversationId))
+  }
+
+  // ADR-057: every 1:1 room for one agent, newest activity first — backs the
+  // in-tab conversation list. Falls back to the conversation's own updatedAt when
+  // a room has no turns yet (it never will under draft-until-send, but be safe).
+  listAgentRooms(input: ConversationListAgentRoomsInput): ConversationRoomSummary[] {
+    const parsed = ConversationListAgentRoomsInputSchema.parse(input)
+    const rooms = this.db
+      .select({
+        id: conversations.id,
+        title: conversations.title,
+        createdAt: conversations.createdAt,
+        updatedAt: conversations.updatedAt
+      })
+      .from(conversations)
+      .innerJoin(
+        conversationParticipants,
+        eq(conversationParticipants.conversationId, conversations.id)
+      )
+      .where(
+        and(eq(conversations.kind, 'room'), eq(conversationParticipants.agentId, parsed.agentId))
+      )
+      .all()
+
+    const ids = rooms.map((room) => room.id)
+    const latestTurn = this.latestTurnByConversation(ids)
+    const pending = this.pendingConversationIds(ids)
+
+    return rooms
+      .map((room) => {
+        const turn = latestTurn.get(room.id)
+        return ConversationRoomSummarySchema.parse({
+          conversationId: room.id,
+          title: room.title,
+          createdAt: room.createdAt,
+          updatedAt: room.updatedAt,
+          lastPreview: turn?.preview ?? '',
+          lastSpeaker: turn?.speaker ?? null,
+          lastActivityAt: turn?.updatedAt ?? null,
+          lastTurnStatus: turn?.status ?? null,
+          hasPendingInputRequest: pending.has(room.id)
+        })
+      })
+      .sort((a, b) =>
+        (b.lastActivityAt ?? b.updatedAt).localeCompare(a.lastActivityAt ?? a.updatedAt)
+      )
+  }
+
+  // ADR-057: one aggregate row per agent for the agents rail. Preview/timestamp
+  // come from the agent's most-recently-active room; pending = OR across rooms.
   listAgentRoomSummaries(): AgentRoomSummary[] {
     const rooms = this.db
       .select({
         conversationId: conversations.id,
+        updatedAt: conversations.updatedAt,
         agentId: conversationParticipants.agentId
       })
       .from(conversations)
@@ -4175,32 +4288,38 @@ export class OrdinusDatabase {
       .where(eq(conversations.kind, 'room'))
       .all()
 
-    return rooms.map((room) => {
-      const latestTurn = this.db
-        .select()
-        .from(conversationTurns)
-        .where(eq(conversationTurns.conversationId, room.conversationId))
-        .orderBy(desc(conversationTurns.sequence), desc(conversationTurns.createdAt))
-        .get()
-      const pendingInputRequest = this.db
-        .select({ id: conversationInputRequests.id })
-        .from(conversationInputRequests)
-        .where(
-          and(
-            eq(conversationInputRequests.conversationId, room.conversationId),
-            eq(conversationInputRequests.status, 'pending')
-          )
-        )
-        .get()
+    const ids = rooms.map((room) => room.conversationId)
+    const latestTurn = this.latestTurnByConversation(ids)
+    const pendingIds = this.pendingConversationIds(ids)
 
+    // Pick the most-recently-active room per agent for the preview; OR the
+    // pending flag across all of the agent's rooms. The recency comparison uses
+    // the SAME fallback (latest-turn time, else the room's updatedAt) on both
+    // sides, so an empty room can't unfairly beat one with real activity.
+    const winnerByAgent = new Map<string, { conversationId: string; sortKey: string }>()
+    const pendingByAgent = new Map<string, boolean>()
+    for (const room of rooms) {
+      const sortKey = latestTurn.get(room.conversationId)?.updatedAt ?? room.updatedAt
+      pendingByAgent.set(
+        room.agentId,
+        (pendingByAgent.get(room.agentId) ?? false) || pendingIds.has(room.conversationId)
+      )
+      const current = winnerByAgent.get(room.agentId)
+      if (!current || sortKey.localeCompare(current.sortKey) > 0) {
+        winnerByAgent.set(room.agentId, { conversationId: room.conversationId, sortKey })
+      }
+    }
+
+    return Array.from(winnerByAgent.entries()).map(([agentId, win]) => {
+      const turn = latestTurn.get(win.conversationId)
       return AgentRoomSummarySchema.parse({
-        agentId: room.agentId,
-        conversationId: room.conversationId,
-        lastPreview: latestTurn?.preview ?? '',
-        lastSpeaker: latestTurn?.speaker ?? null,
-        lastActivityAt: latestTurn?.updatedAt ?? null,
-        lastTurnStatus: latestTurn?.status ?? null,
-        hasPendingInputRequest: Boolean(pendingInputRequest)
+        agentId,
+        conversationId: win.conversationId,
+        lastPreview: turn?.preview ?? '',
+        lastSpeaker: turn?.speaker ?? null,
+        lastActivityAt: turn?.updatedAt ?? null,
+        lastTurnStatus: turn?.status ?? null,
+        hasPendingInputRequest: pendingByAgent.get(agentId) ?? false
       })
     })
   }
@@ -4249,8 +4368,12 @@ export class OrdinusDatabase {
     })
   }
 
-  createDirectConversation(input: { agentId: string; title?: string }): ConversationDetail {
-    const parsed = ConversationCreateDirectInputSchema.parse(input)
+  // ADR-057: explicitly create a new 1:1 room for an agent. Unlike the legacy
+  // (now-removed) direct-conversation path, this sets `kind='room'` so the room
+  // joins the agent's in-tab conversation list. `title` is derived from the first
+  // message by the caller; the working folder is named from it (ADR-031).
+  createAgentRoom(input: ConversationCreateRoomInput): ConversationDetail {
+    const parsed = ConversationCreateRoomInputSchema.parse(input)
     const agent = this.requireActiveAgent(parsed.agentId)
     const workspace = this.getWorkspaceConfig()
     if (!workspace) {
@@ -4268,42 +4391,45 @@ export class OrdinusDatabase {
     )
     ensureWorkspaceRelativeDirectory(workspace.workspaceRoot, workingRoot)
 
-    this.db
-      .insert(conversations)
-      .values({
-        id: conversationId,
-        title,
-        workingRoot,
-        mode: 'direct',
-        status: 'active',
-        summary: '',
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
-    this.db
-      .insert(conversationParticipants)
-      .values({
-        id: participantId,
-        conversationId,
-        agentId: agent.id,
-        providerId: agent.providerId,
-        model: agent.model,
-        providerSessionRef: null,
-        status: 'ready',
-        createdAt: now,
-        updatedAt: now
-      })
-      .run()
+    this.db.transaction((tx) => {
+      tx.insert(conversations)
+        .values({
+          id: conversationId,
+          title,
+          workingRoot,
+          mode: 'direct',
+          kind: 'room',
+          status: 'active',
+          summary: '',
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+      tx.insert(conversationParticipants)
+        .values({
+          id: participantId,
+          conversationId,
+          agentId: agent.id,
+          providerId: agent.providerId,
+          model: agent.model,
+          providerSessionRef: null,
+          status: 'ready',
+          createdAt: now,
+          updatedAt: now
+        })
+        .run()
+    })
 
     return this.getConversation({ conversationId })
   }
 
   /**
-   * Returns the agent's canonical 1:1 home room, creating it on first access
-   * (ADR-027). There is at most one `kind='room'` conversation per agent. Unlike
-   * direct/manual conversations, a room is openable for a disabled agent so the
-   * user can still review the relationship; sending turns is gated elsewhere.
+   * Server-only landing-room resolver for the inbound/Telegram path (ADR-057).
+   * The UI no longer auto-creates rooms; an agent can now own many `kind='room'`
+   * conversations. An inbound message lands in the agent's MOST-RECENTLY-ACTIVE
+   * room (so a phone reply continues the latest thread), creating one on first
+   * contact. Rooms are resolvable for a disabled agent so the relationship stays
+   * reviewable; sending turns is gated elsewhere.
    */
   getOrCreateAgentRoom(input: ConversationGetOrCreateRoomInput): ConversationDetail {
     const parsed = ConversationGetOrCreateRoomInputSchema.parse(input)
@@ -4317,6 +4443,7 @@ export class OrdinusDatabase {
         eq(conversationParticipants.conversationId, conversations.id)
       )
       .where(and(eq(conversations.kind, 'room'), eq(conversationParticipants.agentId, agent.id)))
+      .orderBy(desc(conversations.updatedAt))
       .get()
 
     if (existing) {

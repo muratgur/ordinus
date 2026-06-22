@@ -886,7 +886,8 @@ export const DepartmentNameSchema = z
 // repo-layer duplicate check and the renderer's pre-submit validation so they
 // can never diverge. Collapses internal whitespace, like agent-name matching.
 export function normalizeDepartmentName(name: string): string {
-  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+  // toLocaleLowerCase to match normalizeAgentName — correct for Turkish "İ/I/ı/i".
+  return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 }
 
 export const DepartmentSchema = z.object({
@@ -1362,6 +1363,9 @@ export const ConversationListItemSchema = ConversationSchema.extend({
   lastPreview: z.string()
 })
 
+// Agents-rail summary: one row per agent. ADR-057 makes this an AGGREGATE across
+// the agent's rooms (preview/timestamp from the most-recently-active room; pending
+// = OR). The shape is unchanged so existing rail code keeps working.
 export const AgentRoomSummarySchema = z.object({
   agentId: z.string().min(1),
   conversationId: z.string().min(1),
@@ -1370,6 +1374,23 @@ export const AgentRoomSummarySchema = z.object({
   lastActivityAt: z.string().nullable(),
   lastTurnStatus: ConversationTurnStatusSchema.nullable(),
   hasPendingInputRequest: z.boolean()
+})
+
+// ADR-057: one row per 1:1 conversation in an agent's in-tab conversation list.
+export const ConversationRoomSummarySchema = z.object({
+  conversationId: z.string().min(1),
+  title: z.string(),
+  lastPreview: z.string(),
+  lastSpeaker: ConversationTurnSpeakerSchema.nullable(),
+  lastActivityAt: z.string().nullable(),
+  lastTurnStatus: ConversationTurnStatusSchema.nullable(),
+  hasPendingInputRequest: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const ConversationListAgentRoomsInputSchema = z.object({
+  agentId: z.string().min(1)
 })
 
 export const ConversationDetailSchema = ConversationSchema.extend({
@@ -1382,11 +1403,16 @@ export const ConversationGetInputSchema = z.object({
   conversationId: z.string().min(1)
 })
 
-export const ConversationCreateDirectInputSchema = z.object({
+// ADR-057: explicit creation of a new 1:1 room for an agent. `title` is derived
+// from the first message by the caller (createConversationTitleFromMessage); the
+// row + working folder materialize only on first send (no UI auto-create).
+export const ConversationCreateRoomInputSchema = z.object({
   agentId: z.string().min(1),
   title: z.string().trim().min(1).max(120).optional()
 })
 
+// Server-only: the inbound/Telegram path resolves an agent's landing room
+// (most-recently-active, created on demand). Not exposed to the renderer.
 export const ConversationGetOrCreateRoomInputSchema = z.object({
   agentId: z.string().min(1)
 })
@@ -2422,10 +2448,12 @@ export type ConversationInputRequest = z.infer<typeof ConversationInputRequestSc
 export type Conversation = z.infer<typeof ConversationSchema>
 export type ConversationListItem = z.infer<typeof ConversationListItemSchema>
 export type AgentRoomSummary = z.infer<typeof AgentRoomSummarySchema>
+export type ConversationRoomSummary = z.infer<typeof ConversationRoomSummarySchema>
+export type ConversationListAgentRoomsInput = z.infer<typeof ConversationListAgentRoomsInputSchema>
 export type ConversationDetail = z.infer<typeof ConversationDetailSchema>
 export type ConversationGetInput = z.infer<typeof ConversationGetInputSchema>
 export type ConversationKind = z.infer<typeof ConversationKindSchema>
-export type ConversationCreateDirectInput = z.infer<typeof ConversationCreateDirectInputSchema>
+export type ConversationCreateRoomInput = z.infer<typeof ConversationCreateRoomInputSchema>
 export type ConversationGetOrCreateRoomInput = z.infer<
   typeof ConversationGetOrCreateRoomInputSchema
 >

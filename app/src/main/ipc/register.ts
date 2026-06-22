@@ -73,9 +73,9 @@ import {
   WorkboardSaveRunResultResultSchema,
   ConversationAnswerInputRequestInputSchema,
   ConversationCancelInputRequestInputSchema,
-  ConversationCreateDirectInputSchema,
+  ConversationCreateRoomInputSchema,
   ConversationCreateManualInputSchema,
-  ConversationGetOrCreateRoomInputSchema,
+  ConversationListAgentRoomsInputSchema,
   ConversationDeleteInputSchema,
   ConversationDeletePreviewInputSchema,
   ConversationDeletePreviewSchema,
@@ -809,21 +809,21 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.conversationsListAgentRoomSummaries, () =>
     database.listAgentRoomSummaries()
   )
+  ipcMain.handle(ipcChannels.conversationsListAgentRooms, (_event, payload) => {
+    const input = ConversationListAgentRoomsInputSchema.parse(payload)
+    return database.listAgentRooms(input)
+  })
   ipcMain.handle(ipcChannels.conversationsGet, (_event, payload) => {
     const input = ConversationGetInputSchema.parse(payload)
     return database.getConversation(input)
   })
-  ipcMain.handle(ipcChannels.conversationsCreateDirect, (_event, payload) => {
-    const input = ConversationCreateDirectInputSchema.parse(payload)
-    return database.createDirectConversation(input)
+  ipcMain.handle(ipcChannels.conversationsCreateRoom, (_event, payload) => {
+    const input = ConversationCreateRoomInputSchema.parse(payload)
+    return database.createAgentRoom(input)
   })
   ipcMain.handle(ipcChannels.conversationsCreateManual, (_event, payload) => {
     const input = ConversationCreateManualInputSchema.parse(payload)
     return database.createManualConversation(input)
-  })
-  ipcMain.handle(ipcChannels.conversationsGetOrCreateRoom, (_event, payload) => {
-    const input = ConversationGetOrCreateRoomInputSchema.parse(payload)
-    return database.getOrCreateAgentRoom(input)
   })
   ipcMain.handle(ipcChannels.conversationsUpdateTitle, (_event, payload) => {
     const input = ConversationUpdateTitleInputSchema.parse(payload)

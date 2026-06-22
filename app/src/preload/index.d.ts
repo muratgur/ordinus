@@ -69,9 +69,10 @@ import type {
   ConversationCancelTurnInput,
   ConversationAnswerInputRequestInput,
   ConversationCancelInputRequestInput,
-  ConversationCreateDirectInput,
+  ConversationCreateRoomInput,
   ConversationCreateManualInput,
-  ConversationGetOrCreateRoomInput,
+  ConversationListAgentRoomsInput,
+  ConversationRoomSummary,
   ConversationDeleteInput,
   ConversationDeletePreview,
   ConversationDeletePreviewInput,
@@ -264,10 +265,10 @@ export type OrdinusApi = {
     list: () => Promise<ConversationListItem[]>
     onChanged: (callback: (payload: { conversationId: string }) => void) => () => void
     listAgentRoomSummaries: () => Promise<AgentRoomSummary[]>
+    listAgentRooms: (input: ConversationListAgentRoomsInput) => Promise<ConversationRoomSummary[]>
     get: (input: ConversationGetInput) => Promise<ConversationDetail>
-    createDirect: (input: ConversationCreateDirectInput) => Promise<ConversationDetail>
+    createRoom: (input: ConversationCreateRoomInput) => Promise<ConversationDetail>
     createManual: (input: ConversationCreateManualInput) => Promise<ConversationDetail>
-    getOrCreateRoom: (input: ConversationGetOrCreateRoomInput) => Promise<ConversationDetail>
     updateTitle: (input: ConversationUpdateTitleInput) => Promise<ConversationDetail>
     updateRoutingMode: (input: ConversationUpdateRoutingModeInput) => Promise<ConversationDetail>
     sendTurn: (input: ConversationSendTurnInput) => Promise<ConversationDetail>

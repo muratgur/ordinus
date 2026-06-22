@@ -63,7 +63,7 @@ import { ScreenIntroPopup } from '@renderer/components/screen-intro'
 import { useScreenIntro } from '@renderer/hooks/use-screen-intro'
 import { AgentAvatar } from '@renderer/components/agent-avatar'
 import { AgentAvatarPicker } from '@renderer/components/agent-avatar-picker'
-import { AgentRoom } from '@renderer/components/agent-room'
+import { AgentChat } from '@renderer/components/agent-chat'
 import { packAgentAvatar, parseAgentAvatar } from '@renderer/components/mascots'
 import type {
   Agent,
@@ -1590,7 +1590,7 @@ function AgentTabContent({
 }): React.JSX.Element {
   if (activeTab === 'chat') {
     return (
-      <AgentRoom
+      <AgentChat
         key={agent.id}
         agent={agent}
         onRoomChanged={onRoomChanged}

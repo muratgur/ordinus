@@ -7,6 +7,7 @@ import type {
   ConversationTurn,
   InteractionAnswer
 } from '@shared/contracts'
+import { createConversationTitleFromMessage } from '@shared/conversation-title'
 import { useLiveTurnActivity } from '../hooks/use-live-turn-activity'
 import { useRunInspector } from '../hooks/use-run-inspector'
 import { cn } from '../lib/utils'
@@ -34,11 +35,20 @@ import { Button } from './ui/button'
  */
 export function AgentRoom({
   agent,
+  conversationId: selectedConversationId,
+  onConversationCreated,
   onRoomChanged,
   composerSeed,
   onComposerSeedConsumed
 }: {
   agent: Agent
+  /**
+   * ADR-057: the room to render. `null` is the draft state — a "New chat" with
+   * no DB row yet; the first send materializes the conversation + folder.
+   */
+  conversationId: string | null
+  /** Fired once a draft's first send creates the room, with the new detail. */
+  onConversationCreated?: (detail: ConversationDetail) => void
   onRoomChanged?: () => void
   /** ADR-040: prefill handed over by other tabs (skill trial), consumed once. */
   composerSeed?: string
@@ -76,22 +86,36 @@ export function AgentRoom({
     ? detail.turns.map((turn) => `${turn.id}:${turn.status}:${turn.content.length}`).join('|')
     : ''
 
-  // Open (or lazily create) this agent's canonical room when the agent changes.
+  // ADR-057: load the selected room, or enter draft mode when none is selected.
+  // No auto-create — a `null` conversationId shows the empty state + composer and
+  // the first send creates the row (see handleSend).
   useEffect(() => {
     let cancelled = false
+
+    // Skip the refetch when the prop catches up to a room we already hold (e.g.
+    // right after a draft's first send promotes null → the new id locally).
+    if (selectedConversationId && selectedConversationId === detail?.id) {
+      return undefined
+    }
 
     queueMicrotask(() => {
       if (cancelled) {
         return
       }
-      setLoading(true)
       setError('')
       setDetail(null)
       setMessage('')
       setPending(null)
       followRef.current = true
+
+      if (!selectedConversationId) {
+        setLoading(false)
+        return
+      }
+
+      setLoading(true)
       window.ordinus.conversations
-        .getOrCreateRoom({ agentId: agent.id })
+        .get({ conversationId: selectedConversationId })
         .then((next) => {
           if (cancelled) return
           setDetail(next)
@@ -107,7 +131,9 @@ export function AgentRoom({
     return () => {
       cancelled = true
     }
-  }, [agent.id, onRoomChanged])
+    // detail?.id intentionally omitted: only the selected room drives reloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConversationId, onRoomChanged])
 
   // ADR-040: consume a composer seed handed over by another tab (e.g. the
   // skill trial). One-shot — consumed immediately so a tab roundtrip does not
@@ -199,7 +225,9 @@ export function AgentRoom({
   // 4a (transcript refactor): a pending question no longer locks the composer —
   // the panel above it is the answer path, but a plain message stays possible,
   // mirroring Home.
-  const composerBlocked = !detail || Boolean(runningTurn) || sending || !message.trim()
+  // Draft mode (detail === null) still allows sending — that send creates the
+  // room. Block only while a real room is loading, a turn is running, or empty.
+  const composerBlocked = loading || Boolean(runningTurn) || sending || !message.trim()
 
   // ADR-034 — live activity line for the running turn. Agent conversation
   // turns are observed (startConversationTurn), so snapshots arrive decorated
@@ -217,7 +245,7 @@ export function AgentRoom({
   const inspector = useRunInspector(conversationId || null)
 
   async function handleSend(): Promise<void> {
-    if (composerBlocked || !detail) {
+    if (composerBlocked) {
       return
     }
     const text = message
@@ -227,8 +255,20 @@ export function AgentRoom({
       setError('')
       setPending(text)
       setMessage('')
+      // ADR-057: draft → create the room (title derived from this first message)
+      // before sending. An existing room sends straight through.
+      let targetConversationId = detail?.id
+      if (!targetConversationId) {
+        const created = await window.ordinus.conversations.createRoom({
+          agentId: agent.id,
+          title: createConversationTitleFromMessage(text)
+        })
+        targetConversationId = created.id
+        setDetail(created)
+        onConversationCreated?.(created)
+      }
       const next = await window.ordinus.conversations.sendTurn({
-        conversationId: detail.id,
+        conversationId: targetConversationId,
         message: text
       })
       setPending(null)
@@ -324,11 +364,13 @@ export function AgentRoom({
     )
   }
 
-  if (!detail) {
-    return <RoomCenter>{error || 'This room is unavailable.'}</RoomCenter>
+  // A real room that failed to load shows an error card. Draft mode (no selected
+  // room, no error) falls through to render the empty state + composer.
+  if (!detail && error && selectedConversationId) {
+    return <RoomCenter>{error}</RoomCenter>
   }
 
-  const isEmpty = detail.turns.length === 0 && !pending
+  const isEmpty = (detail?.turns.length ?? 0) === 0 && !pending
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -340,7 +382,7 @@ export function AgentRoom({
         <div className="mx-auto flex max-w-3xl flex-col gap-3">
           {isEmpty ? <RoomEmptyState agent={agent} /> : null}
 
-          {detail.turns.map((turn) => (
+          {(detail?.turns ?? []).map((turn) => (
             // Polish pass: turns settle in with a short fade-up on mount.
             <div
               key={turn.id}

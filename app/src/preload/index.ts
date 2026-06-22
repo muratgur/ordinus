@@ -71,9 +71,10 @@ import type {
   ConversationCancelTurnInput,
   ConversationAnswerInputRequestInput,
   ConversationCancelInputRequestInput,
-  ConversationCreateDirectInput,
+  ConversationCreateRoomInput,
   ConversationCreateManualInput,
-  ConversationGetOrCreateRoomInput,
+  ConversationListAgentRoomsInput,
+  ConversationRoomSummary,
   ConversationDeleteInput,
   ConversationDeletePreview,
   ConversationDeletePreviewInput,
@@ -373,14 +374,16 @@ const ordinus = {
     },
     listAgentRoomSummaries: async (): Promise<AgentRoomSummary[]> =>
       ipcRenderer.invoke(ipcChannels.conversationsListAgentRoomSummaries),
+    listAgentRooms: async (
+      input: ConversationListAgentRoomsInput
+    ): Promise<ConversationRoomSummary[]> =>
+      ipcRenderer.invoke(ipcChannels.conversationsListAgentRooms, input),
     get: async (input: ConversationGetInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsGet, input),
-    createDirect: async (input: ConversationCreateDirectInput): Promise<ConversationDetail> =>
-      ipcRenderer.invoke(ipcChannels.conversationsCreateDirect, input),
+    createRoom: async (input: ConversationCreateRoomInput): Promise<ConversationDetail> =>
+      ipcRenderer.invoke(ipcChannels.conversationsCreateRoom, input),
     createManual: async (input: ConversationCreateManualInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsCreateManual, input),
-    getOrCreateRoom: async (input: ConversationGetOrCreateRoomInput): Promise<ConversationDetail> =>
-      ipcRenderer.invoke(ipcChannels.conversationsGetOrCreateRoom, input),
     updateTitle: async (input: ConversationUpdateTitleInput): Promise<ConversationDetail> =>
       ipcRenderer.invoke(ipcChannels.conversationsUpdateTitle, input),
     updateRoutingMode: async (
