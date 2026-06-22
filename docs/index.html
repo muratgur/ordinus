@@ -29,16 +29,21 @@
 <body>
   <main class="stage">
     <header class="topbar">
-      <span class="wordmark">Ordinus</span>
-      <a class="ghost-link" href="https://github.com/muratgur/ordinus" target="_blank" rel="noopener">GitHub ★</a>
+      <a class="wordmark" href="index.html">Ordinus</a>
+      <nav class="topnav-text">
+        <a href="how-you-use-it.html">How you use it</a>
+        <span class="topnav-div" aria-hidden="true"></span>
+        <a href="https://github.com/muratgur/ordinus" target="_blank" rel="noopener">GitHub</a>
+      </nav>
     </header>
 
     <section class="hero">
       <div class="hero-copy">
+        <p class="hero-eyebrow">You pay for the smartest AI in the world.<br />You still use it like a chatbot.</p>
         <h1>Not an AI.<br /><span class="ink-underline">A team.</span></h1>
         <p class="sub">
-          Ordinus turns the AIs you already pay for — Claude and Codex —
-          into a team of agents that work together.
+          Ordinus turns Claude and Codex into a team of agents with roles —
+          that talk things through, reach into your tools, and get the work done.
         </p>
         <p class="micro-badge">
           <span class="dot" aria-hidden="true"></span>
@@ -46,13 +51,12 @@
         </p>
 
         <div class="cta-row">
-          <a class="btn btn-primary" id="cta-download"
+          <a class="btn btn-primary cta-download js-download" id="cta-download" data-os-label
              href="https://github.com/muratgur/ordinus/releases/latest"
              target="_blank" rel="noopener">Download</a>
-          <a class="btn btn-secondary" id="cta-star"
-             href="https://github.com/muratgur/ordinus"
-             target="_blank" rel="noopener">Star on GitHub</a>
+          <button class="btn btn-primary send-to-computer" type="button">📤 Send to my computer</button>
         </div>
+        <p class="send-hint">Ordinus runs on your Mac or PC.</p>
       </div>
 
       <div class="hero-stage">
@@ -82,31 +86,211 @@
       </div>
     </section>
 
-    <a class="scroll-hint" href="#how" aria-label="How it works">⌄</a>
+    <a class="scroll-hint" href="#ch-conversations" aria-label="How it works">⌄</a>
   </main>
 
-  <!-- Minimal closing strip — load-bearing facts for anyone who scrolls -->
-  <section class="tail" id="how">
-    <div class="tail-inner">
-      <div class="shots-lead">
-        <h2>Your AI team, right on your desktop</h2>
-        <p>Ordinus turns the AI subscriptions you already pay for — Claude and Codex — into a team of agents that research, build, and review together, <span class="ink-underline">like real colleagues</span>. Hand them a job, wire a repeatable flow, put it on a schedule, or just talk a decision through. No terminal, no setup — and nothing ever leaves <span class="keep-box">your machine</span>.</p>
+  <!-- ============ THE NOVEL: one chapter per capability, rising autonomy ============ -->
+
+  <!-- 01 · Conversations — a roomful of views, not one voice -->
+  <section class="chapter" id="ch-conversations" data-chapter="conversations">
+    <div class="chapter-inner">
+      <div class="chapter-copy">
+        <p class="chapter-num">01 · Conversations</p>
+        <h2 class="chapter-head">Your personal board of directors.</h2>
+        <p class="chapter-body">
+          Put a real decision on the table — raise or bootstrap? ship it or wait? —
+          and let a few sharp, different minds argue it out. They push on each other,
+          change their minds, and hand you back an answer you can actually trust.
+        </p>
+        <p class="chapter-curio">How many voices do you want in the room?</p>
       </div>
 
-      <div class="shots" id="shots">
-        <div class="shot-frame">
-          <img class="shot-img" id="shot-img" alt="Ordinus app screenshot" />
-          <button class="shot-play" id="shot-play" aria-label="Pause autoplay">⏸</button>
-          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light or dark theme">☾ Dark</button>
-          <div class="shot-caption">
-            <h3 class="shots-title" id="shots-title"></h3>
-            <p class="shots-text" id="shots-text"></p>
+      <div class="chapter-stage">
+        <div class="doodle-frame">
+          <div class="frame-bar" aria-hidden="true">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-title">Ordinus · Conversations</span>
           </div>
-          <button class="shot-nav prev" id="shot-prev" aria-label="Previous screenshot">‹</button>
-          <button class="shot-nav next" id="shot-next" aria-label="Next screenshot">›</button>
+          <div class="frame-body" title="Replay" style="--shot-ratio: 2880 / 1740">
+            <svg class="chapter-scene" viewBox="0 0 960 580" role="img"
+                 aria-label="A sketch of the Ordinus conversation screen, then the real app"></svg>
+            <div class="result-card chapter-result" aria-hidden="true">
+              <div class="result-title"></div>
+              <ul class="result-list"></ul>
+            </div>
+            <img class="frame-shot" src="landing/shots/Conversations.png"
+                 alt="The Ordinus app showing several agents weighing in on one decision" loading="lazy" />
+          </div>
         </div>
-        <div class="shot-dots" id="shot-dots"></div>
+        <p class="frame-hint">Sketch → the real thing. Click to replay.</p>
       </div>
+    </div>
+  </section>
+
+  <!-- 02 · Workboard — hand over a whole job, the team splits it up -->
+  <section class="chapter flip" id="ch-workboard" data-chapter="workboard">
+    <div class="chapter-inner">
+      <div class="chapter-copy">
+        <p class="chapter-num">02 · Workboard</p>
+        <h2 class="chapter-head">Brief them once. Get the whole thing back.</h2>
+        <p class="chapter-body">
+          Hand over a whole job — <em>“research my competitors and write a positioning brief”</em> —
+          and the team breaks it into tasks, picks them up, and moves them from
+          Waiting to Done while you watch.
+        </p>
+        <p class="chapter-curio">What's the biggest thing you'd hand off?</p>
+      </div>
+      <div class="chapter-stage">
+        <div class="doodle-frame">
+          <div class="frame-bar" aria-hidden="true">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-title">Ordinus · Workboard</span>
+          </div>
+          <div class="frame-body" title="Replay" style="--shot-ratio: 2880 / 1740">
+            <svg class="chapter-scene" viewBox="0 0 960 580" role="img"
+                 aria-label="A sketch of the Ordinus workboard, then the real app"></svg>
+            <div class="result-card chapter-result" aria-hidden="true"><div class="result-title"></div><ul class="result-list"></ul></div>
+            <img class="frame-shot" src="landing/shots/Workboard.png"
+                 alt="The Ordinus workboard with tasks moving from Waiting to Done" loading="lazy" />
+          </div>
+        </div>
+        <p class="frame-hint">Sketch → the real thing. Click to replay.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 · Connections — wire the team into your real tools -->
+  <section class="chapter" id="ch-connections" data-chapter="connections">
+    <div class="chapter-inner">
+      <div class="chapter-copy">
+        <p class="chapter-num">03 · Connections</p>
+        <h2 class="chapter-head">Your team, where your work already lives.</h2>
+        <p class="chapter-body">
+          Wire them into Gmail, Notion, Linear, WhatsApp and more. Connect once —
+          under your own account — and reach them from your phone too. Your data
+          never leaves your machine.
+        </p>
+        <p class="chapter-curio">Where would you want to reach your team from?</p>
+      </div>
+      <div class="chapter-stage">
+        <div class="doodle-frame">
+          <div class="frame-bar" aria-hidden="true">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-title">Ordinus · Connections</span>
+          </div>
+          <div class="frame-body" title="Replay" style="--shot-ratio: 2880 / 1740">
+            <svg class="chapter-scene" viewBox="0 0 960 580" role="img"
+                 aria-label="A sketch of the Ordinus connections list, then the real app"></svg>
+            <div class="result-card chapter-result" aria-hidden="true"><div class="result-title"></div><ul class="result-list"></ul></div>
+            <img class="frame-shot" src="landing/shots/Connections.png"
+                 alt="The Ordinus connections screen — tools you can wire your team into" loading="lazy" />
+          </div>
+        </div>
+        <p class="frame-hint">Sketch → the real thing. Click to replay.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 04 · Workflow — design a repeatable flow once -->
+  <section class="chapter flip" id="ch-workflow" data-chapter="workflow">
+    <div class="chapter-inner">
+      <div class="chapter-copy">
+        <p class="chapter-num">04 · Workflow</p>
+        <h2 class="chapter-head">Build the machine once. Press the button forever.</h2>
+        <p class="chapter-body">
+          Wire a repeatable flow — research, draft, review, ship — and design it
+          one time. Then run it again next week with a single click.
+        </p>
+        <p class="chapter-curio">What do you do over and over that a flow could just… do?</p>
+      </div>
+      <div class="chapter-stage">
+        <div class="doodle-frame">
+          <div class="frame-bar" aria-hidden="true">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-title">Ordinus · Workflows</span>
+          </div>
+          <div class="frame-body" title="Replay" style="--shot-ratio: 2880 / 1740">
+            <svg class="chapter-scene" viewBox="0 0 960 580" role="img"
+                 aria-label="A sketch of an Ordinus workflow graph, then the real app"></svg>
+            <div class="result-card chapter-result" aria-hidden="true"><div class="result-title"></div><ul class="result-list"></ul></div>
+            <img class="frame-shot" src="landing/shots/Workflow -Security.png"
+                 alt="The Ordinus workflow designer — a graph of wired tasks" loading="lazy" />
+          </div>
+        </div>
+        <p class="frame-hint">Sketch → the real thing. Click to replay.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 05 · Schedules — set it once, wake up to it done -->
+  <section class="chapter" id="ch-schedules" data-chapter="schedules">
+    <div class="chapter-inner">
+      <div class="chapter-copy">
+        <p class="chapter-num">05 · Schedules</p>
+        <h2 class="chapter-head">It works the night shift.</h2>
+        <p class="chapter-body">
+          Put it on a schedule — every hour, every morning — and the team runs it
+          without you. Wake up to it already done.
+        </p>
+        <p class="chapter-curio">What would you want waiting for you tomorrow morning?</p>
+      </div>
+      <div class="chapter-stage">
+        <div class="doodle-frame">
+          <div class="frame-bar" aria-hidden="true">
+            <span class="frame-dot"></span><span class="frame-dot"></span><span class="frame-dot"></span>
+            <span class="frame-title">Ordinus · Schedules</span>
+          </div>
+          <div class="frame-body" title="Replay" style="--shot-ratio: 2880 / 1740">
+            <svg class="chapter-scene" viewBox="0 0 960 580" role="img"
+                 aria-label="A sketch of the Ordinus schedules screen, then the real app"></svg>
+            <div class="result-card chapter-result" aria-hidden="true"><div class="result-title"></div><ul class="result-list"></ul></div>
+            <img class="frame-shot" src="landing/shots/Schedules.png"
+                 alt="The Ordinus schedules screen — standing tasks on a cadence" loading="lazy" />
+          </div>
+        </div>
+        <p class="frame-hint">Sketch → the real thing. Click to replay.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- bridge: send the curious to the deeper "how you use it" page before the close -->
+  <div class="midlink">
+    <a href="how-you-use-it.html">Curious how you'd actually use all this? <span>See how you use it →</span></a>
+  </div>
+
+  <!-- ============ FINALE: the close + the CTA ============ -->
+  <section class="finale" id="get">
+    <div class="finale-inner">
+      <p class="finale-eyebrow">So — what's the catch?</p>
+      <h2 class="finale-head">There isn't <span class="ink-underline">one</span>.</h2>
+      <p class="finale-sub">
+        Ordinus is free and open source. Your whole team runs on the Claude or
+        Codex you already pay for, right on your own machine. No seats, no
+        per-message meter, no “upgrade to keep going.”
+      </p>
+      <p class="finale-kicker">
+        The only thing the entire crew costs to run is the electricity to keep your laptop awake.
+      </p>
+
+      <ul class="finale-facts">
+        <li>Free &amp; open source</li>
+        <li>Runs on the AI you already pay for</li>
+        <li>Nothing ever leaves your machine</li>
+      </ul>
+
+      <div class="finale-cta">
+        <a class="btn btn-primary finale-download js-download" id="get-download" data-os-label
+           href="https://github.com/muratgur/ordinus/releases/latest"
+           target="_blank" rel="noopener">Download for Mac &amp; Windows</a>
+        <a class="btn btn-secondary" id="get-star"
+           href="https://github.com/muratgur/ordinus"
+           target="_blank" rel="noopener">Star on GitHub</a>
+        <!-- phones can't install a desktop app — hand the link to a real computer -->
+        <button class="btn btn-primary send-to-computer" id="send-to-computer" type="button">📤 Send to my computer</button>
+      </div>
+      <p class="finale-note">Needs Claude or Codex installed · macOS &amp; Windows · Unsigned — you'll wave it through on first launch.</p>
+      <p class="alt-download"><a class="js-download-other" href="https://github.com/muratgur/ordinus/releases/latest" target="_blank" rel="noopener">See all downloads →</a></p>
+      <p class="send-hint">Ordinus runs on your Mac or PC.</p>
 
       <footer class="foot">
         <span>Local-first — your data stays on your machine.</span>
@@ -117,5 +301,7 @@
 
   <script src="https://unpkg.com/roughjs@4.6.6/bundled/rough.js"></script>
   <script src="landing/app.js"></script>
+  <script src="landing/chapters.js"></script>
+  <script src="landing/download.js"></script>
 </body>
 </html>

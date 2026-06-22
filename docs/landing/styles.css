@@ -68,6 +68,15 @@ a { color: inherit; }
   margin: 0 auto;
 }
 
+.hero-eyebrow {
+  font-size: clamp(14px, 1.4vw, 17px);
+  line-height: 1.35;
+  color: var(--muted);
+  font-weight: 500;
+  margin: 0 0 16px;
+  max-width: 34ch;
+}
+
 .hero-copy h1 {
   font-size: clamp(44px, 7vw, 88px);
   line-height: 0.98;
@@ -309,6 +318,166 @@ a { color: inherit; }
 }
 @keyframes bob { 0%,100%{ transform: translateY(0);} 50%{ transform: translateY(5px);} }
 
+/* ============ narrative scroll chapters ============ */
+.chapter {
+  border-top: 1px solid var(--line);
+  padding: clamp(64px, 10vw, 130px) clamp(20px, 5vw, 56px);
+}
+.chapter-inner {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.82fr) minmax(360px, 1.18fr);
+  gap: clamp(28px, 6vw, 80px);
+  align-items: center;
+}
+/* odd chapters flip sides so the eye never settles into a column */
+.chapter.flip .chapter-copy { order: 2; }
+.chapter.flip .chapter-stage { order: 1; }
+
+.chapter-num {
+  font-family: var(--hand);
+  font-size: 16px; font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+  margin: 0 0 14px;
+}
+.chapter-head {
+  font-size: clamp(30px, 4.4vw, 50px);
+  line-height: 1.02; letter-spacing: -0.03em;
+  font-weight: 800; margin: 0 0 18px;
+}
+.chapter-body {
+  font-size: clamp(16px, 1.5vw, 19px);
+  line-height: 1.65; color: #3a3a3a;
+  max-width: 42ch; margin: 0 0 22px;
+}
+.chapter-curio {
+  font-family: var(--hand);
+  font-size: clamp(18px, 2vw, 23px);
+  font-weight: 700; color: var(--ink); margin: 0;
+}
+.chapter-curio::before { content: "↳ "; color: var(--accent); }
+
+/* the hand-drawn window frame: doodle plays inside, then the real screen fills it */
+.doodle-frame {
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--paper);
+  box-shadow: 6px 7px 0 rgba(17, 17, 17, 0.10);
+}
+.frame-bar {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 14px;
+  border-bottom: 1.5px solid var(--ink);
+  background: #fafafa;
+}
+.frame-dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--ink); }
+.frame-title {
+  margin-left: 8px;
+  font-family: var(--hand);
+  font-size: 14px; font-weight: 700; color: var(--muted);
+}
+.frame-body {
+  position: relative;
+  /* each chapter sets --shot-ratio to its screenshot's exact w/h so the image
+     fills the frame with no crop and no letterbox */
+  aspect-ratio: var(--shot-ratio, 1.5 / 1);
+  cursor: pointer;
+  background: var(--paper);
+}
+.chapter-scene {
+  /* viewBox matches the screenshot ratio, so the sketch fills the frame and maps
+     onto the real UI in place */
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block; overflow: visible;
+  transition: opacity .5s ease;
+}
+.frame-shot {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity .6s ease;
+  pointer-events: none;
+}
+.frame-body.show-shot .chapter-scene,
+.frame-body.show-shot .chapter-result { opacity: 0; }
+.frame-body.show-shot .frame-shot { opacity: 1; }
+
+.frame-hint {
+  text-align: center;
+  font-family: var(--hand);
+  font-size: 14px; color: var(--muted);
+  margin: 12px 0 0;
+}
+
+/* chapter scene: a loose wireframe of the real screen, in the hero's doodle language */
+.chapter-scene path {
+  fill: none; stroke: var(--ink); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.chapter-scene .label { font-family: var(--hand); font-weight: 700; fill: var(--ink); }
+.chapter-scene .wire-name { fill: var(--ink); }
+.chapter-scene .wire-faint path { stroke: #d4d4d4; }      /* chrome recedes */
+.chapter-scene .wire-accent path { stroke: var(--accent); } /* the one accent in the chrome */
+.chapter-scene .wire-card, .chapter-scene .wire-q { transition: opacity .4s ease; }
+/* accent flashes on the card that is currently "speaking" */
+.chapter-scene .wire-card.speaking .box path,
+.chapter-scene .wire-card.speaking .avatar path { stroke: var(--accent); }
+.chapter-scene .wire-card.speaking .wire-name { fill: var(--accent); }
+.chapter-scene.resolved .wire-card, .chapter-scene.resolved .wire-q { opacity: 0.2; }
+
+/* ============ finale ============ */
+.finale {
+  border-top: 1px solid var(--line);
+  padding: clamp(80px, 13vw, 170px) clamp(20px, 5vw, 56px) clamp(40px, 6vw, 72px);
+  text-align: center;
+}
+.finale-inner { max-width: 760px; margin: 0 auto; }
+.finale-eyebrow {
+  font-family: var(--hand);
+  font-size: clamp(18px, 2.3vw, 26px);
+  color: var(--muted); margin: 0 0 8px;
+}
+.finale-head {
+  font-size: clamp(52px, 9vw, 104px);
+  line-height: 0.98; letter-spacing: -0.04em;
+  font-weight: 800; margin: 0 0 28px;
+}
+.finale-sub {
+  font-size: clamp(17px, 1.7vw, 21px);
+  line-height: 1.6; color: #3a3a3a;
+  max-width: 54ch; margin: 0 auto 16px;
+}
+.finale-kicker {
+  font-family: var(--hand);
+  font-size: clamp(19px, 2.1vw, 25px);
+  color: var(--ink); margin: 0 auto 38px; max-width: 40ch;
+}
+.finale-facts {
+  list-style: none; padding: 0; margin: 0 0 40px;
+  display: flex; flex-wrap: wrap; gap: 10px 14px; justify-content: center;
+}
+.finale-facts li {
+  font-size: 14px; font-weight: 600; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 7px 16px;
+}
+.finale-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.finale-note { font-size: 13px; color: var(--muted); margin: 18px 0 0; }
+
+/* phones: swap the desktop download for "send to my computer" */
+.send-to-computer { display: none; }
+.send-hint { display: none; font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+body.is-mobile .finale-download,
+body.is-mobile .cta-download { display: none; }
+body.is-mobile .send-to-computer { display: inline-flex; }
+body.is-mobile .send-hint { display: block; }
+
+.finale .foot { margin-top: clamp(52px, 8vw, 100px); }
+
 /* ---------- tail ---------- */
 .tail {
   border-top: 1px solid var(--line);
@@ -427,14 +596,193 @@ a { color: inherit; }
   .sub, .hero-copy h1 { margin-left: auto; margin-right: auto; }
   .cta-row { justify-content: center; }
   .micro-badge { justify-content: center; }
-  /* mobile primary CTA = Star (can't install a desktop app on a phone) */
-  body.is-mobile #cta-star { background: var(--ink); color: var(--paper); border-color: var(--ink); order: -1; }
-  body.is-mobile #cta-download { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }
+  .send-hint { text-align: center; }
   .steps { grid-template-columns: 1fr; gap: 22px; }
   .scroll-hint { display: none; }
+
+  /* chapters stack: copy first, the frame below — story stays intact */
+  .chapter-inner { grid-template-columns: 1fr; gap: 26px; }
+  .chapter.flip .chapter-copy { order: 1; }
+  .chapter.flip .chapter-stage { order: 2; }
+  .chapter-body { max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .scroll-hint { animation: none; }
   * { scroll-behavior: auto; }
 }
+
+/* ============================================================
+   How You Use It — usage page (text-first)
+   ============================================================ */
+
+/* shared nav additions */
+.wordmark { text-decoration: none; color: var(--ink); }
+.topnav { display: flex; gap: 18px; }
+.topnav a {
+  text-decoration: none; font-size: 15px; color: var(--muted);
+  transition: color .2s; position: relative;
+}
+.topnav a:hover { color: var(--ink); }
+.topnav a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.topnav a[aria-current="page"]::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -5px;
+  height: 2px; background: var(--accent); border-radius: 2px;
+}
+
+/* doc-page top bar (sticky, scrolls with page) */
+.topbar-doc {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 26px;
+  padding: 14px clamp(20px, 5vw, 56px);
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar-cta { margin-left: auto; padding: 9px 18px; font-size: 14px; }
+
+.huui { max-width: 1040px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 56px) clamp(40px, 6vw, 80px); }
+
+/* hero / mental model */
+.huui-hero { text-align: center; padding: clamp(44px, 7vw, 92px) 0 clamp(28px, 4vw, 52px); }
+.huui-eyebrow { font-family: var(--hand); font-weight: 700; color: var(--accent); font-size: clamp(16px, 2vw, 20px); margin: 0 0 10px; }
+.huui-hero h1 { font-size: clamp(40px, 6.5vw, 76px); line-height: 1.0; letter-spacing: -0.04em; font-weight: 800; margin: 0 0 22px; }
+.huui-lede { max-width: 62ch; margin: 0 auto; font-size: clamp(17px, 1.7vw, 21px); line-height: 1.6; color: #3a3a3a; }
+.huui-spine { margin-top: clamp(28px, 4vw, 48px); }
+#spine { display: block; width: 100%; height: auto; max-width: 860px; margin: 0 auto; overflow: visible; }
+#spine path { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.spine-label { font-family: var(--hand); font-weight: 700; fill: var(--ink); font-size: 19px; }
+.spine-frame path { stroke: #d2d2d2; }
+.spine-frame-label { fill: var(--muted); font-weight: 400; }
+.spine-box.accent .box path { stroke: var(--accent); }
+.spine-way { fill: var(--muted); font-weight: 400; }
+
+/* sticky section nav */
+.huui-secnav {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; gap: clamp(12px, 2.5vw, 28px); justify-content: center; flex-wrap: wrap;
+  padding: 13px clamp(20px, 5vw, 56px);
+  background: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.huui-secnav a { text-decoration: none; color: var(--muted); transition: color .2s; }
+.huui-secnav a:hover { color: var(--ink); }
+
+/* steps */
+.huui-step {
+  display: grid; grid-template-columns: 1.05fr 1fr;
+  gap: clamp(28px, 5vw, 68px); align-items: center;
+  padding: clamp(48px, 7vw, 92px) 0; border-top: 1px solid var(--line);
+}
+.huui-step-wide { display: block; }
+.huui-kicker { font-family: var(--hand); font-weight: 700; color: var(--accent); font-size: 15px; margin: 0 0 12px; letter-spacing: 0.02em; }
+.huui-step h2 { font-size: clamp(28px, 4vw, 46px); line-height: 1.04; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 16px; }
+.huui-step p { font-size: clamp(16px, 1.6vw, 19px); line-height: 1.65; color: #3a3a3a; max-width: 48ch; margin: 0 0 14px; }
+.huui-eg { font-family: var(--hand); font-size: clamp(17px, 1.8vw, 21px); color: var(--ink); }
+.huui-eg strong { font-weight: 700; }
+
+/* the four ways */
+.huui-ways { margin-top: clamp(28px, 4vw, 44px); display: grid; grid-template-columns: repeat(2, 1fr); gap: clamp(18px, 3vw, 30px); }
+.huui-way { border: 1px solid var(--line); border-radius: 18px; padding: clamp(20px, 3vw, 28px); }
+.huui-way h3 { font-size: clamp(19px, 2.1vw, 24px); letter-spacing: -0.02em; margin: 0 0 8px; }
+.huui-way p { font-size: 16px; line-height: 1.55; color: #3a3a3a; margin: 0 0 10px; max-width: none; }
+.huui-way .huui-eg { font-size: 17px; margin: 0 0 18px; color: var(--accent); }
+
+/* small window-frame thumbnail (no morph) */
+.mini-frame { margin: 0; border: 1.5px solid var(--ink); border-radius: 12px; overflow: hidden; background: var(--paper); box-shadow: 5px 6px 0 rgba(17, 17, 17, 0.08); }
+.mini-bar { display: flex; gap: 5px; align-items: center; padding: 7px 11px; border-bottom: 1.5px solid var(--ink); background: #fafafa; }
+.mini-bar span { width: 8px; height: 8px; border-radius: 50%; border: 1.4px solid var(--ink); }
+.mini-frame img { display: block; width: 100%; height: auto; }
+
+/* safety anchor */
+.huui-safe-points { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; align-content: center; }
+.huui-safe-points li {
+  position: relative; padding: 14px 18px 14px 44px;
+  border: 1px solid var(--line); border-radius: 12px;
+  font-size: clamp(15px, 1.5vw, 17px); font-weight: 500; color: var(--ink);
+}
+.huui-safe-points li::before {
+  content: "✓"; position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+  color: var(--accent); font-weight: 700;
+}
+
+/* faq */
+.huui-faq { padding: clamp(48px, 7vw, 92px) 0; border-top: 1px solid var(--line); }
+.huui-faq h2 { font-size: clamp(26px, 3.6vw, 40px); letter-spacing: -0.03em; font-weight: 800; margin: 0 0 clamp(26px, 4vw, 40px); }
+.huui-qa { display: grid; grid-template-columns: repeat(2, 1fr); gap: clamp(20px, 3vw, 36px); margin: 0; }
+.huui-qa dt { font-weight: 700; font-size: clamp(17px, 1.8vw, 20px); margin: 0 0 6px; }
+.huui-qa dd { margin: 0; font-size: clamp(15px, 1.5vw, 17px); line-height: 1.6; color: #3a3a3a; }
+
+/* close */
+.huui-cta { text-align: center; padding: clamp(56px, 8vw, 100px) 0 0; border-top: 1px solid var(--line); }
+.huui-cta h2 { font-size: clamp(32px, 5vw, 60px); letter-spacing: -0.04em; font-weight: 800; margin: 0 0 30px; }
+.huui-cta .foot { margin-top: clamp(52px, 8vw, 100px); }
+
+/* gentle reveal */
+.pre-reveal { opacity: 0; transform: translateY(14px); }
+.revealed { opacity: 1; transform: none; transition: opacity .6s ease, transform .6s ease; }
+
+@media (max-width: 860px) {
+  .huui-step { grid-template-columns: 1fr; gap: 26px; }
+  .huui-ways { grid-template-columns: 1fr; }
+  .huui-qa { grid-template-columns: 1fr; }
+  .topbar-cta { display: none; }
+  .huui-secnav { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+/* home: grouped left nav + the bridge link to the usage page */
+.topbar-left { display: flex; align-items: center; gap: 22px; }
+.midlink { text-align: center; padding: clamp(40px, 6vw, 72px) clamp(20px, 5vw, 56px) 0; }
+.midlink a {
+  text-decoration: none; font-family: var(--hand); font-size: clamp(18px, 2vw, 23px);
+  color: var(--muted); transition: color .2s;
+}
+.midlink a span { color: var(--accent); white-space: nowrap; }
+.midlink a:hover { color: var(--ink); }
+
+@media (max-width: 860px) {
+  .topnav { display: none; }
+}
+
+/* ============================================================
+   How You Use It — the walking trail (replaces spine + screenshots)
+   ============================================================ */
+.trail { position: relative; margin-top: clamp(18px, 3vw, 34px); }
+#trail-rail { position: absolute; left: 0; top: 0; width: 64px; overflow: visible; pointer-events: none; }
+#trail-rail path { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.trail-numtext { font-family: var(--hand); font-weight: 700; fill: var(--ink); font-size: 17px; }
+
+.trail-step { position: relative; padding: clamp(28px, 4.5vw, 50px) 0 clamp(28px, 4.5vw, 50px) clamp(76px, 9vw, 96px); }
+.trail-step .huui-kicker { margin: 0 0 10px; }
+.trail-step h2 { font-size: clamp(26px, 3.8vw, 44px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 14px; }
+.trail-step > p { font-size: clamp(16px, 1.55vw, 19px); line-height: 1.65; color: #3a3a3a; max-width: 56ch; margin: 0 0 12px; }
+.trail-step .huui-eg { font-family: var(--hand); font-size: clamp(17px, 1.8vw, 21px); color: var(--ink); margin: 4px 0 0; max-width: 52ch; }
+.trail-end { padding-bottom: clamp(36px, 5vw, 64px); }
+
+/* step 02: the four ways, as lanes off the same path */
+.trail-ways { margin-top: clamp(20px, 3vw, 30px); display: grid; grid-template-columns: repeat(2, 1fr); gap: clamp(18px, 3vw, 30px); max-width: 780px; }
+.trail-way { position: relative; padding-left: 18px; }
+.trail-way::before { content: ""; position: absolute; left: 0; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.trail-way h3 { font-size: clamp(18px, 2vw, 22px); letter-spacing: -0.02em; margin: 0 0 7px; }
+.trail-way p { font-size: 15.5px; line-height: 1.55; color: #3a3a3a; margin: 0 0 8px; }
+.trail-way .huui-eg { font-family: var(--hand); font-size: 16px; color: var(--accent); margin: 0; }
+
+@media (max-width: 860px) {
+  .trail-ways { grid-template-columns: 1fr; }
+  .trail-step { padding-left: clamp(58px, 16vw, 76px); }
+}
+
+/* "other OS" / all-downloads secondary link under the CTA */
+.alt-download { margin: 14px 0 0; }
+.alt-download a { font-size: 13px; color: var(--muted); text-decoration: none; transition: color .2s; }
+.alt-download a:hover { color: var(--ink); }
+body.is-mobile .alt-download { display: none; }
+
+/* understated plain-text top-right nav (scales as pages are added) */
+.topnav-text { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.topnav-text a { text-decoration: none; font-size: 14px; color: var(--muted); transition: color .2s; }
+.topnav-text a:hover { color: var(--ink); }
+.topnav-text a[aria-current="page"] { color: var(--ink); }
+.topnav-div { width: 1px; height: 14px; background: var(--line); display: inline-block; }
