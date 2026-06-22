@@ -59,7 +59,7 @@ type RailIconButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, '
   active?: boolean
 }
 
-const RailIconButton = React.forwardRef<HTMLButtonElement, RailIconButtonProps>(
+export const RailIconButton = React.forwardRef<HTMLButtonElement, RailIconButtonProps>(
   ({ icon: Icon, label, active, className, ...props }, ref) => (
     <button
       ref={ref}
@@ -141,6 +141,7 @@ export function Rail({
   searchPlaceholder = 'Search…',
   filter,
   filterActive,
+  utilityExtras,
   collapsedContent,
   children,
   'aria-label': ariaLabel
@@ -154,6 +155,12 @@ export function Rail({
   /** Popover content for the filter (e.g. a "Show archived" toggle). */
   filter?: React.ReactNode
   filterActive?: boolean
+  /**
+   * Optional screen-provided control(s) rendered in the left utility group
+   * beside search/filter (expanded) and in the collapsed strip. The rail stays
+   * neutral — e.g. Agents passes its flat/grouped view-mode toggle here.
+   */
+  utilityExtras?: React.ReactNode
   /**
    * Optional screen-provided mini content rendered below the utility icons in
    * the collapsed strip (ADR-033 revision), e.g. a quick-switch avatar roster.
@@ -212,6 +219,7 @@ export function Rail({
           <RailIconButton icon={Search} label="Search" onClick={() => setSearchOpen(true)} />
         ) : null}
         {filter ? <RailFilter filter={filter} filterActive={filterActive} /> : null}
+        {utilityExtras}
         {collapsedContent ? (
           <>
             <div className="my-1 w-6 border-b border-border/60" />
@@ -237,6 +245,7 @@ export function Rail({
             <RailIconButton icon={Search} label="Search" onClick={() => setSearchOpen(true)} />
           ) : null}
           {filter ? <RailFilter filter={filter} filterActive={filterActive} /> : null}
+          {utilityExtras}
         </div>
         <RailIconButton icon={PanelLeftClose} label="Collapse panel" onClick={onToggleCollapsed} />
       </div>

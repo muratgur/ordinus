@@ -50,6 +50,10 @@ import {
   AgentSetPinnedInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
+  DepartmentCreateInputSchema,
+  DepartmentDeleteInputSchema,
+  DepartmentRenameInputSchema,
+  DepartmentReorderInputSchema,
   AgentExtraDirectoryAddInputSchema,
   AgentExtraDirectoryRemoveInputSchema,
   AgentExtraDirectoryListInputSchema,
@@ -619,6 +623,21 @@ export function registerIpcHandlers(
     deleteAgentHome(result.deletedAgentId)
     deleteLogRefs(result.deletedLogRefs)
     return result
+  })
+  ipcMain.handle(ipcChannels.departmentsList, () => {
+    return database.listDepartments()
+  })
+  ipcMain.handle(ipcChannels.departmentsCreate, (_event, payload) => {
+    return database.createDepartment(DepartmentCreateInputSchema.parse(payload))
+  })
+  ipcMain.handle(ipcChannels.departmentsRename, (_event, payload) => {
+    return database.renameDepartment(DepartmentRenameInputSchema.parse(payload))
+  })
+  ipcMain.handle(ipcChannels.departmentsDelete, (_event, payload) => {
+    database.deleteDepartment(DepartmentDeleteInputSchema.parse(payload))
+  })
+  ipcMain.handle(ipcChannels.departmentsReorder, (_event, payload) => {
+    return database.reorderDepartments(DepartmentReorderInputSchema.parse(payload))
   })
   const buildExtraDirectoryList = (agentId: string, paths: string[]): unknown =>
     AgentExtraDirectoryListSchema.parse({

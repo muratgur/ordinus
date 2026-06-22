@@ -48,6 +48,22 @@ export const agents = sqliteTable('agents', {
   lastUsedAt: text('last_used_at'),
   useCount: integer('use_count').notNull().default(0),
   archivedAt: text('archived_at'),
+  // Optional department membership (ADR-055). Nullable: an agent belongs to one
+  // department or none. No DB foreign key — the codebase enforces referential
+  // integrity at the app layer (deleteDepartment nulls members in a transaction),
+  // matching the no-FK convention; PRAGMA foreign_keys is off.
+  departmentId: text('department_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
+// User-defined agent departments (ADR-055). Single-membership grouping surfaced
+// as an opt-in mode on the Agents rail. Name is unique case-insensitively
+// (enforced in the repo layer, not a DB index). `position` drives manual order.
+export const departments = sqliteTable('departments', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  position: integer('position').notNull().default(0),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull()
 })

@@ -5,23 +5,43 @@ import {
   Bot,
   CalendarClock,
   Check,
+  ChevronDown,
   Copy,
   FileText,
+  GripVertical,
   Info,
+  Layers,
   Library,
   Loader2,
   MessageSquareText,
+  Pencil,
   Pin,
   Plus,
   Settings2,
   Sparkles,
   Trash2,
   UserRound,
-  WandSparkles
+  WandSparkles,
+  X
 } from 'lucide-react'
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { Badge } from '@renderer/components/ui/badge'
 import { Button } from '@renderer/components/ui/button'
-import { Rail, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
+import { Rail, RailIconButton, RailItem, RailItemAction, RailList } from '@renderer/components/rail'
 import { SelectControl } from '@renderer/components/select-control'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import {
@@ -33,6 +53,7 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
 import { Switch } from '@renderer/components/ui/switch'
 import { ScrollArea } from '@renderer/components/ui/scroll-area'
 import { cn } from '@renderer/lib/utils'
@@ -54,11 +75,20 @@ import type {
   AgentUpdateSettingsInput,
   AgentRoomSummary,
   ConnectorSummary,
+  Department,
   LibrarySkill,
   ObservedRunSnapshot,
   ProviderId,
   WorkRequest
 } from '@shared/contracts'
+import { normalizeDepartmentName } from '@shared/contracts'
+import {
+  readAgentsViewMode,
+  writeAgentsViewMode,
+  readCollapsedDepartments,
+  writeCollapsedDepartments,
+  type AgentsViewMode
+} from './agents-screen-storage'
 import { CreateScheduleDialog } from './schedules-screen'
 import { AgentScheduleGroup } from './schedules/agent-schedule-group'
 import { DeleteScheduleDialog } from './schedules/delete-schedule-dialog'
@@ -125,6 +155,8 @@ function getAgentPresence(agent: Agent, busy: boolean): AgentPresence {
 
 export function AgentsScreen(): React.JSX.Element {
   const [agents, setAgents] = useState<Agent[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [viewMode, setViewMode] = useState<AgentsViewMode>(() => readAgentsViewMode())
   const [roomSummaries, setRoomSummaries] = useState<AgentRoomSummary[]>([])
   const [unreadAgentIds, setUnreadAgentIds] = useState<Set<string>>(new Set())
   // Deep link: other screens (e.g. a Work Item's agent name) navigate here
@@ -248,11 +280,13 @@ export function AgentsScreen(): React.JSX.Element {
   const reloadAgents = useCallback(async (): Promise<void> => {
     try {
       setLoading(true)
-      const [nextAgents, nextRoomSummaries] = await Promise.all([
+      const [nextAgents, nextRoomSummaries, nextDepartments] = await Promise.all([
         window.ordinus.agents.list(),
-        window.ordinus.conversations.listAgentRoomSummaries()
+        window.ordinus.conversations.listAgentRoomSummaries(),
+        window.ordinus.departments.list()
       ])
       setAgents(nextAgents)
+      setDepartments(nextDepartments)
       applyRoomSummaries(nextRoomSummaries)
       setSelectedAgentId((current) => {
         if (nextAgents.some((agent) => agent.id === current)) {
@@ -299,6 +333,58 @@ export function AgentsScreen(): React.JSX.Element {
     setActiveTab('chat')
     setComposerSeed('')
     setCreateAgentOpen(false)
+  }
+
+  function handleViewModeChange(mode: AgentsViewMode): void {
+    setViewMode(mode)
+    writeAgentsViewMode(mode)
+  }
+
+  // Inline department creation (from the profile dialog's selector). Returns the
+  // new record so the caller can immediately assign the agent to it.
+  async function handleCreateDepartment(name: string): Promise<Department> {
+    const created = await window.ordinus.departments.create({ name })
+    setDepartments((current) =>
+      [...current, created].sort((left, right) => left.position - right.position)
+    )
+    return created
+  }
+
+  async function handleRenameDepartment(id: string, name: string): Promise<void> {
+    const renamed = await window.ordinus.departments.rename({ id, name })
+    setDepartments((current) => current.map((dept) => (dept.id === id ? renamed : dept)))
+  }
+
+  // App-layer SET NULL mirrored in the UI: members fall to "Departmansız".
+  async function handleDeleteDepartment(id: string): Promise<void> {
+    await window.ordinus.departments.delete({ id })
+    setDepartments((current) => current.filter((dept) => dept.id !== id))
+    setAgents((current) =>
+      current.map((agent) => (agent.departmentId === id ? { ...agent, departmentId: null } : agent))
+    )
+  }
+
+  async function handleReorderDepartments(orderedIds: string[]): Promise<void> {
+    // Optimistic: apply the new order locally, then persist.
+    setDepartments((current) => {
+      const byId = new Map(current.map((dept) => [dept.id, dept]))
+      return orderedIds
+        .map((id, index) => {
+          const dept = byId.get(id)
+          return dept ? { ...dept, position: index } : null
+        })
+        .filter((dept): dept is Department => dept != null)
+    })
+    try {
+      const next = await window.ordinus.departments.reorder({ orderedIds })
+      setDepartments(next)
+    } catch (reorderError) {
+      notify.error({
+        title: 'Departments could not be reordered',
+        description: getErrorMessage(reorderError, 'Please try again.')
+      })
+      void reloadAgents()
+    }
   }
 
   function handleAgentDeleted(agentId: string): void {
@@ -376,6 +462,9 @@ export function AgentsScreen(): React.JSX.Element {
     <div className="flex h-[calc(100vh-3rem)] gap-3 py-4">
       <AgentLibrary
         agents={agents}
+        departments={departments}
+        viewMode={viewMode}
+        onViewModeChange={handleViewModeChange}
         loading={loading}
         selectedAgentId={selectedAgent?.id ?? ''}
         busyAgentIds={busyAgentIds}
@@ -401,6 +490,10 @@ export function AgentsScreen(): React.JSX.Element {
           setComposerSeed('')
         }}
         onTogglePinned={(agent) => void handleTogglePinned(agent)}
+        onCreateDepartment={handleCreateDepartment}
+        onRenameDepartment={handleRenameDepartment}
+        onDeleteDepartment={handleDeleteDepartment}
+        onReorderDepartments={handleReorderDepartments}
       />
 
       <main className="relative min-w-0 flex-1 xl:min-h-0">
@@ -414,6 +507,7 @@ export function AgentsScreen(): React.JSX.Element {
               <AgentIdentityHeader
                 agent={selectedAgent}
                 agents={agents}
+                departments={departments}
                 onAgentSaved={handleAgentSaved}
               />
               <div className="flex items-stretch gap-0 border-b">
@@ -512,8 +606,14 @@ export function AgentsScreen(): React.JSX.Element {
   )
 }
 
+// Stable key for the catch-all "Departmansız" section in the collapsed-set.
+const UNASSIGNED_SECTION_KEY = '__unassigned__'
+
 function AgentLibrary({
   agents,
+  departments,
+  viewMode,
+  onViewModeChange,
   loading,
   selectedAgentId,
   busyAgentIds,
@@ -524,9 +624,16 @@ function AgentLibrary({
   onCreateAgent,
   onDeleteAgent,
   onSelectAgent,
-  onTogglePinned
+  onTogglePinned,
+  onCreateDepartment,
+  onRenameDepartment,
+  onDeleteDepartment,
+  onReorderDepartments
 }: {
   agents: Agent[]
+  departments: Department[]
+  viewMode: AgentsViewMode
+  onViewModeChange: (mode: AgentsViewMode) => void
   loading: boolean
   selectedAgentId: string
   busyAgentIds: Set<string>
@@ -538,6 +645,10 @@ function AgentLibrary({
   onDeleteAgent: (agent: Agent) => void
   onSelectAgent: (agentId: string) => void
   onTogglePinned: (agent: Agent) => void
+  onCreateDepartment: (name: string) => Promise<Department>
+  onRenameDepartment: (id: string, name: string) => Promise<void>
+  onDeleteDepartment: (id: string) => Promise<void>
+  onReorderDepartments: (orderedIds: string[]) => Promise<void>
 }): React.JSX.Element {
   const roomSummaryByAgentId = useMemo(
     () => new Map(roomSummaries.map((summary) => [summary.agentId, summary])),
@@ -563,6 +674,113 @@ function AgentLibrary({
     return row.pinned ? index : lastIndex
   }, -1)
 
+  const [collapsedDepartments, setCollapsedDepartments] = useState<Set<string>>(() =>
+    readCollapsedDepartments()
+  )
+  const toggleSectionCollapsed = useCallback((key: string): void => {
+    setCollapsedDepartments((current) => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      writeCollapsedDepartments(next)
+      return next
+    })
+  }, [])
+
+  const [deleteTargetDepartment, setDeleteTargetDepartment] = useState<Department | null>(null)
+
+  // Shared per-agent row, used by both the flat list and department sections.
+  const renderAgentRow = useCallback(
+    (row: AgentChatRow): React.JSX.Element => {
+      const { agent, busy, pinned, unread, preview, timestampLabel } = row
+      return (
+        <RailItem
+          title={agent.name}
+          selected={selectedAgentId === agent.id}
+          unread={unread}
+          running={busy}
+          runningLabel="Working…"
+          meta={preview}
+          leadingIcon={pinned ? <Pin className="size-3 shrink-0 text-primary" /> : undefined}
+          leftSlot={
+            <span className="relative block size-9">
+              <AgentAvatar avatar={agent.avatar} size={36} />
+              <PresenceDot
+                presence={getAgentPresence(agent, busy)}
+                className="absolute bottom-0 right-0 ring-2 ring-background"
+              />
+            </span>
+          }
+          rightSlot={<span>{timestampLabel}</span>}
+          onSelect={() => onSelectAgent(agent.id)}
+          actions={
+            <>
+              <RailItemAction
+                icon={Pin}
+                label={pinned ? 'Unpin agent' : 'Pin agent'}
+                className={cn(pinned && 'text-primary')}
+                onClick={() => onTogglePinned(agent)}
+              />
+              <RailItemAction
+                icon={Trash2}
+                label="Delete agent"
+                className="hover:text-status-attention"
+                onClick={() => onDeleteAgent(agent)}
+              />
+            </>
+          }
+        />
+      )
+    },
+    [selectedAgentId, onSelectAgent, onTogglePinned, onDeleteAgent]
+  )
+
+  const grouped = viewMode === 'grouped'
+  // Group rows by department in a single pass (O(agents)) instead of filtering
+  // chatRows once per department (O(departments × agents)).
+  const rowsByDepartment = new Map<string, AgentChatRow[]>()
+  const unassignedRows: AgentChatRow[] = []
+  for (const row of chatRows) {
+    const id = row.agent.departmentId
+    if (!id) {
+      unassignedRows.push(row)
+      continue
+    }
+    const list = rowsByDepartment.get(id)
+    if (list) list.push(row)
+    else rowsByDepartment.set(id, [row])
+  }
+  const memberCountByDepartment = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const agent of agents) {
+      if (agent.departmentId)
+        counts.set(agent.departmentId, (counts.get(agent.departmentId) ?? 0) + 1)
+    }
+    return counts
+  }, [agents])
+  const deleteTargetMemberCount = deleteTargetDepartment
+    ? (memberCountByDepartment.get(deleteTargetDepartment.id) ?? 0)
+    : 0
+
+  // The Layers icon opens the single "Departments" surface: the group-by switch
+  // plus all taxonomy management (ADR-055 revision). The rail itself stays
+  // display-only.
+  const departmentsManager = (
+    <DepartmentsManagerPopover
+      departments={departments}
+      grouped={grouped}
+      memberCountByDepartment={memberCountByDepartment}
+      onViewModeChange={onViewModeChange}
+      onCreateDepartment={onCreateDepartment}
+      onRenameDepartment={onRenameDepartment}
+      onRequestDeleteDepartment={setDeleteTargetDepartment}
+      onReorderDepartments={onReorderDepartments}
+    />
+  )
+
   return (
     <Rail
       aria-label="Agents"
@@ -570,6 +788,7 @@ function AgentLibrary({
       onToggleCollapsed={onToggleCollapsed}
       cta={{ label: 'New agent', onClick: onCreateAgent }}
       searchPlaceholder="Search agents"
+      utilityExtras={departmentsManager}
       search={chatRows.map(({ agent, preview }) => ({
         id: agent.id,
         label: agent.name,
@@ -609,55 +828,491 @@ function AgentLibrary({
       }
     >
       <RailList isEmpty={!loading && chatRows.length === 0} empty="No agents yet.">
-        {loading
-          ? null
-          : chatRows.map(({ agent, busy, pinned, unread, preview, timestampLabel }, index) => (
-              <div key={agent.id}>
-                <RailItem
-                  title={agent.name}
-                  selected={selectedAgentId === agent.id}
-                  unread={unread}
-                  running={busy}
-                  runningLabel="Working…"
-                  meta={preview}
-                  leadingIcon={
-                    pinned ? <Pin className="size-3 shrink-0 text-primary" /> : undefined
-                  }
-                  leftSlot={
-                    <span className="relative block size-9">
-                      <AgentAvatar avatar={agent.avatar} size={36} />
-                      <PresenceDot
-                        presence={getAgentPresence(agent, busy)}
-                        className="absolute bottom-0 right-0 ring-2 ring-background"
-                      />
-                    </span>
-                  }
-                  rightSlot={<span>{timestampLabel}</span>}
-                  onSelect={() => onSelectAgent(agent.id)}
-                  actions={
-                    <>
-                      <RailItemAction
-                        icon={Pin}
-                        label={pinned ? 'Unpin agent' : 'Pin agent'}
-                        className={cn(pinned && 'text-primary')}
-                        onClick={() => onTogglePinned(agent)}
-                      />
-                      <RailItemAction
-                        icon={Trash2}
-                        label="Delete agent"
-                        className="hover:text-status-attention"
-                        onClick={() => onDeleteAgent(agent)}
-                      />
-                    </>
-                  }
-                />
-                {index === lastPinnedIndex && index < chatRows.length - 1 ? (
-                  <div className="mx-2 my-1 border-t border-dashed border-border" />
-                ) : null}
-              </div>
-            ))}
+        {loading ? null : grouped ? (
+          <>
+            {departments.map((dept) => {
+              const rows = rowsByDepartment.get(dept.id) ?? []
+              return (
+                <RailSectionShell
+                  key={dept.id}
+                  title={dept.name}
+                  count={rows.length}
+                  isEmpty={rows.length === 0}
+                  collapsed={collapsedDepartments.has(dept.id)}
+                  onToggleCollapsed={() => toggleSectionCollapsed(dept.id)}
+                >
+                  {rows.map((row) => (
+                    <div key={row.agent.id}>{renderAgentRow(row)}</div>
+                  ))}
+                </RailSectionShell>
+              )
+            })}
+            {unassignedRows.length > 0 ? (
+              <RailSectionShell
+                title="No department"
+                count={unassignedRows.length}
+                isEmpty={false}
+                collapsed={collapsedDepartments.has(UNASSIGNED_SECTION_KEY)}
+                onToggleCollapsed={() => toggleSectionCollapsed(UNASSIGNED_SECTION_KEY)}
+              >
+                {unassignedRows.map((row) => (
+                  <div key={row.agent.id}>{renderAgentRow(row)}</div>
+                ))}
+              </RailSectionShell>
+            ) : null}
+          </>
+        ) : (
+          chatRows.map((row, index) => (
+            <div key={row.agent.id}>
+              {renderAgentRow(row)}
+              {index === lastPinnedIndex && index < chatRows.length - 1 ? (
+                <div className="mx-2 my-1 border-t border-dashed border-border" />
+              ) : null}
+            </div>
+          ))
+        )}
       </RailList>
+      {deleteTargetDepartment ? (
+        <DeleteDepartmentDialog
+          department={deleteTargetDepartment}
+          memberCount={deleteTargetMemberCount}
+          onConfirm={async () => {
+            const target = deleteTargetDepartment
+            setDeleteTargetDepartment(null)
+            await onDeleteDepartment(target.id)
+          }}
+          onClose={() => setDeleteTargetDepartment(null)}
+        />
+      ) : null}
     </Rail>
+  )
+}
+
+// Display-only header + body for a rail department section (ADR-055 revision).
+// The header is just a collapse chevron + name + count — all taxonomy management
+// lives in the Departments popover, not on the rail rows.
+function RailSectionShell({
+  title,
+  count,
+  collapsed,
+  onToggleCollapsed,
+  isEmpty,
+  children
+}: {
+  title: React.ReactNode
+  count: number
+  collapsed: boolean
+  onToggleCollapsed: () => void
+  isEmpty: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="pt-1.5 first:pt-0.5">
+      <button
+        type="button"
+        onClick={onToggleCollapsed}
+        className="flex w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left hover:bg-muted/60 focus-visible:outline-none"
+      >
+        <ChevronDown
+          className={cn(
+            'size-3.5 shrink-0 text-muted-foreground transition-transform duration-150',
+            collapsed && '-rotate-90'
+          )}
+        />
+        <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </span>
+        <span className="text-[10px] tabular-nums text-muted-foreground/70">{count}</span>
+      </button>
+      {collapsed ? null : isEmpty ? (
+        <p className="px-3 py-1.5 text-[11px] text-muted-foreground/70">No agents yet</p>
+      ) : (
+        <div className="flex flex-col gap-px">{children}</div>
+      )}
+    </div>
+  )
+}
+
+// The single "Departments" surface (ADR-055 revision): opened from the rail's
+// Layers icon. Hosts the group-by switch and all taxonomy management — list,
+// inline rename, delete, drag-reorder (within this contained list, so it stays
+// smooth), and inline create. The rail itself is display-only.
+function DepartmentsManagerPopover({
+  departments,
+  grouped,
+  memberCountByDepartment,
+  onViewModeChange,
+  onCreateDepartment,
+  onRenameDepartment,
+  onRequestDeleteDepartment,
+  onReorderDepartments
+}: {
+  departments: Department[]
+  grouped: boolean
+  memberCountByDepartment: Map<string, number>
+  onViewModeChange: (mode: AgentsViewMode) => void
+  onCreateDepartment: (name: string) => Promise<Department>
+  onRenameDepartment: (id: string, name: string) => Promise<void>
+  onRequestDeleteDepartment: (department: Department) => void
+  onReorderDepartments: (orderedIds: string[]) => Promise<void>
+}): React.JSX.Element {
+  const [creating, setCreating] = useState(false)
+  const [draftName, setDraftName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  function handleDragEnd(event: DragEndEvent): void {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = departments.map((dept) => dept.id)
+    const oldIndex = ids.indexOf(String(active.id))
+    const newIndex = ids.indexOf(String(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    void onReorderDepartments(arrayMove(ids, oldIndex, newIndex))
+  }
+
+  // Shared case-insensitive duplicate check (ADR-055 review #3): the same
+  // normalization the repo layer uses, so create and rename validate identically.
+  const isDuplicateName = useCallback(
+    (name: string, excludeId: string): boolean => {
+      const normalized = normalizeDepartmentName(name)
+      return departments.some(
+        (dept) => dept.id !== excludeId && normalizeDepartmentName(dept.name) === normalized
+      )
+    },
+    [departments]
+  )
+  const duplicate = Boolean(draftName.trim()) && isDuplicateName(draftName, '')
+  const canCreate = Boolean(draftName.trim()) && !duplicate && !busy
+
+  async function handleCreate(): Promise<void> {
+    if (!canCreate) return
+    try {
+      setBusy(true)
+      setError('')
+      await onCreateDepartment(draftName.trim())
+      setDraftName('')
+      setCreating(false)
+    } catch (createError) {
+      setError(getErrorMessage(createError, 'Department could not be created.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <RailIconButton icon={Layers} label="Departments" active={grouped} />
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="w-64 border-border bg-card p-0 text-foreground shadow-lg"
+      >
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+          <span className="text-[13px] font-medium">Group by department</span>
+          <Switch
+            checked={grouped}
+            onCheckedChange={(on) => onViewModeChange(on ? 'grouped' : 'flat')}
+          />
+        </div>
+        <div className="border-t border-border/60" />
+        <div className="max-h-72 overflow-y-auto p-1.5">
+          {departments.length === 0 ? (
+            <p className="px-2 py-3 text-center text-[12px] text-muted-foreground/80">
+              No departments yet.
+            </p>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={departments.map((dept) => dept.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {departments.map((dept) => (
+                  <DepartmentManagerRow
+                    key={dept.id}
+                    department={dept}
+                    memberCount={memberCountByDepartment.get(dept.id) ?? 0}
+                    isDuplicateName={isDuplicateName}
+                    onRename={onRenameDepartment}
+                    onRequestDelete={() => onRequestDeleteDepartment(dept)}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          )}
+        </div>
+        <div className="border-t border-border/60 p-1.5">
+          {creating ? (
+            <div className="grid gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  autoFocus
+                  maxLength={40}
+                  placeholder="New department name"
+                  value={draftName}
+                  disabled={busy}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void handleCreate()
+                    } else if (event.key === 'Escape') {
+                      setCreating(false)
+                      setDraftName('')
+                      setError('')
+                    }
+                  }}
+                  className="h-8 text-[13px]"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!canCreate}
+                  onClick={() => void handleCreate()}
+                >
+                  {busy ? <Loader2 className="animate-spin" /> : <Check />}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setCreating(false)
+                    setDraftName('')
+                    setError('')
+                  }}
+                >
+                  <X />
+                </Button>
+              </div>
+              {duplicate ? (
+                <p className="text-xs text-status-attention">
+                  A department with that name already exists.
+                </p>
+              ) : error ? (
+                <InlineError message={error} />
+              ) : null}
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start text-muted-foreground"
+              onClick={() => setCreating(true)}
+            >
+              <Plus className="size-4" />
+              New department
+            </Button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// One row in the Departments popover: a drag handle, the name (click to rename
+// inline), member count, and delete. Short uniform rows keep the drag smooth.
+// Rename validates the same way create does and surfaces failures inline, so a
+// duplicate/rejected rename no longer reverts silently (ADR-055 review #1/#3).
+function DepartmentManagerRow({
+  department,
+  memberCount,
+  isDuplicateName,
+  onRename,
+  onRequestDelete
+}: {
+  department: Department
+  memberCount: number
+  isDuplicateName: (name: string, excludeId: string) => boolean
+  onRename: (id: string, name: string) => Promise<void>
+  onRequestDelete: () => void
+}): React.JSX.Element {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: department.id
+  })
+  const [renaming, setRenaming] = useState(false)
+  const [draftName, setDraftName] = useState(department.name)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const trimmed = draftName.trim()
+  const liveDuplicate = trimmed.length > 0 && isDuplicateName(trimmed, department.id)
+
+  // Seed from the current name each time, so a prior edit can't leave a stale
+  // draft behind.
+  function startRename(): void {
+    setDraftName(department.name)
+    setError('')
+    setRenaming(true)
+  }
+  function cancelRename(): void {
+    setRenaming(false)
+    setDraftName(department.name)
+    setError('')
+  }
+
+  async function commitRename(): Promise<void> {
+    const next = draftName.trim()
+    if (!next || next === department.name) {
+      cancelRename()
+      return
+    }
+    if (isDuplicateName(next, department.id)) {
+      setError('A department with that name already exists.')
+      return
+    }
+    try {
+      setBusy(true)
+      setError('')
+      await onRename(department.id, next)
+      setRenaming(false)
+    } catch (renameError) {
+      setError(getErrorMessage(renameError, 'Department could not be renamed.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : undefined
+  }
+
+  if (renaming) {
+    return (
+      <div ref={setNodeRef} style={style} className="rounded-md px-1 py-0.5">
+        <div className="flex items-center gap-1">
+          <span className="shrink-0 p-0.5 text-muted-foreground/40">
+            <GripVertical className="size-3.5" />
+          </span>
+          <Input
+            autoFocus
+            maxLength={40}
+            value={draftName}
+            disabled={busy}
+            onChange={(event) => {
+              setDraftName(event.target.value)
+              setError('')
+            }}
+            onBlur={cancelRename}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void commitRename()
+              } else if (event.key === 'Escape') {
+                cancelRename()
+              }
+            }}
+            className="h-7 text-[13px]"
+          />
+        </div>
+        {liveDuplicate ? (
+          <p className="px-1 pt-1 text-[11px] text-status-attention">
+            A department with that name already exists.
+          </p>
+        ) : error ? (
+          <p className="px-1 pt-1 text-[11px] text-status-attention">{error}</p>
+        ) : null}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="group/dept flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-muted/60"
+    >
+      <button
+        type="button"
+        aria-label="Reorder department"
+        className="shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:text-foreground active:cursor-grabbing"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={startRename}
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left text-[13px] focus-visible:outline-none"
+      >
+        <span className="truncate">{department.name}</span>
+        <span className="text-[10px] tabular-nums text-muted-foreground/60">{memberCount}</span>
+      </button>
+      <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/dept:opacity-100 focus-within:opacity-100">
+        <RailItemAction icon={Pencil} label="Rename department" onClick={startRename} />
+        <RailItemAction
+          icon={Trash2}
+          label="Delete department"
+          className="hover:text-status-attention"
+          onClick={onRequestDelete}
+        />
+      </div>
+    </div>
+  )
+}
+
+function DeleteDepartmentDialog({
+  department,
+  memberCount,
+  onConfirm,
+  onClose
+}: {
+  department: Department
+  memberCount: number
+  onConfirm: () => Promise<void>
+  onClose: () => void
+}): React.JSX.Element {
+  const [deleting, setDeleting] = useState(false)
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !deleting) onClose()
+      }}
+    >
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="size-4 text-status-attention" />
+            Delete department
+          </DialogTitle>
+          <DialogDescription>
+            {memberCount > 0
+              ? `${memberCount} agent${memberCount === 1 ? '' : 's'} will move to “No department”. `
+              : ''}
+            This removes the “{department.name}” department. Agents are not deleted.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="ghost" disabled={deleting} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            disabled={deleting}
+            onClick={() => {
+              setDeleting(true)
+              void onConfirm().catch(() => setDeleting(false))
+            }}
+          >
+            {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            Delete department
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -729,10 +1384,12 @@ function startOfLocalDay(date: Date): Date {
 function AgentIdentityHeader({
   agent,
   agents,
+  departments,
   onAgentSaved
 }: {
   agent: Agent
   agents: Agent[]
+  departments: Department[]
   onAgentSaved: (agent: Agent) => void
 }): React.JSX.Element {
   const [profileOpen, setProfileOpen] = useState(false)
@@ -755,6 +1412,7 @@ function AgentIdentityHeader({
         key={agent.id}
         agent={agent}
         agents={agents}
+        departments={departments}
         open={profileOpen}
         onOpenChange={setProfileOpen}
         onAgentSaved={onAgentSaved}
@@ -768,12 +1426,14 @@ function AgentIdentityHeader({
 function EditProfileDialog({
   agent,
   agents,
+  departments,
   open,
   onOpenChange,
   onAgentSaved
 }: {
   agent: Agent
   agents: Agent[]
+  departments: Department[]
   open: boolean
   onOpenChange: (open: boolean) => void
   onAgentSaved: (agent: Agent) => void
@@ -785,6 +1445,7 @@ function EditProfileDialog({
   const [role, setRole] = useState(agent.role)
   const [capabilities, setCapabilities] = useState(agent.capabilities)
   const [enabled, setEnabled] = useState(agent.enabled)
+  const [departmentId, setDepartmentId] = useState<string | null>(agent.departmentId)
   const [improving, setImproving] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -828,7 +1489,8 @@ function EditProfileDialog({
           role: role.trim(),
           capabilities,
           enabled,
-          avatar: nextAvatar
+          avatar: nextAvatar,
+          departmentId
         })
       )
       onAgentSaved(nextAgent)
@@ -843,7 +1505,9 @@ function EditProfileDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
-        <DialogHeader>
+        {/* The form is self-explanatory on screen; keep the title/description
+            for screen readers only (Radix requires a DialogTitle). */}
+        <DialogHeader className="sr-only">
           <DialogTitle>Edit profile</DialogTitle>
           <DialogDescription>How this teammate shows up on your team.</DialogDescription>
         </DialogHeader>
@@ -870,6 +1534,13 @@ function EditProfileDialog({
               placeholder="Brief description of this agent's purpose"
               value={role}
               onChange={(event) => setRole(event.target.value)}
+            />
+          </FormField>
+          <FormField label="Department">
+            <DepartmentSelectField
+              departments={departments}
+              value={departmentId}
+              onChange={setDepartmentId}
             />
           </FormField>
           <CapabilitiesField
@@ -957,6 +1628,7 @@ function buildAgentSettingsPayload(
     connectors: string[]
     avatar: string
     enabled: boolean
+    departmentId: string | null
   }>
 ): AgentUpdateSettingsInput {
   return {
@@ -969,8 +1641,34 @@ function buildAgentSettingsPayload(
     sandbox: overrides.sandbox ?? agent.sandbox,
     connectors: overrides.connectors ?? agent.connectors,
     avatar: overrides.avatar ?? agent.avatar,
-    enabled: overrides.enabled ?? agent.enabled
+    enabled: overrides.enabled ?? agent.enabled,
+    // null is a valid value (unassign), so distinguish it from "not overridden".
+    departmentId: overrides.departmentId !== undefined ? overrides.departmentId : agent.departmentId
   }
+}
+
+// Department selector for the profile dialog (ADR-055 revision): selection only.
+// A native select over existing departments, "No department" for none. Creating
+// and managing departments lives in the rail's Departments popover, not here.
+function DepartmentSelectField({
+  departments,
+  value,
+  onChange
+}: {
+  departments: Department[]
+  value: string | null
+  onChange: (value: string | null) => void
+}): React.JSX.Element {
+  return (
+    <SelectControl value={value ?? ''} onChange={(next) => onChange(next === '' ? null : next)}>
+      <option value="">No department</option>
+      {departments.map((dept) => (
+        <option key={dept.id} value={dept.id}>
+          {dept.name}
+        </option>
+      ))}
+    </SelectControl>
+  )
 }
 
 function SkillsTab({

@@ -3,6 +3,11 @@ import type {
   AgentCreateInput,
   AgentDeleteInput,
   AgentDeleteResult,
+  Department,
+  DepartmentCreateInput,
+  DepartmentDeleteInput,
+  DepartmentRenameInput,
+  DepartmentReorderInput,
   AgentDraft,
   ConnectorActionInput,
   ConnectorConnectInput,
@@ -239,6 +244,13 @@ export type OrdinusApi = {
       input: AgentExtraDirectoryRemoveInput
     ) => Promise<AgentExtraDirectoryList>
     listExtraDirectories: (input: AgentExtraDirectoryListInput) => Promise<AgentExtraDirectoryList>
+  }
+  departments: {
+    list: () => Promise<Department[]>
+    create: (input: DepartmentCreateInput) => Promise<Department>
+    rename: (input: DepartmentRenameInput) => Promise<Department>
+    delete: (input: DepartmentDeleteInput) => Promise<void>
+    reorder: (input: DepartmentReorderInput) => Promise<Department[]>
   }
   skills: {
     listLibrary: () => Promise<LibrarySkill[]>

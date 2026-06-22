@@ -745,6 +745,7 @@ export const AgentSchema = z.object({
   lastUsedAt: z.string().nullable().default(null),
   useCount: z.number().int().nonnegative().default(0),
   archivedAt: z.string().nullable().default(null),
+  departmentId: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -868,7 +869,50 @@ export const AgentUpdateSettingsInputSchema = z.object({
   sandbox: AgentSandboxSchema,
   connectors: AgentConnectorsSchema,
   avatar: z.string().optional(),
-  enabled: z.boolean()
+  enabled: z.boolean(),
+  // ADR-055: optional so existing callers are unaffected. `null` clears the
+  // assignment; omitted leaves it untouched.
+  departmentId: z.string().min(1).nullable().optional()
+})
+
+// Agent departments (ADR-055). Name: trimmed, non-empty, max 40; uniqueness is
+// case-insensitive and enforced in the repo layer.
+export const DepartmentNameSchema = z
+  .string()
+  .trim()
+  .min(1, 'Department name is required.')
+  .max(40, 'Department name must be 40 characters or fewer.')
+
+// Canonical key for case-insensitive department-name uniqueness. Shared by the
+// repo-layer duplicate check and the renderer's pre-submit validation so they
+// can never diverge. Collapses internal whitespace, like agent-name matching.
+export function normalizeDepartmentName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+export const DepartmentSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  position: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
+
+export const DepartmentCreateInputSchema = z.object({
+  name: DepartmentNameSchema
+})
+
+export const DepartmentRenameInputSchema = z.object({
+  id: z.string().min(1),
+  name: DepartmentNameSchema
+})
+
+export const DepartmentDeleteInputSchema = z.object({
+  id: z.string().min(1)
+})
+
+export const DepartmentReorderInputSchema = z.object({
+  orderedIds: z.array(z.string().min(1))
 })
 
 export const AgentSetPinnedInputSchema = z.object({
@@ -2320,6 +2364,11 @@ export type AgentDraft = z.infer<typeof AgentDraftSchema>
 export type AgentCreateInput = z.infer<typeof AgentCreateInputSchema>
 export type AgentUpdateInstructionsInput = z.infer<typeof AgentUpdateInstructionsInputSchema>
 export type AgentUpdateSettingsInput = z.infer<typeof AgentUpdateSettingsInputSchema>
+export type Department = z.infer<typeof DepartmentSchema>
+export type DepartmentCreateInput = z.infer<typeof DepartmentCreateInputSchema>
+export type DepartmentRenameInput = z.infer<typeof DepartmentRenameInputSchema>
+export type DepartmentDeleteInput = z.infer<typeof DepartmentDeleteInputSchema>
+export type DepartmentReorderInput = z.infer<typeof DepartmentReorderInputSchema>
 export type AgentSetPinnedInput = z.infer<typeof AgentSetPinnedInputSchema>
 export type AgentDeleteInput = z.infer<typeof AgentDeleteInputSchema>
 export type AgentDeleteResult = z.infer<typeof AgentDeleteResultSchema>

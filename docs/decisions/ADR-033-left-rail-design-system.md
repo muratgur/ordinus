@@ -229,7 +229,10 @@ dashed containers and plain text.
   separate Section Nav sharing the visual language.
 - Grouping and time filters are deferred but the ⚙ shell reserves their home, so
   adding them later is non-structural for the shell (grouping itself remains a
-  per-screen list-rendering change).
+  per-screen list-rendering change). **Realized by ADR-055**, which ships grouping
+  first on **Agents** (user-defined departments) rather than Workboard, and as a
+  **Flat ↔ By department view-mode toggle** rather than a ⚙ filter-popover entry —
+  see the revision note below.
 - shadcn primitives throughout (`Input`, `Button`, `Popover`, `ScrollArea`).
 
 ## Alternatives Considered
@@ -262,3 +265,22 @@ First use: **Agents** renders a quick-switch avatar roster (32px mascot squircle
 with presence/unread dots, ADR-038) so switching agents does not require
 re-expanding the rail. Screens whose records have no compact visual identity
 (e.g. Workboard) simply do not use the slot.
+
+## Revision (2026-06-21): grouping realized on Agents (ADR-055)
+
+The deferred **grouping** capability is realized by **ADR-055 (Agent Departments)**,
+with two refinements to this ADR's expectations:
+
+- **Agents-first, not Workboard-first.** This ADR expected grouping to "mature
+  per-screen, starting with Workboard." The real pressure was on the Agents roster
+  (a growing team across Marketing / Management / Personal), so grouping ships there
+  first. Workboard grouping remains deferred.
+- **A view-mode toggle, not a ⚙ filter entry.** This ADR reserved the filter popover
+  as grouping's home. For Agents, grouping is a **Flat ↔ By department** toggle: Flat
+  is the default and preserves the canonical `compareAgentChatRows` status sort;
+  By-department adds collapsible, drag-reorderable section headers *above* the
+  unchanged Agents item rows (item anatomy from the table above is untouched). The
+  toggle stays in the rail utility row, consistent with this ADR's shell.
+
+The collapsed `w-12` mini-roster strip stays **flat** in v1 — grouping applies to the
+expanded rail only.

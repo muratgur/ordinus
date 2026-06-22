@@ -28,6 +28,12 @@ import {
   AgentSetPinnedInputSchema,
   AgentUpdateInstructionsInputSchema,
   AgentUpdateSettingsInputSchema,
+  DepartmentCreateInputSchema,
+  DepartmentDeleteInputSchema,
+  DepartmentRenameInputSchema,
+  DepartmentReorderInputSchema,
+  DepartmentSchema,
+  normalizeDepartmentName,
   ConversationCancelTurnInputSchema,
   ConversationAnswerInputRequestInputSchema,
   ConversationCancelInputRequestInputSchema,
@@ -101,6 +107,11 @@ import {
   type AgentSetPinnedInput,
   type AgentUpdateInstructionsInput,
   type AgentUpdateSettingsInput,
+  type Department,
+  type DepartmentCreateInput,
+  type DepartmentDeleteInput,
+  type DepartmentRenameInput,
+  type DepartmentReorderInput,
   type AgentTurnOutcome,
   type ConversationCreateManualInput,
   type ConversationGetOrCreateRoomInput,
@@ -164,6 +175,7 @@ import {
   conversationParticipants,
   conversations,
   conversationTurns,
+  departments,
   localConnectorState,
   observedRunEvents,
   observedRuns,
@@ -1586,6 +1598,9 @@ export class OrdinusDatabase {
     if (this.hasDuplicateAgentName(parsed.name, currentAgent.id)) {
       throw new Error('Another agent already uses this name.')
     }
+    if (parsed.departmentId != null && !this.hasDepartment(parsed.departmentId)) {
+      throw new Error('That department no longer exists.')
+    }
 
     this.db
       .update(agents)
@@ -1599,12 +1614,131 @@ export class OrdinusDatabase {
         connectors: parsed.connectors,
         enabled: parsed.enabled,
         ...(parsed.avatar !== undefined ? { avatar: parsed.avatar } : {}),
+        ...(parsed.departmentId !== undefined ? { departmentId: parsed.departmentId } : {}),
         updatedAt: now
       })
       .where(eq(agents.id, parsed.id))
       .run()
 
     return this.getAgent(parsed.id)
+  }
+
+  // --- Agent departments (ADR-055) ---------------------------------------
+
+  listDepartments(): Department[] {
+    return this.db
+      .select()
+      .from(departments)
+      .orderBy(asc(departments.position), asc(departments.createdAt))
+      .all()
+      .map((row) => DepartmentSchema.parse(row))
+  }
+
+  hasDepartment(id: string): boolean {
+    return (
+      this.db
+        .select({ id: departments.id })
+        .from(departments)
+        .where(eq(departments.id, id))
+        .get() != null
+    )
+  }
+
+  createDepartment(input: DepartmentCreateInput): Department {
+    const parsed = DepartmentCreateInputSchema.parse(input)
+    if (this.hasDuplicateDepartmentName(parsed.name, null)) {
+      throw new Error('A department with that name already exists.')
+    }
+    const now = new Date().toISOString()
+    const nextPosition =
+      (this.db
+        .select({ value: sql<number>`max(${departments.position})` })
+        .from(departments)
+        .get()?.value ?? -1) + 1
+
+    const department = DepartmentSchema.parse({
+      id: getUniqueDepartmentId((id) => this.hasDepartment(id)),
+      name: parsed.name,
+      position: nextPosition,
+      createdAt: now,
+      updatedAt: now
+    })
+
+    this.db.insert(departments).values(department).run()
+    return department
+  }
+
+  renameDepartment(input: DepartmentRenameInput): Department {
+    const parsed = DepartmentRenameInputSchema.parse(input)
+    if (!this.hasDepartment(parsed.id)) {
+      throw new Error('That department no longer exists.')
+    }
+    if (this.hasDuplicateDepartmentName(parsed.name, parsed.id)) {
+      throw new Error('A department with that name already exists.')
+    }
+    const now = new Date().toISOString()
+    this.db
+      .update(departments)
+      .set({ name: parsed.name, updatedAt: now })
+      .where(eq(departments.id, parsed.id))
+      .run()
+    return DepartmentSchema.parse(
+      this.db.select().from(departments).where(eq(departments.id, parsed.id)).get()
+    )
+  }
+
+  deleteDepartment(input: DepartmentDeleteInput): void {
+    const parsed = DepartmentDeleteInputSchema.parse(input)
+    const now = new Date().toISOString()
+    // App-layer ON DELETE SET NULL: detach members, then drop the department.
+    // The codebase has no DB foreign keys (PRAGMA foreign_keys is off), so we
+    // enforce integrity here in a single transaction (ADR-055).
+    this.db.transaction((tx) => {
+      tx.update(agents)
+        .set({ departmentId: null, updatedAt: now })
+        .where(eq(agents.departmentId, parsed.id))
+        .run()
+      tx.delete(departments).where(eq(departments.id, parsed.id)).run()
+    })
+  }
+
+  reorderDepartments(input: DepartmentReorderInput): Department[] {
+    const parsed = DepartmentReorderInputSchema.parse(input)
+    const now = new Date().toISOString()
+    this.db.transaction((tx) => {
+      // Robust against a partial or stale orderedIds list: rank the ids the
+      // caller specified (ignoring any that no longer exist), then append any
+      // existing departments the caller omitted, preserving their current
+      // order. Every row is rewritten to a contiguous 0..n-1 position, so a
+      // dropped or extra id can never leave a stale/colliding position.
+      const current = tx
+        .select({ id: departments.id })
+        .from(departments)
+        .orderBy(asc(departments.position), asc(departments.createdAt))
+        .all()
+        .map((row) => row.id)
+      const requested = parsed.orderedIds.filter((id) => current.includes(id))
+      const remaining = current.filter((id) => !requested.includes(id))
+      const finalOrder = [...requested, ...remaining]
+      finalOrder.forEach((id, index) => {
+        tx.update(departments)
+          .set({ position: index, updatedAt: now })
+          .where(eq(departments.id, id))
+          .run()
+      })
+    })
+    return this.listDepartments()
+  }
+
+  private hasDuplicateDepartmentName(name: string, excludeId: string | null): boolean {
+    const rows = this.db
+      .select({ id: departments.id, name: departments.name })
+      .from(departments)
+      .all()
+    const normalized = normalizeDepartmentName(name)
+    return rows.some(
+      (row) => normalizeDepartmentName(row.name) === normalized && row.id !== excludeId
+    )
   }
 
   setAgentPinned(input: AgentSetPinnedInput): Agent {
@@ -5619,6 +5753,20 @@ function getUniqueAgentId(idExists: (id: string) => boolean): string {
 
 function createAgentId(): string {
   return `agt-${randomUUID()}`
+}
+
+function getUniqueDepartmentId(idExists: (id: string) => boolean): string {
+  let candidate = createDepartmentId()
+
+  while (idExists(candidate)) {
+    candidate = createDepartmentId()
+  }
+
+  return candidate
+}
+
+function createDepartmentId(): string {
+  return `dpt-${randomUUID()}`
 }
 
 function createConversationId(): string {

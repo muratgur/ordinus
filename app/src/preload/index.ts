@@ -5,6 +5,11 @@ import type {
   AgentCreateInput,
   AgentDeleteInput,
   AgentDeleteResult,
+  Department,
+  DepartmentCreateInput,
+  DepartmentDeleteInput,
+  DepartmentRenameInput,
+  DepartmentReorderInput,
   AgentDraft,
   AgentDraftFromProfileInput,
   AgentDraftFromIntentInput,
@@ -329,6 +334,17 @@ const ordinus = {
       input: AgentExtraDirectoryListInput
     ): Promise<AgentExtraDirectoryList> =>
       ipcRenderer.invoke(ipcChannels.agentsListExtraDirectories, input)
+  },
+  departments: {
+    list: async (): Promise<Department[]> => ipcRenderer.invoke(ipcChannels.departmentsList),
+    create: async (input: DepartmentCreateInput): Promise<Department> =>
+      ipcRenderer.invoke(ipcChannels.departmentsCreate, input),
+    rename: async (input: DepartmentRenameInput): Promise<Department> =>
+      ipcRenderer.invoke(ipcChannels.departmentsRename, input),
+    delete: async (input: DepartmentDeleteInput): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.departmentsDelete, input),
+    reorder: async (input: DepartmentReorderInput): Promise<Department[]> =>
+      ipcRenderer.invoke(ipcChannels.departmentsReorder, input)
   },
   skills: {
     listLibrary: async (): Promise<LibrarySkill[]> =>

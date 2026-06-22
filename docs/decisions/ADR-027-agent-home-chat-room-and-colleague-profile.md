@@ -205,6 +205,11 @@ single-agent conversations are deleted (the product is pre-release), giving a cl
   are removed during the pre-release stage.
 - Presence semantics (mapping running turns and active schedules to "Working…") must be defined in
   implementation.
+- **ADR-055 (Agent Departments) extends this roster.** The team-roster rail gains an optional
+  grouping by user-defined **department**, and the inline identity editor (`EditProfileDialog`) gains
+  a department selector. Department is a lightweight organizational attribute on identity — neither
+  "warm direction" nor "Trust & access" machinery (the §4 split) — and sits with name/role. The 1:1
+  room, presence, and create flow are untouched.
 
 ## Related
 
@@ -216,3 +221,4 @@ single-agent conversations are deleted (the product is pre-release), giving a cl
 - ADR-023: Scheduled agent tasks (surfaced as the Agenda tab)
 - ADR-015: External system connectors (surfaced under CV)
 - ADR-024: Agent extra directories (surfaced under Trust & access)
+- ADR-055: Agent departments — rail grouping (extends the roster + profile editor)
