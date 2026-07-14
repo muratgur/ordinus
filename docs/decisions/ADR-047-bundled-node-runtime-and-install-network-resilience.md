@@ -172,6 +172,40 @@ exists.
 `NODE_TLS_REJECT_UNAUTHORIZED=0` to "fix" a self-signed-cert error. That defeats
 transport security. Diagnose it (3a) and leave the remediation to the user/IT.
 
+**3f. The install must be diagnosable when classification fails (required).**
+*Added 2026-07-14, after a Windows user hit `"The install failed (npm exit code 1)."`
+and neither they nor we could get any further.*
+
+3a is a set of regexes over npm's stderr, so it is a *guess*, and `unknown` is that
+guess admitting it failed. That case is not exotic: `--loglevel=error` plus buffered
+lifecycle-script output means a failed npm run routinely produces thin or empty stderr,
+which matches no pattern. As originally built, everything needed to diagnose such a
+failure was thrown away — stdout was never read, stderr survived only as a 4 KB tail
+that reached neither disk nor the UI, and nothing was ever logged. A failure the
+classifier could not name was therefore, by construction, unreportable. ADR-028's
+"surface the npm error verbatim" was superseded by 3a as *too opaque to act on*; the
+mistake was reading that as a licence to surface nothing at all. Classification and
+raw output are complementary: the cause tells the user what to do, the output is what
+they send us when the cause is `unknown`.
+
+Therefore:
+- **Log every managed install to disk** at `<userData>/logs/install/<provider>-<ts>.log`
+  — npm's full stdout+stderr (no truncation), plus a header recording the facts that
+  decide whether an install can work at all: resolved npm invocation and full argv,
+  bundled-Node path, prefix, cache, proxy, packaged/dev. Redacted through the existing
+  `redactDiagnosticsText`. Best-effort: a log failure must never fail an install.
+- **Surface the detail in the failure card** — a "Show details" disclosure with npm's
+  stderr, a copy-to-clipboard affordance, and a reveal-in-file-manager shortcut for the
+  log. The renderer sends only a `providerId`; main resolves the path from its own
+  persisted state, so the channel cannot become an "open any file" primitive.
+- **Never let a spawn failure masquerade as a network failure.** If npm cannot start at
+  all (missing binary, or a packaged build whose bundled Node is absent — a security
+  tool quarantining it is the realistic case), that is cause `npm-unavailable`: a broken
+  Ordinus, not a broken network. It is never retried, and it is checked *before* the npm
+  run rather than inferred from its wreckage.
+- **Make `unknown` say something.** Lead with npm's first real stderr line and point at
+  the log, rather than printing a bare exit code.
+
 ## Alternatives Considered
 
 ### Node provisioning: a `node` shim that redirects to Electron-as-node (option "1b")
@@ -394,6 +428,32 @@ both consume `process.env`, so the startup prepend reaches them without per-site
   install; the packaged-vs-dev resource lookup is unified in `paths.ts`
   (`resolveResourcePath`) and reused by migrations/profiles/knowledge/local-MCP/bundled
   Node.
+- **Phase 5 (§3f install diagnosability):** implemented 2026-07-14 — `install-log.ts`
+  (durable per-attempt log with an environment header), npm stdout/stderr piped into it,
+  `logPath` + `stderrTail` carried on the error event and persisted as
+  `installLogPaths` / `installErrorDetails`, a "Show details" disclosure with copy and
+  reveal-in-folder on the onboarding failure card, the `npm-unavailable` cause with a
+  bundled-Node preflight, and a non-empty `unknown` message. Also fixed here: on the
+  win32 `npm.cmd` fallback (dev only — packaged builds use bundled npm with no shell),
+  arguments went unquoted through `cmd.exe`, so a prefix path containing a space —
+  `C:\Users\Some User\…` — was split in two.
+- **Review corrections to phase 5 (same day):** two of the above were wrong on first pass.
+  (a) The preflight refused the install whenever the *bundled* Node was missing — but npm
+  runs under Electron-as-node and its lifecycle scripts (and the CLI launchers) fall back
+  to a `node` on PATH, so a machine with its own Node installs fine without ours. Refusing
+  there turned a working install into a permanent failure. It now probes both and only
+  fails on "no Node anywhere" (`probeNodeRuntime`, bundled-node.ts).
+  (b) Onboarding starts an install for every selected provider at once, and all providers
+  share one npm prefix, which npm does not lock against a second npm. Concurrent
+  `npm install -g --prefix <same>` runs could interleave writes into one `node_modules`
+  tree. Installs are now serialized on a FIFO lock held from the npm run through bin
+  resolution and verify (the latter two *read* the tree the other install would be
+  writing); the waiting provider surfaces "Waiting for the other install…" rather than
+  appearing frozen. Per-provider prefixes would allow real parallelism and remain the
+  better long-term shape, but they would strand CLIs already installed at the current
+  location.
 - **Not yet verified** end-to-end in a packaged build on a Node-less Windows machine —
   the authoritative test. Classifier logic unit-checked against representative npm
-  stderr samples.
+  stderr samples. §3f was exercised in dev against a forced install failure (unreachable
+  registry): correct `proxy` cause, no wasted retry, full npm output in the card and the
+  log file.

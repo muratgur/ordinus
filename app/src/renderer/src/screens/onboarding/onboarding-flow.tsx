@@ -3,7 +3,9 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronDown,
   Folder,
+  FolderOpen,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -16,6 +18,8 @@ import type {
   ProviderId
 } from '@shared/contracts'
 import { getProviderDisplayName } from '@shared/provider-labels'
+import { CopyButton } from '../../components/copy-button'
+import { DiagnosticBlock } from '../../components/observability-details'
 import { Button } from '../../components/ui/button'
 import { notify } from '../../lib/notifications'
 import { cn } from '../../lib/utils'
@@ -45,7 +49,12 @@ const INSTALL_CAUSE_GUIDANCE: Record<InstallErrorCause, string> = {
   permission: "Ordinus couldn't write the install files — check folder permissions and try again.",
   registry: 'The package registry returned an error — try again in a moment.',
   toolchain: 'This CLI needs a build toolchain that this machine is missing.',
-  unknown: 'Try again. If it keeps failing, check your network or proxy.'
+  'npm-unavailable':
+    "Ordinus's own installer could not start — reinstall Ordinus. If a security tool quarantined part of it, allow Ordinus and try again.",
+  // 'unknown' means the classifier had no idea, and the service already retried once on
+  // the user's behalf (it is a transient cause). So: retry is worth one more shot, but
+  // point at the details — that log is the only thing that can move an unknown forward.
+  unknown: 'Try again — if it fails the same way, open the details and send us the log.'
 }
 
 type OnboardingFlowProps = {
@@ -116,7 +125,19 @@ export function OnboardingFlow({
           />
         ) : null}
 
-        {stage === 'install' ? <InstallStage state={state} onStateChange={setStatus} /> : null}
+        {stage === 'install' ? (
+          <InstallStage
+            state={state}
+            onStateChange={setStatus}
+            onContinueWithSignedIn={async () => {
+              // Leaves the not-signed-in colleagues behind. Their login processes keep
+              // running in main; when one finishes, the runtime picks it up and Settings
+              // shows it connected without the user having to press Check.
+              const next = await window.ordinus.onboarding.continueWithSignedIn()
+              setStatus(next)
+            }}
+          />
+        ) : null}
 
         {stage === 'colleague' ? (
           <OnboardingHandoffStage
@@ -427,10 +448,12 @@ const AUTH_POLL_TIMEOUT_MS = 5 * 60_000
 
 function InstallStage({
   state,
-  onStateChange
+  onStateChange,
+  onContinueWithSignedIn
 }: {
   state: OnboardingState
   onStateChange: (next: OnboardingStatus) => void
+  onContinueWithSignedIn: () => Promise<void>
 }): React.JSX.Element {
   // Track which providers we've already kicked into the connect flow, so the
   // effect below doesn't re-trigger auth every time install events fire.
@@ -458,16 +481,24 @@ function InstallStage({
     [onStateChange]
   )
 
+  // Sign the colleagues in ONE AT A TIME. Kicking every provider's login at once opened
+  // two OAuth tabs in the same browser simultaneously — they compete for the foreground
+  // and for the browser's session state, and the user has no idea which one they are
+  // answering. The next colleague's login opens once this one is signed in (it leaves
+  // 'installed') or gives up (its poll times out).
+  const activeLogin = state.selectedProviders.find(
+    (providerId) =>
+      state.installResults[providerId] === 'installed' && !authTimedOut.has(providerId)
+  )
+
   // Auto-trigger connect + poll runtime until the provider reports connected,
   // then mark authed without user intervention. Manual "I'm signed in"
   // button stays as a fallback (and as a re-poll trigger).
   useEffect(() => {
-    const timers: ReturnType<typeof setInterval>[] = []
-    for (const providerId of state.selectedProviders) {
-      const status = state.installResults[providerId]
-      if (status !== 'installed') continue
-      if (authKicked.current.has(providerId)) continue
+    if (!activeLogin) return
+    const providerId = activeLogin
 
+    if (!authKicked.current.has(providerId)) {
       authKicked.current.add(providerId)
       authPollStartedAt.current.set(providerId, Date.now())
 
@@ -476,37 +507,37 @@ function InstallStage({
         .catch(() => {
           /* Browser couldn't open — failure card will surface a retry. */
         })
+    }
 
-      const interval = setInterval(() => {
-        const startedAt = authPollStartedAt.current.get(providerId) ?? Date.now()
-        if (Date.now() - startedAt > AUTH_POLL_TIMEOUT_MS) {
-          clearInterval(interval)
-          setAuthTimedOut((current) => {
-            if (current.has(providerId)) return current
-            const next = new Set(current)
-            next.add(providerId)
-            return next
-          })
-          return
-        }
-        void window.ordinus.runtime
-          .refreshProvider({ providerId })
-          .then((result) => {
-            if (result.connected) {
-              clearInterval(interval)
-              void markAuthed(providerId)
-            }
-          })
-          .catch(() => {
-            /* Transient — keep polling until timeout. */
-          })
-      }, AUTH_POLL_INTERVAL_MS)
-      timers.push(interval)
-    }
-    return () => {
-      for (const timer of timers) clearInterval(timer)
-    }
-  }, [state.installResults, state.selectedProviders, markAuthed])
+    const interval = setInterval(() => {
+      const startedAt = authPollStartedAt.current.get(providerId) ?? Date.now()
+      if (Date.now() - startedAt > AUTH_POLL_TIMEOUT_MS) {
+        clearInterval(interval)
+        // Timing out also hands the queue to the next colleague, so one abandoned
+        // sign-in can't hold the others hostage.
+        setAuthTimedOut((current) => {
+          if (current.has(providerId)) return current
+          const next = new Set(current)
+          next.add(providerId)
+          return next
+        })
+        return
+      }
+      void window.ordinus.runtime
+        .refreshProvider({ providerId })
+        .then((result) => {
+          if (result.connected) {
+            clearInterval(interval)
+            void markAuthed(providerId)
+          }
+        })
+        .catch(() => {
+          /* Transient — keep polling until timeout. */
+        })
+    }, AUTH_POLL_INTERVAL_MS)
+
+    return () => clearInterval(interval)
+  }, [activeLogin, markAuthed])
 
   function clearAuthTimeout(providerId: ProviderId): void {
     setAuthTimedOut((current) => {
@@ -526,6 +557,17 @@ function InstallStage({
     } catch (error) {
       notify.attention({
         title: 'Could not retry',
+        description: error instanceof Error ? error.message : 'Unknown error.'
+      })
+    }
+  }
+
+  async function revealInstallLog(providerId: ProviderId): Promise<void> {
+    try {
+      await window.ordinus.onboarding.revealInstallLog({ providerId })
+    } catch (error) {
+      notify.attention({
+        title: 'Could not open the log',
         description: error instanceof Error ? error.message : 'Unknown error.'
       })
     }
@@ -563,9 +605,37 @@ function InstallStage({
     }
   }
 
+  async function continueWithSignedIn(): Promise<void> {
+    try {
+      await onContinueWithSignedIn()
+    } catch (error) {
+      notify.attention({
+        title: 'Could not continue',
+        description: error instanceof Error ? error.message : 'Unknown error.'
+      })
+    }
+  }
+
   const allFailed = state.selectedProviders.every(
     (providerId) => state.installResults[providerId] === 'failed'
   )
+
+  // Onboarding now waits for every selected colleague to sign in (main advances the stage
+  // only when all are authed). That must not become a trap: a colleague whose install
+  // failed, or one the user picked by mistake and won't authenticate, would otherwise
+  // hold the flow open forever. So once at least one is in, offer an explicit way out —
+  // named, so the user knows exactly who they are leaving behind.
+  //
+  // Only once the stragglers have actually settled, though: offering to continue without
+  // a colleague whose install is still running would invite the user to drop someone who
+  // is seconds from being ready and has not even been offered a sign-in yet.
+  const signedIn = state.selectedProviders.filter((id) => state.installResults[id] === 'authed')
+  const notSignedIn = state.selectedProviders.filter((id) => state.installResults[id] !== 'authed')
+  const stillSettling = notSignedIn.some((id) => {
+    const status = state.installResults[id] ?? 'pending'
+    return status === 'pending' || status === 'installing'
+  })
+  const canContinueWithout = signedIn.length > 0 && notSignedIn.length > 0 && !stillSettling
 
   return (
     <div className="grid w-full max-w-md gap-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-500">
@@ -585,12 +655,29 @@ function InstallStage({
             phase={state.installPhases[providerId] ?? 'idle'}
             error={state.installErrors[providerId]}
             errorCause={state.installErrorCauses[providerId]}
+            errorDetails={state.installErrorDetails[providerId]}
+            logPath={state.installLogPaths[providerId]}
+            queuedForLogin={
+              state.installResults[providerId] === 'installed' && providerId !== activeLogin
+            }
             authTimedOut={authTimedOut.has(providerId)}
             onRetry={() => void retryInstall(providerId)}
+            onRevealLog={() => void revealInstallLog(providerId)}
             onConfirmAuth={() => void confirmAuthed(providerId)}
           />
         ))}
       </ul>
+
+      {canContinueWithout ? (
+        <div className="grid justify-items-center gap-1">
+          <Button onClick={() => void continueWithSignedIn()} variant="ghost" size="sm">
+            Continue without {notSignedIn.map(getProviderDisplayName).join(' and ')}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            You can finish their sign-in later from Settings.
+          </p>
+        </div>
+      ) : null}
 
       {allFailed ? (
         <div className="flex justify-center">
@@ -609,8 +696,12 @@ function InstallRow({
   phase,
   error,
   errorCause,
+  errorDetails,
+  logPath,
+  queuedForLogin,
   authTimedOut,
   onRetry,
+  onRevealLog,
   onConfirmAuth
 }: {
   providerId: ProviderId
@@ -618,8 +709,12 @@ function InstallRow({
   phase: OnboardingState['installPhases'][ProviderId]
   error: string | undefined
   errorCause: InstallErrorCause | undefined
+  errorDetails: string | undefined
+  logPath: string | undefined
+  queuedForLogin: boolean
   authTimedOut: boolean
   onRetry: () => void
+  onRevealLog: () => void
   onConfirmAuth: () => void
 }): React.JSX.Element {
   const name = getProviderDisplayName(providerId)
@@ -631,12 +726,19 @@ function InstallRow({
         <StatusIndicator status={status} />
         <div className="min-w-0 flex-1">
           <p className="font-semibold">{statusLabel(name, status)}</p>
-          {status === 'installed' && !authTimedOut ? (
+          {/* Sign-ins run one at a time, so a queued colleague has no browser tab open
+              yet — telling them to "finish signing in" would send them looking for one. */}
+          {status === 'installed' && queuedForLogin ? (
+            <p className="text-xs text-muted-foreground">
+              Next in line — we&apos;ll open their sign-in shortly.
+            </p>
+          ) : null}
+          {status === 'installed' && !queuedForLogin && !authTimedOut ? (
             <p className="text-xs text-muted-foreground">
               Finish signing in — we&apos;ll detect it automatically.
             </p>
           ) : null}
-          {status === 'installed' && authTimedOut ? (
+          {status === 'installed' && !queuedForLogin && authTimedOut ? (
             <p className="text-xs text-status-attention">
               Still waiting — click below when you&apos;ve signed in.
             </p>
@@ -645,7 +747,7 @@ function InstallRow({
             <p className="text-xs text-muted-foreground">{phaseHint(phase)}</p>
           ) : null}
         </div>
-        {status === 'installed' ? (
+        {status === 'installed' && !queuedForLogin ? (
           <Button size="sm" variant="ghost" onClick={onConfirmAuth}>
             I&apos;m signed in
           </Button>
@@ -663,7 +765,10 @@ function InstallRow({
           providerId={providerId}
           error={error}
           errorCause={errorCause}
+          errorDetails={errorDetails}
+          logPath={logPath}
           onRetry={onRetry}
+          onRevealLog={onRevealLog}
         />
       ) : null}
     </li>
@@ -676,6 +781,8 @@ function InstallProgressBar({
   phase: OnboardingState['installPhases'][ProviderId]
 }): React.JSX.Element {
   const percent = phaseToPercent(phase)
+  // 'waiting' is deliberately not indeterminate: the shimmer reads as work in progress,
+  // and this row is queued behind the other install, doing nothing.
   const indeterminate = phase === 'start' || phase === 'download'
   return (
     <div className="h-1 w-full overflow-hidden bg-muted">
@@ -695,15 +802,37 @@ function ProviderFailureCard({
   providerId,
   error,
   errorCause,
-  onRetry
+  errorDetails,
+  logPath,
+  onRetry,
+  onRevealLog
 }: {
   providerId: ProviderId
   error: string | undefined
   errorCause: InstallErrorCause | undefined
+  errorDetails: string | undefined
+  logPath: string | undefined
   onRetry: () => void
+  onRevealLog: () => void
 }): React.JSX.Element {
   const links = PROVIDER_LINKS[providerId]
-  const guidance = INSTALL_CAUSE_GUIDANCE[errorCause ?? 'unknown']
+  const cause = errorCause ?? 'unknown'
+  const guidance = INSTALL_CAUSE_GUIDANCE[cause]
+  const [expanded, setExpanded] = useState(false)
+
+  // ADR-047 §3f: a classified cause is a guess, and 'unknown' is an admission
+  // that the guess failed. Whatever npm actually said has to be reachable, or
+  // the user has nothing to send us and we have nothing to act on.
+  const hasDetails = Boolean(errorDetails || logPath)
+  const report = [
+    error ?? 'Install failed.',
+    `cause: ${cause}`,
+    logPath ? `log: ${logPath}` : '',
+    errorDetails ? `\n${errorDetails}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+
   return (
     <div className="border-t bg-muted/30 px-3 py-2 text-xs">
       {error ? (
@@ -730,7 +859,54 @@ function ProviderFailureCard({
         <button type="button" onClick={onRetry} className="underline-offset-4 hover:underline">
           Network issue? Try again
         </button>
+        {hasDetails ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            aria-expanded={expanded}
+            className="flex items-center gap-1 underline-offset-4 hover:underline"
+          >
+            <ChevronDown
+              className={cn('size-3 transition-transform', expanded && 'rotate-180')}
+              aria-hidden
+            />
+            {expanded ? 'Hide details' : 'Show details'}
+          </button>
+        ) : null}
       </div>
+
+      {hasDetails && expanded ? (
+        <div className="mt-2 grid gap-1.5">
+          <p className="text-muted-foreground">
+            Send this to us if it keeps failing — it says what actually went wrong.
+          </p>
+          {errorDetails ? (
+            <DiagnosticBlock label="npm output">{errorDetails}</DiagnosticBlock>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <CopyButton
+              text={report}
+              label="Copy install error"
+              className="flex items-center gap-1 hover:underline"
+            >
+              Copy error
+            </CopyButton>
+            {logPath ? (
+              <button
+                type="button"
+                onClick={onRevealLog}
+                className="flex items-center gap-1 underline-offset-4 hover:underline"
+              >
+                <FolderOpen className="size-3" aria-hidden />
+                Show log in folder
+              </button>
+            ) : null}
+          </div>
+          {logPath ? (
+            <p className="font-mono text-muted-foreground [overflow-wrap:anywhere]">{logPath}</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -774,6 +950,9 @@ function phaseHint(phase: OnboardingState['installPhases'][ProviderId]): string 
   switch (phase) {
     case 'start':
       return 'Reaching out…'
+    case 'waiting':
+      // Colleagues are hired one at a time — they share a toolbox (one npm prefix).
+      return 'Waiting for the other colleague…'
     case 'download':
       return 'Bringing in tools…'
     case 'verify':
@@ -790,6 +969,8 @@ function phaseHint(phase: OnboardingState['installPhases'][ProviderId]): string 
 
 function phaseToPercent(phase: OnboardingState['installPhases'][ProviderId]): number {
   switch (phase) {
+    case 'waiting':
+      return 5
     case 'start':
       return 10
     case 'download':

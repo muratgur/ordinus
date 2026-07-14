@@ -173,6 +173,7 @@ import {
   OnboardingSelectProvidersInputSchema,
   OnboardingConfirmWorkspaceInputSchema,
   OnboardingInstallProviderInputSchema,
+  OnboardingRevealInstallLogInputSchema,
   OnboardingMarkProviderAuthedInputSchema,
   OnboardingCompleteInputSchema
 } from '@shared/contracts'
@@ -1149,6 +1150,13 @@ export function registerIpcHandlers(
     const input = ProviderActionInputSchema.parse(payload)
     return runtime.refreshProvider(input)
   })
+  // A browser sign-in finishes long after connectProvider returns. Forward the runtime's
+  // "this provider just settled" signal to every window so the UI updates on its own.
+  runtime.onProviderStatusChanged((status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(ipcChannels.runtimeProviderStatusChanged, status)
+    }
+  })
   ipcMain.handle(ipcChannels.connectorsList, () => listConnectors())
   ipcMain.handle(ipcChannels.connectorsConnect, (_event, payload) => {
     const input = ConnectorConnectInputSchema.parse(payload)
@@ -1299,6 +1307,13 @@ export function registerIpcHandlers(
     return onboarding.markProviderAuthed(input.providerId, input.authed)
   })
   ipcMain.handle(ipcChannels.onboardingResetProviders, () => onboarding.resetProviders())
+  ipcMain.handle(ipcChannels.onboardingRevealInstallLog, (_event, payload) => {
+    const input = OnboardingRevealInstallLogInputSchema.parse(payload)
+    onboarding.revealInstallLog(input.providerId)
+  })
+  ipcMain.handle(ipcChannels.onboardingContinueWithSignedIn, () =>
+    onboarding.continueWithSignedIn()
+  )
   ipcMain.handle(ipcChannels.onboardingComplete, (_event, payload) => {
     const input = OnboardingCompleteInputSchema.parse(payload)
     return onboarding.complete(input.agentId)

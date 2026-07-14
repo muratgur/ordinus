@@ -24,20 +24,26 @@ export function CopyButton({
   text,
   label = 'Copy',
   className,
-  iconClassName
+  iconClassName,
+  children
 }: {
   /** The value to copy; pass a function to defer building it until click. */
   text: string | (() => string)
   label?: string
   className?: string
   iconClassName?: string
+  /** Optional visible caption. Without it the button stays icon-only. */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const { copied, copy } = useCopyFeedback(() => (typeof text === 'function' ? text() : text))
 
   return (
     <button
       type="button"
-      aria-label={copied ? 'Copied' : label}
+      // With a visible caption, an aria-label would override it and leave the accessible
+      // name different from the text on screen — a speech-input user saying what they can
+      // see couldn't activate the button (WCAG 2.5.3). Let the caption name the button.
+      aria-label={children ? undefined : copied ? 'Copied' : label}
       title={copied ? 'Copied' : label}
       onClick={copy}
       className={cn(
@@ -55,6 +61,7 @@ export function CopyButton({
       ) : (
         <Copy className={cn('size-3.5', iconClassName)} />
       )}
+      {children ? <span>{copied ? 'Copied' : children}</span> : null}
     </button>
   )
 }

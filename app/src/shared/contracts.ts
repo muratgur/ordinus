@@ -38,6 +38,10 @@ export const InstallErrorCauseSchema = z.enum([
   'permission', // EACCES/EPERM writing the install files
   'registry', // registry returned an error (E404, 5xx…)
   'toolchain', // a dependency needs a C/native build toolchain we don't have
+  // ADR-047 §3f: npm never started — its binary is missing, or the bundled Node
+  // runtime it needs is absent from this install. A broken Ordinus, not a broken
+  // network, so it is never retried.
+  'npm-unavailable',
   'unknown' // unclassified (includes post-install resolution failures)
 ])
 
@@ -54,6 +58,14 @@ export const ProviderInstallEventSchema = z.discriminatedUnion('phase', [
     phase: z.literal('download'),
     providerId: ProviderIdSchema,
     message: z.string()
+  }),
+  // Queued behind another provider's install: they share one npm prefix, which npm
+  // will not lock against a second npm, so the installs are serialized. A distinct
+  // phase (rather than a 'download' message) because the renderer paints from the
+  // persisted phase and would otherwise show this as an install already underway.
+  z.object({
+    phase: z.literal('waiting'),
+    providerId: ProviderIdSchema
   }),
   z.object({
     phase: z.literal('verify'),
@@ -72,7 +84,11 @@ export const ProviderInstallEventSchema = z.discriminatedUnion('phase', [
     // ADR-047 §3a: classified failure cause. Defaults to 'unknown' for legacy
     // payloads and post-install resolution failures.
     cause: InstallErrorCauseSchema.default('unknown'),
-    stderrTail: z.string().optional()
+    stderrTail: z.string().optional(),
+    // ADR-047 §3f: absolute path of the install log holding the full npm output.
+    // Surfaced in onboarding so a failure the classifier could not name is still
+    // reportable.
+    logPath: z.string().optional()
   })
 ])
 
@@ -102,6 +118,7 @@ export const OnboardingProviderStatusSchema = z.enum([
 export const OnboardingInstallPhaseSchema = z.enum([
   'idle',
   'start',
+  'waiting',
   'download',
   'verify',
   'done',
@@ -151,6 +168,22 @@ export const OnboardingStateSchema = z.object({
           Record<z.infer<typeof ProviderIdSchema>, z.infer<typeof InstallErrorCauseSchema>>
         >
     ),
+  // ADR-047 §3f: the raw npm stderr tail per failed provider, and the path of the
+  // install log holding its full output. Both feed the "Show details" disclosure
+  // on the failure card. Optional so states persisted before these fields still
+  // parse — a schema miss silently resets onboarding (see getOnboardingStatus).
+  installErrorDetails: z
+    .record(z.string(), z.string())
+    .optional()
+    .transform(
+      (value) => (value ?? {}) as Partial<Record<z.infer<typeof ProviderIdSchema>, string>>
+    ),
+  installLogPaths: z
+    .record(z.string(), z.string())
+    .optional()
+    .transform(
+      (value) => (value ?? {}) as Partial<Record<z.infer<typeof ProviderIdSchema>, string>>
+    ),
   firstAgentId: z.string().nullable(),
   // Lightweight stage transition log for future telemetry. Kept in state so it
   // survives restart and is observable for debugging onboarding drop-off.
@@ -183,6 +216,13 @@ export const OnboardingConfirmWorkspaceInputSchema = z.object({
 })
 
 export const OnboardingInstallProviderInputSchema = z.object({
+  providerId: ProviderIdSchema
+})
+
+// The renderer names the provider, never a path: main resolves the log location
+// from its own persisted onboarding state, so this can't be turned into an
+// "open any file on disk" primitive.
+export const OnboardingRevealInstallLogInputSchema = z.object({
   providerId: ProviderIdSchema
 })
 

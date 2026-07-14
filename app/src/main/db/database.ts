@@ -6471,6 +6471,8 @@ export function createInitialOnboardingState(): OnboardingState {
     installPhases: {},
     installErrors: {},
     installErrorCauses: {},
+    installErrorDetails: {},
+    installLogPaths: {},
     firstAgentId: null,
     stageHistory: [{ stage: 'welcome', at: new Date().toISOString() }]
   }

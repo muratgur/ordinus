@@ -136,6 +136,35 @@ function App(): React.JSX.Element {
     void loadStatus()
   }, [])
 
+  // A browser sign-in lands minutes after we last read provider status, and nothing in
+  // the app would otherwise notice: Settings kept showing "not connected" until the user
+  // pressed Check. Main now announces the settled status, so patch it straight in — no
+  // full loadStatus(), which would re-spawn every provider CLI.
+  useEffect(() => {
+    return window.ordinus.runtime.onProviderStatusChanged((status) => {
+      let missingSetupStatus = false
+      setState((current) => {
+        if (!current.setupStatus) {
+          // Phase 2 hasn't landed, or it failed silently and left setupStatus null. Either
+          // way there is nothing to patch, and dropping the push would put us right back
+          // in the bug this fixes — a completed sign-in the UI never hears about.
+          missingSetupStatus = true
+          return current
+        }
+        return {
+          ...current,
+          setupStatus: {
+            ...current.setupStatus,
+            providers: current.setupStatus.providers.map((provider) =>
+              provider.id === status.id ? status : provider
+            )
+          }
+        }
+      })
+      if (missingSetupStatus) void loadStatus()
+    })
+  }, [])
+
   async function runSetupAction(action: string, task: () => Promise<void>): Promise<void> {
     setState((current) => ({ ...current, busyAction: action, setupError: '' }))
 

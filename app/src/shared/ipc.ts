@@ -145,6 +145,9 @@ export const ipcChannels = {
   runtimeConnectProvider: 'runtime:connect-provider',
   runtimeDisconnectProvider: 'runtime:disconnect-provider',
   runtimeRefreshProvider: 'runtime:refresh-provider',
+  // Pushed when a browser sign-in settles outside the app, so the UI doesn't sit on a
+  // stale "not connected" until the user presses Check.
+  runtimeProviderStatusChanged: 'runtime:provider-status-changed',
   connectorsList: 'connectors:list',
   connectorsConnect: 'connectors:connect',
   connectorsDisconnect: 'connectors:disconnect',
@@ -187,6 +190,8 @@ export const ipcChannels = {
   onboardingInstallProvider: 'onboarding:install-provider',
   onboardingInstallEvent: 'onboarding:install-event',
   onboardingResetProviders: 'onboarding:reset-providers',
+  onboardingRevealInstallLog: 'onboarding:reveal-install-log',
+  onboardingContinueWithSignedIn: 'onboarding:continue-with-signed-in',
   onboardingMarkProviderAuthed: 'onboarding:mark-provider-authed',
   onboardingComplete: 'onboarding:complete'
 } as const

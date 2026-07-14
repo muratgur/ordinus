@@ -504,7 +504,13 @@ const ordinus = {
     disconnectProvider: async (input: ProviderActionInput): Promise<ProviderStatus> =>
       ipcRenderer.invoke(ipcChannels.runtimeDisconnectProvider, input),
     refreshProvider: async (input: ProviderActionInput): Promise<ProviderStatus> =>
-      ipcRenderer.invoke(ipcChannels.runtimeRefreshProvider, input)
+      ipcRenderer.invoke(ipcChannels.runtimeRefreshProvider, input),
+    onProviderStatusChanged: (callback: (status: ProviderStatus) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, payload: ProviderStatus): void =>
+        callback(payload)
+      ipcRenderer.on(ipcChannels.runtimeProviderStatusChanged, listener)
+      return () => ipcRenderer.removeListener(ipcChannels.runtimeProviderStatusChanged, listener)
+    }
   },
   connectors: {
     list: async (): Promise<ConnectorSummary[]> => ipcRenderer.invoke(ipcChannels.connectorsList),
@@ -601,6 +607,10 @@ const ordinus = {
       ipcRenderer.invoke(ipcChannels.onboardingMarkProviderAuthed, input),
     resetProviders: async (): Promise<OnboardingStatus> =>
       ipcRenderer.invoke(ipcChannels.onboardingResetProviders),
+    revealInstallLog: async (input: { providerId: ProviderId }): Promise<void> =>
+      ipcRenderer.invoke(ipcChannels.onboardingRevealInstallLog, input),
+    continueWithSignedIn: async (): Promise<OnboardingStatus> =>
+      ipcRenderer.invoke(ipcChannels.onboardingContinueWithSignedIn),
     complete: async (input: { agentId?: string }): Promise<OnboardingStatus> =>
       ipcRenderer.invoke(ipcChannels.onboardingComplete, input),
     onInstallEvent: (

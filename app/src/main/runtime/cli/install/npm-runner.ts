@@ -4,14 +4,34 @@ import { sep } from 'node:path'
 export type NpmRunOptions = {
   cwd: string
   env: NodeJS.ProcessEnv
+  /** Called once with the resolved invocation, before the child starts. */
+  onSpawn?: (info: NpmSpawnInfo) => void
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
   signal?: AbortSignal
 }
 
+/** The command line actually handed to the OS, for the install log. */
+export type NpmSpawnInfo = {
+  command: string
+  args: string[]
+  shell: boolean
+}
+
 export type NpmRunResult = {
   code: number | null
   stderrTail: string
+}
+
+/** npm could not be started at all (missing binary, blocked exec) — not an npm failure. */
+export class NpmSpawnError extends Error {
+  constructor(
+    message: string,
+    readonly info: NpmSpawnInfo
+  ) {
+    super(message)
+    this.name = 'NpmSpawnError'
+  }
 }
 
 const STDERR_TAIL_BYTES = 4_096
@@ -29,11 +49,19 @@ const STDERR_TAIL_BYTES = 4_096
 export function runNpm(args: string[], options: NpmRunOptions): Promise<NpmRunResult> {
   return new Promise((resolve, reject) => {
     const { command, baseArgs, shell, asNode } = resolveNpmCommand()
+    // Under `shell: true` Node hands the joined command line to cmd.exe as-is,
+    // so an argument containing spaces — `--prefix C:\Users\Some User\...` —
+    // arrives as two. Node does this quoting itself when there is no shell, so
+    // only the win32 `npm.cmd` fallback below needs it.
+    const spawnArgs = [...baseArgs, ...args].map((arg) => (shell ? quoteForCmd(arg) : arg))
+    const info: NpmSpawnInfo = { command, args: spawnArgs, shell }
+    options.onSpawn?.(info)
+
     // When invoking Electron's binary as Node, ELECTRON_RUN_AS_NODE=1 is
     // required — without it, packaged Electron will try to launch a GUI
     // instead of executing the script under Node semantics.
     const env = asNode ? { ...options.env, ELECTRON_RUN_AS_NODE: '1' } : options.env
-    const child: ChildProcess = spawn(command, [...baseArgs, ...args], {
+    const child: ChildProcess = spawn(command, spawnArgs, {
       cwd: options.cwd,
       env,
       shell,
@@ -59,7 +87,10 @@ export function runNpm(args: string[], options: NpmRunOptions): Promise<NpmRunRe
 
     child.once('error', (error) => {
       options.signal?.removeEventListener('abort', onAbort)
-      reject(error)
+      // The child never ran, so there is no exit code to classify. Reject with a
+      // distinguishable error rather than a bare Node one, so the caller can say
+      // "npm could not start" instead of blaming the network.
+      reject(new NpmSpawnError(error instanceof Error ? error.message : String(error), info))
     })
     child.once('close', (code) => {
       options.signal?.removeEventListener('abort', onAbort)
@@ -90,6 +121,11 @@ function resolveNpmCommand(): ResolvedNpm {
     return { command: 'npm.cmd', baseArgs: [], shell: true, asNode: false }
   }
   return { command: 'npm', baseArgs: [], shell: false, asNode: false }
+}
+
+/** Quote a single argument for cmd.exe. Only used on the `shell: true` path. */
+function quoteForCmd(arg: string): string {
+  return /[\s&|<>^"]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg
 }
 
 function resolveBundledNpmCli(): string | null {

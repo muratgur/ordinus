@@ -14,6 +14,7 @@ import {
   type ProviderActionInput,
   type ProviderConnectInput,
   type ProviderConnectResult,
+  type ProviderId,
   type ProviderStatus,
   type WorkboardDraftPlan
 } from '@shared/contracts'
@@ -94,6 +95,8 @@ export type RuntimeService = {
   sendWorkRun(input: RuntimeWorkRunInput): Promise<RuntimeWorkRunResult>
   cancelConversationTurn(turnId: string): boolean
   subscribe(listener: RuntimeEventListener): () => void
+  /** Fires when a provider's login settles outside the app (browser sign-in finished). */
+  onProviderStatusChanged(listener: (status: ProviderStatus) => void): () => void
 }
 
 export function createRuntimeService(): RuntimeService {
@@ -131,17 +134,69 @@ export function createRuntimeService(): RuntimeService {
   let providerStatusCache: { value: ProviderStatus[]; fetchedAt: number } | null = null
   let providerStatusInFlight: Promise<ProviderStatus[]> | null = null
 
+  // Bumped on every invalidation. A bulk fetch that was already in flight when the cache
+  // was invalidated carries pre-invalidation data, and caching its result would silently
+  // resurrect exactly the state we just declared stale — so it checks the epoch first.
+  let providerStatusEpoch = 0
+
   function invalidateProviderStatusCache(): void {
     providerStatusCache = null
+    providerStatusEpoch += 1
+  }
+
+  /** Replace one provider's entry in the cached array, keeping the rest warm. */
+  function patchProviderStatusCache(status: ProviderStatus): void {
+    if (!providerStatusCache) return
+    providerStatusCache = {
+      value: providerStatusCache.value.map((entry) => (entry.id === status.id ? status : entry)),
+      fetchedAt: providerStatusCache.fetchedAt
+    }
+  }
+
+  // A browser sign-in finishes outside Ordinus, so nothing in the app knows it happened:
+  // the renderer had already read the provider as disconnected, and the cache above would
+  // serve that answer for another 30s. The user was left pressing Check to discover a
+  // login that had already succeeded. Watch the login process instead and announce the
+  // new status the moment it settles.
+  const providerStatusListeners = new Set<(status: ProviderStatus) => void>()
+
+  function watchLoginCompletion(providerId: ProviderId): void {
+    const login = context.loginProcesses.get(providerId)
+    if (!login) return
+
+    const announce = (): void => {
+      // Retire anything in flight (it predates the login) without dropping the cache:
+      // the probe below produces the authoritative answer for this provider, and the
+      // other providers' entries are still good — re-spawning their CLIs would be waste.
+      providerStatusEpoch += 1
+      void Promise.resolve(getProviderAdapter(providerId).getStatus(context))
+        .then((status) => {
+          patchProviderStatusCache(status)
+          for (const listener of providerStatusListeners) listener(status)
+        })
+        .catch(() => {
+          // Best-effort: a failed probe just means the user still has Check.
+        })
+    }
+
+    // The login CLI writes its credentials and exits, so 'close' is the completion signal —
+    // for success and failure alike (a failed login simply reports back not-connected).
+    if (login.finished) announce()
+    else login.child.once('close', announce)
   }
 
   async function fetchAllProviderStatuses(): Promise<ProviderStatus[]> {
     if (providerStatusInFlight) return providerStatusInFlight
+    const epoch = providerStatusEpoch
     providerStatusInFlight = Promise.all(
       listProviderAdapters().map((adapter) => adapter.getStatus(context))
     )
       .then((value) => {
-        providerStatusCache = { value, fetchedAt: Date.now() }
+        // Something invalidated the cache while we were spawning. These values are from
+        // before that, so caching them would resurrect the state we just retired.
+        if (epoch === providerStatusEpoch) {
+          providerStatusCache = { value, fetchedAt: Date.now() }
+        }
         return value
       })
       .finally(() => {
@@ -191,6 +246,9 @@ export function createRuntimeService(): RuntimeService {
 
       const result = await adapter.connectProvider(parsed, context)
       invalidateProviderStatusCache()
+      // connectProvider returns as soon as the browser is open — the sign-in itself
+      // completes minutes later, outside the app. This is what closes that gap.
+      watchLoginCompletion(parsed.providerId)
       return result
     },
     async disconnectProvider(input) {
@@ -312,6 +370,13 @@ export function createRuntimeService(): RuntimeService {
       }
 
       return true
+    },
+    onProviderStatusChanged(listener) {
+      providerStatusListeners.add(listener)
+
+      return () => {
+        providerStatusListeners.delete(listener)
+      }
     },
     subscribe(listener) {
       listeners.add(listener)

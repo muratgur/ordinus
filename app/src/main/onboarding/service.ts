@@ -1,5 +1,5 @@
-import { BrowserWindow } from 'electron'
-import { accessSync, constants as fsConstants, statSync } from 'node:fs'
+import { BrowserWindow, shell } from 'electron'
+import { accessSync, existsSync, constants as fsConstants, statSync } from 'node:fs'
 import {
   type OnboardingState,
   type OnboardingStatus,
@@ -44,7 +44,9 @@ export class OnboardingService {
       installResults: pickKeys(state.installResults, providerIds),
       installPhases: pickKeys(state.installPhases, providerIds),
       installErrors: pickKeys(state.installErrors, providerIds),
-      installErrorCauses: pickKeys(state.installErrorCauses, providerIds)
+      installErrorCauses: pickKeys(state.installErrorCauses, providerIds),
+      installErrorDetails: pickKeys(state.installErrorDetails, providerIds),
+      installLogPaths: pickKeys(state.installLogPaths, providerIds)
     }
     return this.database.saveOnboardingState(advanceStage(next, 'workspace'))
   }
@@ -88,29 +90,27 @@ export class OnboardingService {
     // run's 'installing' state.
     const isStillCurrent = (): boolean => this.inflight.get(providerId) === controller
 
-    const clearedErrors = { ...state0.installErrors }
-    delete clearedErrors[providerId]
-    const clearedCauses = { ...state0.installErrorCauses }
-    delete clearedCauses[providerId]
     let working = this.database.saveOnboardingState({
       ...state0,
       installResults: { ...state0.installResults, [providerId]: 'installing' },
       installPhases: { ...state0.installPhases, [providerId]: 'start' },
-      installErrors: clearedErrors,
-      installErrorCauses: clearedCauses
+      installErrors: omitKey(state0.installErrors, providerId),
+      installErrorCauses: omitKey(state0.installErrorCauses, providerId),
+      installErrorDetails: omitKey(state0.installErrorDetails, providerId),
+      installLogPaths: omitKey(state0.installLogPaths, providerId)
     })
 
     try {
       for await (const event of installProvider(providerId, { signal: controller.signal })) {
         if (!isStillCurrent()) return working
-        working = this.applyInstallEvent(working, event)
+        working = this.applyInstallEvent(event)
         broadcast({ event, state: working.state })
       }
     } catch (error) {
       if (!isStillCurrent() || controller.signal.aborted) return working
       const message = error instanceof Error ? error.message : 'Install crashed unexpectedly.'
       const event: ProviderInstallEvent = { phase: 'error', providerId, message, cause: 'unknown' }
-      working = this.applyInstallEvent(working, event)
+      working = this.applyInstallEvent(event)
       broadcast({ event, state: working.state })
     } finally {
       // Only clear the inflight slot if we still own it — otherwise we'd
@@ -121,6 +121,20 @@ export class OnboardingService {
     }
 
     return working
+  }
+
+  /**
+   * Reveal the install log for a failed provider in the OS file manager.
+   *
+   * The path is read from our own persisted state rather than accepted from the
+   * renderer, so this cannot be used to reveal an arbitrary file.
+   */
+  revealInstallLog(providerId: ProviderId): void {
+    const logPath = this.getStatus().state.installLogPaths[providerId]
+    if (!logPath || !existsSync(logPath)) {
+      throw new Error('The install log for this colleague is no longer on disk.')
+    }
+    shell.showItemInFolder(logPath)
   }
 
   markProviderAuthed(providerId: ProviderId, authed: boolean): OnboardingStatus {
@@ -141,10 +155,31 @@ export class OnboardingService {
         [providerId]: authed ? 'authed' : 'installed'
       }
     }
-    const anyAuthed = hasAnyAuthedSelectedProvider(next)
+    // Advance only once EVERY selected colleague is signed in. Advancing on the first
+    // one abandoned the others mid-login: the install screen unmounts, its auth poll
+    // dies with it, and nobody ever marks the second provider authed — even though its
+    // browser sign-in was still open and about to succeed. The user picked two
+    // colleagues; onboarding waits for two. `continueWithSignedIn()` is the escape.
+    const allAuthed = hasAllAuthedSelectedProviders(next)
     return this.database.saveOnboardingState(
-      anyAuthed && next.stage === 'install' ? advanceStage(next, 'colleague') : next
+      allAuthed && next.stage === 'install' ? advanceStage(next, 'colleague') : next
     )
+  }
+
+  /**
+   * Finish onboarding with the colleagues who did sign in, leaving the rest behind.
+   *
+   * The deliberate escape from the "wait for all" rule above: a provider whose install
+   * failed, or that the user picked by mistake and does not want to authenticate, must
+   * not be able to trap them on the install screen. Any provider still mid-login keeps
+   * running in main — when it finishes, the runtime picks it up and Settings shows it.
+   */
+  continueWithSignedIn(): OnboardingStatus {
+    const state = this.getStatus().state
+    if (!hasAnyAuthedSelectedProvider(state)) {
+      throw new Error('At least one colleague must be signed in before continuing.')
+    }
+    return this.database.saveOnboardingState(advanceStage(state, 'colleague'))
   }
 
   complete(agentId?: string): OnboardingStatus {
@@ -170,7 +205,9 @@ export class OnboardingService {
       installResults: {},
       installPhases: {},
       installErrors: {},
-      installErrorCauses: {}
+      installErrorCauses: {},
+      installErrorDetails: {},
+      installLogPaths: {}
     }
     return this.database.saveOnboardingState(advanceStage(next, 'providers'))
   }
@@ -180,35 +217,56 @@ export class OnboardingService {
     return this.database.saveOnboardingState(advanceStage(state, 'providers'))
   }
 
-  private applyInstallEvent(
-    status: OnboardingStatus,
-    event: ProviderInstallEvent
-  ): OnboardingStatus {
-    const state = status.state
+  /**
+   * Fold one install event into the persisted state.
+   *
+   * Reads the CURRENT state rather than a snapshot captured when the install started:
+   * onboarding runs an install per selected provider concurrently, and each write here
+   * persists the whole OnboardingState. Working from a stale snapshot meant the last
+   * writer silently reverted the other provider's entry — Claude finishing its (fast)
+   * install would wipe Codex back to 'pending', which then never entered the auth flow
+   * because that only kicks for 'installed'. Read-modify-write is safe without a lock:
+   * better-sqlite3 is synchronous, so nothing interleaves between the read and the save.
+   */
+  private applyInstallEvent(event: ProviderInstallEvent): OnboardingStatus {
+    const state = this.getStatus().state
     const installResults = { ...state.installResults }
     const installErrors = { ...state.installErrors }
     const installErrorCauses = { ...state.installErrorCauses }
+    // ADR-047 §3f: the npm stderr tail and the install log path travel with the
+    // error event. Persist them — the failure card's "Show details" reads them
+    // back from state, and a reload must not lose the only copy of the reason.
+    const installErrorDetails = { ...state.installErrorDetails }
+    const installLogPaths = { ...state.installLogPaths }
     const installPhases = { ...state.installPhases }
 
     installPhases[event.providerId] = event.phase
 
+    const clearError = (): void => {
+      delete installErrors[event.providerId]
+      delete installErrorCauses[event.providerId]
+      delete installErrorDetails[event.providerId]
+      delete installLogPaths[event.providerId]
+    }
+
     switch (event.phase) {
       case 'start':
+      case 'waiting':
       case 'download':
       case 'verify':
         installResults[event.providerId] = 'installing'
-        delete installErrors[event.providerId]
-        delete installErrorCauses[event.providerId]
+        clearError()
         break
       case 'done':
         installResults[event.providerId] = 'installed'
-        delete installErrors[event.providerId]
-        delete installErrorCauses[event.providerId]
+        clearError()
         break
       case 'error':
         installResults[event.providerId] = 'failed'
         installErrors[event.providerId] = event.message
         installErrorCauses[event.providerId] = event.cause
+        if (event.stderrTail) installErrorDetails[event.providerId] = event.stderrTail
+        if (event.logPath) installLogPaths[event.providerId] = event.logPath
         break
     }
 
@@ -217,6 +275,8 @@ export class OnboardingService {
       installResults,
       installErrors,
       installErrorCauses,
+      installErrorDetails,
+      installLogPaths,
       installPhases
     })
   }
@@ -233,6 +293,13 @@ function hasAnyAuthedSelectedProvider(state: OnboardingState): boolean {
   return state.selectedProviders.some((id) => state.installResults[id] === 'authed')
 }
 
+function hasAllAuthedSelectedProviders(state: OnboardingState): boolean {
+  return (
+    state.selectedProviders.length > 0 &&
+    state.selectedProviders.every((id) => state.installResults[id] === 'authed')
+  )
+}
+
 function advanceStage(state: OnboardingState, next: OnboardingState['stage']): OnboardingState {
   if (state.stage === next) return state
   return {
@@ -244,6 +311,15 @@ function advanceStage(state: OnboardingState, next: OnboardingState['stage']): O
 
 function dedupe<T>(values: T[]): T[] {
   return Array.from(new Set(values))
+}
+
+function omitKey<V>(
+  source: Partial<Record<ProviderId, V>>,
+  drop: ProviderId
+): Partial<Record<ProviderId, V>> {
+  const out = { ...source }
+  delete out[drop]
+  return out
 }
 
 function pickKeys<V>(

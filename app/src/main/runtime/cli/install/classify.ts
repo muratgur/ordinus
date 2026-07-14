@@ -1,4 +1,5 @@
 import type { InstallErrorCause } from '@shared/contracts'
+import { firstLine } from '../output'
 
 export type InstallErrorClassification = {
   cause: InstallErrorCause
@@ -80,8 +81,27 @@ export function classifyNpmError(
 
   return {
     cause: 'unknown',
-    message: `The install failed (npm exit code ${code ?? 'null'}).`
+    message: describeUnclassified(stderrTail, code)
   }
+}
+
+/**
+ * The 'unknown' bucket means "none of the patterns above matched" — routinely
+ * reached when npm exits non-zero with thin or empty stderr. A bare exit code
+ * tells the user nothing, so lead with whatever npm actually said and point at
+ * the install log for the rest (ADR-047 §3f).
+ */
+function describeUnclassified(stderrTail: string | undefined, code: number | null): string {
+  const detail = firstLine(stderrTail ?? '')
+
+  if (code === null) {
+    return detail
+      ? `The install stopped before npm finished: ${detail}`
+      : 'The install stopped before npm finished.'
+  }
+  return detail
+    ? `The install failed (npm exit code ${code}): ${detail}`
+    : `The install failed (npm exit code ${code}) and npm reported no reason — see the install log.`
 }
 
 /** Failure causes worth a transient retry — network blips, not config/permission. */

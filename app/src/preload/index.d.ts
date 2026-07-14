@@ -326,6 +326,7 @@ export type OrdinusApi = {
     connectProvider: (input: ProviderConnectInput) => Promise<ProviderConnectResult>
     disconnectProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
     refreshProvider: (input: ProviderActionInput) => Promise<ProviderStatus>
+    onProviderStatusChanged: (callback: (status: ProviderStatus) => void) => () => void
   }
   connectors: {
     list: () => Promise<ConnectorSummary[]>
@@ -370,6 +371,8 @@ export type OrdinusApi = {
       authed: boolean
     }) => Promise<OnboardingStatus>
     resetProviders: () => Promise<OnboardingStatus>
+    revealInstallLog: (input: { providerId: ProviderId }) => Promise<void>
+    continueWithSignedIn: () => Promise<OnboardingStatus>
     complete: (input: { agentId?: string }) => Promise<OnboardingStatus>
     onInstallEvent: (callback: (envelope: OnboardingInstallEventEnvelope) => void) => () => void
   }

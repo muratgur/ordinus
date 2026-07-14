@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 import { resolveResourcePath } from '../../paths'
+import { runCapture } from './process'
 
 let cachedPath: string | null | undefined
 
@@ -51,4 +52,41 @@ export function ensureBundledNodeOnPath(): void {
   if (current.split(delimiter).includes(dir)) return
 
   process.env.PATH = current ? `${dir}${delimiter}${current}` : dir
+}
+
+export type NodeRuntimeProbe = {
+  /** The bundled Node, or null in dev — and in a packaged build that lost it. */
+  bundled: string | null
+  /** `node --version` from PATH, or null when nothing there answers. */
+  onPath: string | null
+  /** Whether *some* real `node` exists for npm's lifecycle scripts and the CLI launchers. */
+  available: boolean
+}
+
+/**
+ * Find the `node` a managed install will actually get (ADR-047 §1, §3f).
+ *
+ * A missing bundled Node is not on its own a reason to refuse the install: npm runs
+ * under Electron-as-node, npm's lifecycle scripts resolve a bare `node` from PATH, and
+ * `createNodeScriptExecutable` below falls back to `'node'`. So a machine with its own
+ * Node installed works fine without ours — refusing there would break an install that
+ * would have succeeded. Only "no Node anywhere" is fatal.
+ *
+ * The PATH probe runs only when there is no bundled Node, so the normal packaged path
+ * costs nothing.
+ */
+export async function probeNodeRuntime(env: NodeJS.ProcessEnv): Promise<NodeRuntimeProbe> {
+  const bundled = getBundledNodePath()
+  if (bundled) {
+    return { bundled, onPath: null, available: true }
+  }
+
+  const result = await runCapture('node', ['--version'], {
+    env,
+    shell: false,
+    timeoutMs: 5_000
+  }).catch(() => null)
+
+  const onPath = result?.code === 0 ? result.stdout.trim() || 'unknown version' : null
+  return { bundled: null, onPath, available: Boolean(onPath) }
 }
