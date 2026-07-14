@@ -130,9 +130,15 @@ if (dryRun) {
 
 // ── bump versions (npm-native, no network, keeps lockfileVersion) ─────────────
 const npmVersionArgs = ['version', newVersion, '--no-git-tag-version', '--allow-same-version']
+// On Windows npm is `npm.cmd`, a batch script — not an executable. execFileSync spawns
+// the binary directly, so it neither consults the shell nor applies PATHEXT: bare `npm`
+// is ENOENT, and naming `npm.cmd` explicitly is EINVAL (Node refuses to spawn .cmd/.bat
+// without a shell since the CVE-2024-27980 fix). A shell is the only way through. macOS
+// and Linux keep the direct spawn — `npm` is a real executable there and needs no shell.
+const npmOptions = { stdio: 'pipe', shell: process.platform === 'win32' }
 console.log('\n  Bumping versions…')
-run('npm', npmVersionArgs, { cwd: repoRoot, stdio: 'pipe' })
-run('npm', npmVersionArgs, { cwd: appDir, stdio: 'pipe' })
+run('npm', npmVersionArgs, { cwd: repoRoot, ...npmOptions })
+run('npm', npmVersionArgs, { cwd: appDir, ...npmOptions })
 
 // ── commit + tag ──────────────────────────────────────────────────────────────
 git(['add', ...VERSION_FILES])
