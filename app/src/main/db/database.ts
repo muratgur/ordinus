@@ -64,6 +64,7 @@ import {
   type OnboardingStatus,
   PendingPlanCreateInputSchema,
   PendingPlanSchema,
+  ProviderIdSchema,
   type PendingPlan,
   type PendingPlanCreateInput,
   WorkboardAnswerInputRequestInputSchema,
@@ -169,6 +170,7 @@ import {
   type WorkspaceSaveConfigInput,
   type WorkspaceUpdateSystemDefaultInput
 } from '@shared/contracts'
+import { getDefaultModelForProvider } from '@shared/provider-models'
 import { getSystemPaths } from '../paths'
 import { databaseSchemaVersion, getMigrationsFolder } from './migrations'
 import {
@@ -1205,8 +1207,13 @@ export class OrdinusDatabase {
     const workspaceRoot = resolveWorkspaceRoot(parsed.workspaceRoot)
     const now = new Date().toISOString()
     const existing = this.db.select().from(workspaceConfig).where(eq(workspaceConfig.id, 1)).get()
-    const defaultProviderId = parsed.defaultProviderId ?? existing?.defaultProviderId ?? 'codex'
-    const defaultModel = parsed.defaultModel ?? existing?.defaultModel ?? 'default'
+    // existing.defaultProviderId comes back as a bare string from SQLite; it was
+    // schema-validated on write, so re-validate rather than trust-cast.
+    const defaultProviderId = ProviderIdSchema.parse(
+      parsed.defaultProviderId ?? existing?.defaultProviderId ?? 'codex'
+    )
+    const defaultModel =
+      parsed.defaultModel ?? existing?.defaultModel ?? getDefaultModelForProvider(defaultProviderId)
 
     if (existing) {
       if (existing.workspaceRoot !== workspaceRoot && this.hasRunningWorkspaceWork()) {

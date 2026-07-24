@@ -57,10 +57,11 @@ export class OnboardingService {
   } {
     const state = this.getStatus().state
     assertWorkspaceUsable(input.workspaceRoot)
+    // defaultModel deliberately omitted: saveWorkspaceConfig falls back to the
+    // provider's explicit factory default (not the CLI-delegating 'default').
     const parsed = WorkspaceSaveConfigInputSchema.parse({
       workspaceRoot: input.workspaceRoot,
-      defaultProviderId: state.selectedProviders[0],
-      defaultModel: 'default'
+      defaultProviderId: state.selectedProviders[0]
     })
     const workspace = this.database.saveWorkspaceConfig(parsed)
     const next: OnboardingState = {
